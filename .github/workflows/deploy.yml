@@ -19,7 +19,7 @@ jobs:
           key: ${{ secrets.KEY }}
           rm: true
           source: "."
-          target: "/home/${{ secrets.USERNAME }}/prophet-ops"
+          target: "/home/${{ secrets.USERNAME }}/coin"
           
       - name: Deploy via SSH
         uses: appleboy/ssh-action@master
@@ -28,7 +28,7 @@ jobs:
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.KEY }}
           script: |
-            cd /home/${{ secrets.USERNAME }}/prophet-ops
+            cd /home/${{ secrets.USERNAME }}/coin
                         
             if [ ! -f .env ]; then
               echo "Error: .env file not found on server!"
