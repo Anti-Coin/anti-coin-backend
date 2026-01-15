@@ -18,3 +18,12 @@ services:
       - DOCKER_INFLUXDB_INIT_BUCKET=market_data # 버킷 이름 (DB 명)
       - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=my-super-secret-auth-token
     restart: always
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.fastapi
+    container_name: coin-fastapi
+    ports:
+      - "8000:8000"
+    restart: always

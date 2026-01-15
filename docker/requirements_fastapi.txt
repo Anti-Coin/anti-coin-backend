@@ -1,0 +1,6 @@
+pandas
+prophet
+influxdb-client
+python-dotenv
+fastapi[uvicorn]
+uvicorn
