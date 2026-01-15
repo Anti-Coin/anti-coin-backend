@@ -218,3 +218,6 @@ __marimo__/
 # InfluxDB
 influxdb_config
 influxdb_data
+
+# models
+models/
