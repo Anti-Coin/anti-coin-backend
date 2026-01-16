@@ -131,7 +131,7 @@ async def predict_price(symbol: str):
     # InfluxDB를 조회해서 새로운 데이터가 감지되면 prophet을 재학습하는 등의 로직이 필요함
     future_dates = pd.date_range(start=now, periods=25, freq="H", tz="UTC")
 
-    future = pd.DateFrame({"ds": future_dates})
+    future = pd.DataFrame({"ds": future_dates})
     future["ds"] = future["ds"].dt.tz_localize(None)  # UTC 정보 제거 (JSON 호환)
     forecast = model.predict(future)
 
