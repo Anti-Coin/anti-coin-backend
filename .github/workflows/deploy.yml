@@ -28,6 +28,6 @@ jobs:
           key: ${{ secrets.KEY }}
           script: |
             cd /home/${{ secrets.USERNAME }}/coin
-            docker compose up -d --build
+            docker compose --env-file .env.prod up -d --build
             # 불필요한 이미지 정리
             docker image prune -f

@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from dotenv import load_dotenv
 
-load_dotenv()
+# load_dotenv()
 
 app = FastAPI(title="ProphetOps API", version="1.0.0")
 

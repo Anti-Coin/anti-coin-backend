@@ -24,6 +24,11 @@ services:
       context: .
       dockerfile: docker/Dockerfile.fastapi
     container_name: coin-fastapi
+    environment:
+      INFLUXDB_URL: ${INFLUXDB_URL}
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN}
+      INFLUXDB_ORG: ${INFLUXDB_ORG}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET}
     ports:
       - "8000:8000"
     restart: always
