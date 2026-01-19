@@ -7,10 +7,11 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from dotenv import load_dotenv
+
+# from dotenv import load_dotenv
 
 # 환경 설정 및 연결
-load_dotenv()
+# load_dotenv() # docker compose environment로 관리
 
 INFLUXDB_URL = os.getenv("INFLUXDB_URL")
 INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN")
