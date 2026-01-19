@@ -110,13 +110,13 @@ def run_prediction_and_save(write_api, symbol):
             model = model_from_json(fin.read())
 
         # 예측 (현재 시점부터 24시간)
-        future = model.make_future_dataframe(periods=24, freq="H")
-        print(future)
+        now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        future = pd.DataFrame({"ds": pd.date_range(start=now, periods=24, freq="H")})
+        future["ds"] = future["ds"].dt.tz_localize(None)
 
         # As-Is: 여기서는 과거 데이터 없이 모델이 기억하는 패턴으로만 예측
         # To-Do: Training Worker 구축
         forecast = model.predict(future)
-        print(forecast)
 
         # 필요한 데이터만 추출
         now = datetime.now(timezone.utc)
