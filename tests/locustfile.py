@@ -6,6 +6,6 @@ class CoinUser(HttpUser):
 
     @task
     def predict_btc(self):
-        with self.client.get("/predict/BTC/USDT") as response:
+        with self.client.get("/predict/BTC/USDT", catch_response=True) as response:
             if response.status_code != 200:
                 response.failure(f"Status code: {response.status_code}")
