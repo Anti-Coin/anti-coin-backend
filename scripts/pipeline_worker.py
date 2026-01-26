@@ -49,6 +49,38 @@ def get_last_timestamp(query_api, symbol):
     return None
 
 
+def save_history_to_json(df, symbol):
+    """
+    과거 데이터(1h) 정적 파일 생성
+    TODO: 지금은 단순하게 1시간 봉에 대해서만 정적 파일을 생성하고 있는데, (predict도 마찬가지)
+    추후에 확장할 것.
+    """
+    try:
+        export_df = df.copy()
+        export_df["timestamp"] = export_df.index.strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )  # UTC Aware 가정
+
+        json_output = {
+            "symbol": symbol,
+            "data": export_df[
+                ["timestamp", "open", "high", "low", "close", "volume"]
+            ].to_dict(orient="records"),
+            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "type": "history_1h",
+        }
+
+        safe_symbol = symbol.replace("/", "_")
+        file_path = STATIC_DIR / f"history_{safe_symbol}.json"
+
+        with open(file_path, "w") as f:
+            json.dump(json_output, f)  # indet=None로 용량 절약
+
+        print(f"[{symbol}] 정적 파일 생성 완료: {file_path}")
+    except Exception as e:
+        print(f"[{symbol}] 정적 파일 생성 실패: {e}")
+
+
 def fetch_and_save(write_api, symbol, since_ts):
     """
     ccxt로 데이터 가져와서 InfluxDB에 저장
@@ -92,6 +124,8 @@ def fetch_and_save(write_api, symbol, since_ts):
         )
         print(f"[{symbol}] {len(df)}개 봉 저장 완료 (Last: {df.index[-1]})")
 
+        # TODO: SSG 파일 생성을 DB 조회 후 덮어쓰기로 구현?
+
     except Exception as e:
         print(f"[{symbol}] 수집 실패: {e}")
 
@@ -112,7 +146,7 @@ def run_prediction_and_save(write_api, symbol):
         now = datetime.now(timezone.utc)
         # .replace(minute=0, second=0, microsecond=0) => UTC 통일
         future = pd.DataFrame({"ds": pd.date_range(start=now, periods=24, freq="H")})
-        future["ds"] = future["ds"].dt.tz_localize(None)
+        future["ds"] = future["ds"].dt.tz_localize(None)  # prophet은 tz-naive
 
         # As-Is: 여기서는 과거 데이터 없이 모델이 기억하는 패턴으로만 예측
         # To-Do: Training Worker 구축
@@ -155,6 +189,9 @@ def run_prediction_and_save(write_api, symbol):
         print(f"[{symbol}] SSG 파일 생성 완료: {file_path}")
 
         # 저장(DB)
+        next_24h["ds"] = pd.to_datetime(next_24h["ds"]).dt.tz_localize(
+            "UTC"
+        )  # 불필요한 연산 같기는 한데,,, 방어용???
         next_24h = next_24h[["ds", "yhat", "yhat_lower", "yhat_upper"]]
         next_24h.rename(columns={"ds": "timestamp"}, inplace=True)
         next_24h.set_index("timestamp", inplace=True)  # InfluxDB는 index가 timestamp
@@ -171,6 +208,26 @@ def run_prediction_and_save(write_api, symbol):
 
     except Exception as e:
         print(f"[{symbol}] 예측 에러: {e}")
+
+
+def update_full_history_file(query_api, symbol):
+    """DB에서 최근 30일치 데이터를 긁어와서 history json 파일 갱신"""
+    query = f"""
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -30d)
+      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
+      |> filter(fn: (r) => r["symbol"] == "{symbol}")
+      |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+      |> sort(columns: ["_time"], desc: false)
+    """
+    try:
+        df = query_api.query_data_frame(query)
+        if not df.empty:
+            df.rename(columns={"_time": "timestamp"}, inplace=True)  # UTC Aware
+            df.set_index("timestamp", inplace=True)
+            save_history_to_json(df, symbol)
+    except Exception as e:
+        print(f"[{symbol}] History 갱신 중 에러: {e}")
 
 
 def run_worker():
@@ -197,7 +254,10 @@ def run_worker():
                 print(f"[{symbol}] 초기 데이터 수집 시작 (30일 전부터)")
 
             # 수집
-            new_data_exists = fetch_and_save(write_api, symbol, since)
+            fetch_and_save(write_api, symbol, since)
+
+            # History 파일 갱신
+            update_full_history_file(query_api, symbol)
 
             # 예측
             run_prediction_and_save(write_api, symbol)
