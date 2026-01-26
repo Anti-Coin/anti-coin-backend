@@ -9,6 +9,14 @@ from datetime import datetime, timezone
 
 # load_dotenv()
 
+# 환경 변수
+INFLUXDB_URL = os.getenv("INFLUXDB_URL")
+INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN")
+INFLUXDB_ORG = os.getenv("INFLUXDB_ORG")
+INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET")
+
+client = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -38,16 +46,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 환경 변수
-INFLUXDB_URL = os.getenv("INFLUXDB_URL")
-INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN")
-INFLUXDB_ORG = os.getenv("INFLUXDB_ORG")
-INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET")
-
-# 모델 경로 설정
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODELS_DIR = os.path.join(BASE_DIR, "models")
-
 # 전역 모델 저장소
 loaded_models = {}
 
@@ -72,15 +70,13 @@ def query_influx(symbol: str, measurement: str, days: int = 30):
     except Exception as e:
         print(f"DB Query Error: {e}")
         return None
-    # finally:
-    #     client.close()
 
     if isinstance(df, list) or df.empty:
         return None
 
     # InfluxDB 리턴값 정리 ('_time' -> 'timestamp')
     df.rename(columns={"_time": "timestamp"}, inplace=True)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
+
     return df
 
 
