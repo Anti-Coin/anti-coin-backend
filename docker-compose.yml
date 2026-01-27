@@ -32,9 +32,7 @@ services:
       - worker  # 워커가 파일을 만들어야 의미가 있으므로
 
   fastapi:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.fastapi
+    image: ghcr.io/dongwonmoon/coin-fastapi:latest
     container_name: coin-fastapi
     environment:
       INFLUXDB_URL: ${INFLUXDB_URL}
@@ -48,9 +46,7 @@ services:
       - ./static_data:/app/static_data
 
   streamlit:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.streamlit
+    image: ghcr.io/dongwonmoon/coin-streamlit:latest
     container_name: coin-streamlit
     environment:
       API_URL: ${API_URL}
@@ -59,9 +55,7 @@ services:
     restart: always
 
   worker:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.worker
+    image: ghcr.io/dongwonmoon/coin-worker:latest
     container_name: coin-worker
     environment:
       INFLUXDB_URL: ${INFLUXDB_URL}
