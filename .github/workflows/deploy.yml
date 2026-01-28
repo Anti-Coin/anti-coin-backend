@@ -108,7 +108,7 @@ jobs:
             docker compose pull
             
             # 컨테이너 재생성
-            docker compose up -d
+            docker compose --env-file .env.prod up -d
             
             # 불필요한 이미지 정리 (디스크 공간 확보)
             docker image prune -f
