@@ -145,7 +145,7 @@ def run_prediction_and_save(write_api, symbol):
         # 예측 (현재 시점부터 24시간)
         now = datetime.now(timezone.utc)
         # .replace(minute=0, second=0, microsecond=0) => UTC 통일
-        future = pd.DataFrame({"ds": pd.date_range(start=now, periods=24, freq="H")})
+        future = pd.DataFrame({"ds": pd.date_range(start=now, periods=24, freq="h")})
         future["ds"] = future["ds"].dt.tz_localize(None)  # prophet은 tz-naive
 
         # As-Is: 여기서는 과거 데이터 없이 모델이 기억하는 패턴으로만 예측
