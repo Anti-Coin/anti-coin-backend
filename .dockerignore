@@ -9,6 +9,13 @@ venv/
 .env.*
 node_modules/
 *.log
+.github/
+README.md
+docs/
 docker-compose.yml
 influxdb_config
 influxdb_data
+prometheus/
+prometheus_data/
+grafana_data/
+nginx/

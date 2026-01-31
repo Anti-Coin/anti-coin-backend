@@ -1,26 +1,98 @@
-name: Deploy to Oracle Cloud
+name: Deploy to Oracle Cloud (GHCR)
 
 on:
   push:
-    branches: [ main, dev ] # dev 삭제할 것
+    branches: [ main, dev ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # QEMU 설정 (ARM64 빌드를 위해 필수)
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      # Docker Buildx 설정 (멀티 플랫폼 빌드 도구)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      # GHCR 로그인
+      - name: Log in to the Container registry
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      # 소문자 변환 (이미지 이름에 대문자 불가)
+      - name: Lowercase Repo Name
+        run: |
+          echo "REPO_LOWER=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
+      # Build & Push (FastAPI)
+      - name: Build and push FastAPI
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: docker/Dockerfile.fastapi
+          push: true
+          tags: ghcr.io/${{ env.REPO_LOWER }}-fastapi:latest
+          platforms: linux/arm64,linux/amd64 # 오라클(ARM)과 로컬(AMD) 모두 지원
+          cache-from: type=gha,scope=fastapi
+          cache-to: type=gha,mode=max,scope=fastapi
+
+      # Build & Push (Worker)
+      - name: Build and push Worker
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: docker/Dockerfile.worker
+          push: true
+          tags: ghcr.io/${{ env.REPO_LOWER }}-worker:latest
+          platforms: linux/arm64,linux/amd64
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker
+
+      # Build & Push (Streamlit)
+      - name: Build and push Streamlit
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: docker/Dockerfile.streamlit
+          push: true
+          tags: ghcr.io/${{ env.REPO_LOWER }}-streamlit:latest
+          platforms: linux/arm64,linux/amd64
+          cache-from: type=gha,scope=streamlit
+          cache-to: type=gha,mode=max,scope=streamlit
+
   deploy:
+    needs: build-and-push
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Copy files via SCP
+      - name: Copy docker-compose.yml and nginx conf
         uses: appleboy/scp-action@master
         with:
           host: ${{ secrets.HOST }}
           username: ${{ secrets.USERNAME }}
           key: ${{ secrets.KEY }}
-          source: "."
+          source: "docker-compose.yml,nginx/default.conf,prometheus/prometheus.yml"
           target: "/home/${{ secrets.USERNAME }}/coin"
-          
-      - name: Deploy via SSH
+
+      - name: Deploy to Server
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.HOST }}
@@ -28,6 +100,15 @@ jobs:
           key: ${{ secrets.KEY }}
           script: |
             cd /home/${{ secrets.USERNAME }}/coin
-            docker compose --env-file .env.prod up -d --build
-            # 불필요한 이미지 정리
+            
+            # GHCR 로그인 (서버에서도 이미지를 받아야 하므로)
+            echo ${{ secrets.GHCR_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # 최신 이미지 Pull
+            docker compose pull
+            
+            # 컨테이너 재생성
+            docker compose --env-file .env.prod up -d
+            
+            # 불필요한 이미지 정리 (디스크 공간 확보)
             docker image prune -f
