@@ -2,3 +2,4 @@ ccxt
 pandas
 influxdb-client
 prophet
+requests

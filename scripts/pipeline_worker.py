@@ -8,11 +8,15 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import json
+import requests
+import traceback
 
 INFLUXDB_URL = os.getenv("INFLUXDB_URL")
 INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN")
 INFLUXDB_ORG = os.getenv("INFLUXDB_ORG")
 INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET")
+
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODELS_DIR = BASE_DIR / "models"
@@ -24,6 +28,19 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 TARGET_COINS = ["BTC/USDT", "ETH/USDT", "XRP/USDT", "SOL/USDT", "DOGE/USDT"]
 TIMEFRAME = "1h"
 LOOKBACK_DAYS = 30  # 과거 30일치 데이터 유지
+
+
+def send_alert(message):
+    """디스코드/슬랙 등으로 알림 전송"""
+    if not DISCORD_WEBHOOK_URL:
+        print(f"[Alert Ignored] {message}")
+        return
+
+    try:
+        payload = {"content": f"**Coin Predict Worker Alert**\n```{message}```"}
+        requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=5)
+    except Exception as e:
+        print(f"Failed to send alert: {e}")
 
 
 def get_last_timestamp(query_api, symbol):
@@ -239,33 +256,59 @@ def run_worker():
     write_api = client.write_api(write_options=SYNCHRONOUS)
     query_api = client.query_api()
 
+    send_alert("Worker Started.")
+
     while True:
-        print(f"\n[Cycle] 작업 시작: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        try:
+            start_time = time.time()
+            print(
+                f"\n[Cycle] 작업 시작: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            )
 
-        for symbol in TARGET_COINS:
-            # DB에서 마지막 데이터 시간 확인
-            last_time = get_last_timestamp(query_api, symbol)
+            for symbol in TARGET_COINS:
+                # DB에서 마지막 데이터 시간 확인
+                last_time = get_last_timestamp(query_api, symbol)
 
-            # 시작 시간 결정 (Since)
-            if last_time:
-                # 마지막 데이터가 있으면, 그 시간부터 다시 가져옴 (덮어쓰기 업데이트)
-                since = last_time
+                # 시작 시간 결정 (Since)
+                if last_time:
+                    # 마지막 데이터가 있으면, 그 시간부터 다시 가져옴 (덮어쓰기 업데이트)
+                    since = last_time
+                else:
+                    # 데이터가 아예 없으면 30일 전부터
+                    since = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
+                    print(f"[{symbol}] 초기 데이터 수집 시작 (30일 전부터)")
+
+                # 수집
+                fetch_and_save(write_api, symbol, since)
+
+                # History 파일 갱신
+                update_full_history_file(query_api, symbol)
+
+                # 예측
+                run_prediction_and_save(write_api, symbol)
+
+            # Cycle Overrun 감지 및 주기 보정
+            elapsed = time.time() - start_time
+            sleep_time = 60 - elapsed
+
+            if sleep_time > 0:
+                print(
+                    f"Cycle finished in {elapsed:.2f}s. Sleeping for {sleep_time:.2f}s..."
+                )
+                time.sleep(sleep_time)
             else:
-                # 데이터가 아예 없으면 30일 전부터
-                since = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
-                print(f"[{symbol}] 초기 데이터 수집 시작 (30일 전부터)")
+                warning_msg = (
+                    f"[Warning] Cycle Overrun! Took {elapsed:.2f}s (Limit: 60s)"
+                )
+                print(warning_msg)
+                send_alert(warning_msg)
 
-            # 수집
-            fetch_and_save(write_api, symbol, since)
-
-            # History 파일 갱신
-            update_full_history_file(query_api, symbol)
-
-            # 예측
-            run_prediction_and_save(write_api, symbol)
-
-        print("1분 대기 중...")
-        time.sleep(60)  # 1분마다 반복
+        except Exception as e:
+            # Worker가 죽지 않도록 잡지만, 운영자에게는 알림
+            error_msg = f"Worker Critical Error:\n{traceback.format_exc()}"
+            print(error_msg)
+            send_alert(error_msg)
+            time.sleep(10)  # 에러 루프 방지용 대기
 
 
 if __name__ == "__main__":

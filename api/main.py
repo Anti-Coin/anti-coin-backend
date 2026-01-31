@@ -5,7 +5,9 @@ from contextlib import asynccontextmanager
 import pandas as pd
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import json
+from pathlib import Path
 
 # load_dotenv()
 
@@ -14,6 +16,18 @@ INFLUXDB_URL = os.getenv("INFLUXDB_URL")
 INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN")
 INFLUXDB_ORG = os.getenv("INFLUXDB_ORG")
 INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET")
+
+# 정적 파일 경로 (Docker compose에서 /app/static_data로 마운트 됨)
+BASE_DIR = Path("/app")
+STATIC_DIR = BASE_DIR / "static_data"
+
+# Timeframe별 허용 임계값 (Timeframe + 여유시간)
+# 현재는 1h만 사용. 추후 확장을 위해 구조를 잡아둠.
+THRESHOLDS = {
+    "1h": timedelta(minutes=65),
+    "4h": timedelta(minutes=250),
+    "1d": timedelta(hours=25),
+}
 
 client = None
 
@@ -132,6 +146,56 @@ def predict_price(symbol: str):
         "execution_time": round(time.time() - start_time, 4),
         "forecast": df[available_cols].to_dict(orient="records"),
     }
+
+
+@app.get("/status/{symbol:path}")
+def check_status(symbol: str, timeframe: str = "1h"):
+    """
+    정적 파일의 신선도(Freshness) 검사
+    - 파일이 없거나, 너무 오래되었으면 503에러 반환
+    """
+    safe_symbol = symbol.replace("/", "_")
+
+    # 파일 명 결정 (TODO:추후 Timeframe 확장에 대비한 네이밍 규칙 필요)
+    # 현재 MVP는 prediction_BTC_USDT.json 고정 사용 중
+    filename = f"prediction_{safe_symbol}.json"
+    file_path = STATIC_DIR / filename
+
+    if not file_path.exists():
+        raise HTTPException(status_code=503, detail="Not initialized yet.")
+
+    try:
+        # 메타 데이터 읽기 (전체보다 헤더를 읽는 게 빠르지만, json이므로 우선 모두 로드)
+        # 파일 크기가 작으므로 I/O 부담은 미미함.
+        with open(file_path, "r") as f:
+            data = json.load(f)
+
+        updated_at_str = data.get("updated_at")
+        if not updated_at_str:
+            raise HTTPException(status_code=503, detail="Invalid data format")
+
+        # 시간 차 계산
+        updated_at = datetime.strptime(updated_at_str, "%Y-%m-%dT%H:%M:%S").replace(
+            tzinfo=timezone.utc
+        )
+        now = datetime.now(timezone.utc)
+
+        # 임계값 조회 (기본 값 65분)
+        limit = THRESHOLDS.get(timeframe, timedelta(minutes=65))
+
+        if (now - updated_at) > limit:
+            # 데이터가 상한 경우
+            raise HTTPException(
+                status_code=503, detail=f"Data is stale. Last updated: {updated_at_str}"
+            )
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=503, detail="Data corruption detected")
+    except Exception as e:
+        print(f"Status Check Error: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+    # 신선함
+    return {"status": "ok", "updated_at": updated_at_str}
 
 
 @app.get("/")
