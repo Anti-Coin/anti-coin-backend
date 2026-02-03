@@ -177,7 +177,7 @@ def check_status(symbol: str, timeframe: str = "1h"):
         except ValueError:
             raise HTTPException(status_code=503, detail="Invalid data format")
 
-        if not updated_at_str:
+        if not updated_at:
             raise HTTPException(status_code=503, detail="Invalid data format")
 
         # 시간 차 계산
