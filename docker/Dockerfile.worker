@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r app/requirements_worker.txt
 
 # 애플리케이션 코드 복사
 COPY scripts/ /app/scripts
+COPY utils/ /app/utils
 
 # 실행 명령
-CMD ["python", "-u", "scripts/pipeline_worker.py"]
+CMD ["python", "-u", "-m", "scripts.pipeline_worker"]

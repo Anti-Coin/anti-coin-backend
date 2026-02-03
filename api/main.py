@@ -8,8 +8,9 @@ import time
 from datetime import datetime, timezone, timedelta
 import json
 from pathlib import Path
+from utils.logger import get_logger
 
-# load_dotenv()
+logger = get_logger(__name__)
 
 # 환경 변수
 INFLUXDB_URL = os.getenv("INFLUXDB_URL")
@@ -35,7 +36,7 @@ client = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global client
-    print("Connecting to InfluxDB...")
+    logger.info("Connecting to InfluxDB...")
     client = InfluxDBClient(
         url=INFLUXDB_URL,
         token=INFLUXDB_TOKEN,
@@ -45,7 +46,7 @@ async def lifespan(app: FastAPI):
     )
     yield
 
-    print("Closing InfluxDB connection...")
+    logger.info("Closing InfluxDB connection...")
     client.close()
 
 
@@ -82,7 +83,7 @@ def query_influx(symbol: str, measurement: str, days: int = 30):
     try:
         df = query_api.query_data_frame(query)
     except Exception as e:
-        print(f"DB Query Error: {e}")
+        logger.error(f"DB Query Error: {e}")
         return None
 
     if isinstance(df, list) or df.empty:
@@ -191,7 +192,7 @@ def check_status(symbol: str, timeframe: str = "1h"):
     except json.JSONDecodeError:
         raise HTTPException(status_code=503, detail="Data corruption detected")
     except Exception as e:
-        print(f"Status Check Error: {e}")
+        logger.error(f"Status Check Error: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
     # 신선함

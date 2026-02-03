@@ -10,6 +10,9 @@ from pathlib import Path
 import json
 import requests
 import traceback
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 INFLUXDB_URL = os.getenv("INFLUXDB_URL")
 INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN")
@@ -33,14 +36,14 @@ LOOKBACK_DAYS = 30  # 과거 30일치 데이터 유지
 def send_alert(message):
     """디스코드/슬랙 등으로 알림 전송"""
     if not DISCORD_WEBHOOK_URL:
-        print(f"[Alert Ignored] {message}")
+        logger.info(f"[Alert Ignored] {message}")
         return
 
     try:
         payload = {"content": f"**Coin Predict Worker Alert**\n```{message}```"}
         requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=5)
     except Exception as e:
-        print(f"Failed to send alert: {e}")
+        logger.error(f"Failed to send alert: {e}")
 
 
 def get_last_timestamp(query_api, symbol):
@@ -61,7 +64,7 @@ def get_last_timestamp(query_api, symbol):
             # InfluxDB 시간은 UTC timezone이 포함됨.
             return last_time
     except Exception as e:
-        print(f"[{symbol}] DB 조회 중 에러 (아마 데이터 없음): {e}")
+        logger.error(f"[{symbol}] DB 조회 중 에러 (아마 데이터 없음): {e}")
 
     return None
 
@@ -93,9 +96,9 @@ def save_history_to_json(df, symbol):
         with open(file_path, "w") as f:
             json.dump(json_output, f)  # indet=None로 용량 절약
 
-        print(f"[{symbol}] 정적 파일 생성 완료: {file_path}")
+        logger.info(f"[{symbol}] 정적 파일 생성 완료: {file_path}")
     except Exception as e:
-        print(f"[{symbol}] 정적 파일 생성 실패: {e}")
+        logger.error(f"[{symbol}] 정적 파일 생성 실패: {e}")
 
 
 def fetch_and_save(write_api, symbol, since_ts):
@@ -117,7 +120,7 @@ def fetch_and_save(write_api, symbol, since_ts):
         )  # 약 41일 치
 
         if not ohlcv:
-            print(f"[{symbol}] 새로운 데이터 없음.")
+            logger.info(f"[{symbol}] 새로운 데이터 없음.")
             return
 
         df = pd.DataFrame(
@@ -139,12 +142,12 @@ def fetch_and_save(write_api, symbol, since_ts):
             data_frame_measurement_name="ohlcv",
             data_frame_tag_columns=["symbol"],
         )
-        print(f"[{symbol}] {len(df)}개 봉 저장 완료 (Last: {df.index[-1]})")
+        logger.info(f"[{symbol}] {len(df)}개 봉 저장 완료 (Last: {df.index[-1]})")
 
         # TODO: SSG 파일 생성을 DB 조회 후 덮어쓰기로 구현?
 
     except Exception as e:
-        print(f"[{symbol}] 수집 실패: {e}")
+        logger.error(f"[{symbol}] 수집 실패: {e}")
 
 
 def run_prediction_and_save(write_api, symbol):
@@ -152,7 +155,7 @@ def run_prediction_and_save(write_api, symbol):
     # 모델 로드
     model_file = MODELS_DIR / f"model_{symbol.replace('/', '_')}.json"
     if not model_file.exists():
-        print(f"[{symbol}] 모델 없음")
+        logger.warning(f"[{symbol}] 모델 없음")
         return
 
     try:
@@ -173,7 +176,7 @@ def run_prediction_and_save(write_api, symbol):
         next_24h = forecast[forecast["ds"] > now.replace(tzinfo=None)].head(24).copy()
 
         if next_24h.empty:
-            print(f"[{symbol}] 예측 범위 생성 실패.")
+            logger.warning(f"[{symbol}] 예측 범위 생성 실패.")
             return
 
         # 저장 (SSG)
@@ -205,7 +208,7 @@ def run_prediction_and_save(write_api, symbol):
         with open(file_path, "w") as f:
             json.dump(json_output, f, indent=2)
 
-        print(f"[{symbol}] SSG 파일 생성 완료: {file_path}")
+        logger.info(f"[{symbol}] SSG 파일 생성 완료: {file_path}")
 
         # 저장(DB)
         next_24h["ds"] = pd.to_datetime(next_24h["ds"]).dt.tz_localize(
@@ -223,10 +226,10 @@ def run_prediction_and_save(write_api, symbol):
             data_frame_measurement_name="prediction",
             data_frame_tag_columns=["symbol"],
         )
-        print(f"[{symbol}] {len(next_24h)}개 예측 저장 완료")
+        logger.info(f"[{symbol}] {len(next_24h)}개 예측 저장 완료")
 
     except Exception as e:
-        print(f"[{symbol}] 예측 에러: {e}")
+        logger.error(f"[{symbol}] 예측 에러: {e}")
 
 
 def update_full_history_file(query_api, symbol):
@@ -246,11 +249,13 @@ def update_full_history_file(query_api, symbol):
             df.set_index("timestamp", inplace=True)
             save_history_to_json(df, symbol)
     except Exception as e:
-        print(f"[{symbol}] History 갱신 중 에러: {e}")
+        logger.error(f"[{symbol}] History 갱신 중 에러: {e}")
 
 
 def run_worker():
-    print(f"[Pipeline Worker] Started. Target: {TARGET_COINS}, Timeframe: {TIMEFRAME}")
+    logger.info(
+        f"[Pipeline Worker] Started. Target: {TARGET_COINS}, Timeframe: {TIMEFRAME}"
+    )
 
     client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
     write_api = client.write_api(write_options=SYNCHRONOUS)
@@ -261,7 +266,7 @@ def run_worker():
     while True:
         try:
             start_time = time.time()
-            print(
+            logger.info(
                 f"\n[Cycle] 작업 시작: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
 
@@ -276,7 +281,7 @@ def run_worker():
                 else:
                     # 데이터가 아예 없으면 30일 전부터
                     since = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
-                    print(f"[{symbol}] 초기 데이터 수집 시작 (30일 전부터)")
+                    logger.info(f"[{symbol}] 초기 데이터 수집 시작 (30일 전부터)")
 
                 # 수집
                 fetch_and_save(write_api, symbol, since)
@@ -292,7 +297,7 @@ def run_worker():
             sleep_time = 60 - elapsed
 
             if sleep_time > 0:
-                print(
+                logger.info(
                     f"Cycle finished in {elapsed:.2f}s. Sleeping for {sleep_time:.2f}s..."
                 )
                 time.sleep(sleep_time)
@@ -300,13 +305,12 @@ def run_worker():
                 warning_msg = (
                     f"[Warning] Cycle Overrun! Took {elapsed:.2f}s (Limit: 60s)"
                 )
-                print(warning_msg)
                 send_alert(warning_msg)
 
         except Exception as e:
             # Worker가 죽지 않도록 잡지만, 운영자에게는 알림
             error_msg = f"Worker Critical Error:\n{traceback.format_exc()}"
-            print(error_msg)
+            logger.error(error_msg)
             send_alert(error_msg)
             time.sleep(10)  # 에러 루프 방지용 대기
 
