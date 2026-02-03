@@ -181,7 +181,7 @@ def check_status(symbol: str, timeframe: str = "1h"):
             raise HTTPException(status_code=503, detail="Invalid data format")
 
         # 시간 차 계산
-        updated_at = datetime.strptime(updated_at_str, "%Y-%m-%dT%H:%M:%S").replace(
+        updated_at = datetime.strptime(updated_at, "%Y-%m-%dT%H:%M:%S").replace(
             tzinfo=timezone.utc
         )
         now = datetime.now(timezone.utc)
