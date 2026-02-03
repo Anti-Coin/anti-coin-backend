@@ -172,18 +172,14 @@ def check_status(symbol: str, timeframe: str = "1h"):
             data = json.load(f)
 
         updated_at_str = data.get("updated_at")
+        if not updated_at_str:
+            raise HTTPException(status_code=503, detail="Invalid data format")
+
         try:
-            updated_at = updated_at_str.replace("Z", "+00:00")
+            updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
         except ValueError:
             raise HTTPException(status_code=503, detail="Invalid data format")
 
-        if not updated_at:
-            raise HTTPException(status_code=503, detail="Invalid data format")
-
-        # 시간 차 계산
-        updated_at = datetime.strptime(updated_at, "%Y-%m-%dT%H:%M:%S").replace(
-            tzinfo=timezone.utc
-        )
         now = datetime.now(timezone.utc)
 
         # 임계값 조회 (기본 값 65분)
