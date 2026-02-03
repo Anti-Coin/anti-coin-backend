@@ -172,6 +172,11 @@ def check_status(symbol: str, timeframe: str = "1h"):
             data = json.load(f)
 
         updated_at_str = data.get("updated_at")
+        try:
+            updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=503, detail="Invalid data format")
+
         if not updated_at_str:
             raise HTTPException(status_code=503, detail="Invalid data format")
 
