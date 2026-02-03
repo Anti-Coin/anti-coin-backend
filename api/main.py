@@ -173,7 +173,7 @@ def check_status(symbol: str, timeframe: str = "1h"):
 
         updated_at_str = data.get("updated_at")
         try:
-            updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
+            updated_at = updated_at_str.replace("Z", "+00:00")
         except ValueError:
             raise HTTPException(status_code=503, detail="Invalid data format")
 
