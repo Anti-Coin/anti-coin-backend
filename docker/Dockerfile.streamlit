@@ -14,6 +14,7 @@ COPY docker/requirements_streamlit.txt app/requirements_streamlit.txt
 RUN pip install --no-cache-dir -r app/requirements_streamlit.txt
 
 # 애플리케이션 코드 복사
+COPY utils/ /app/utils
 COPY admin/ /app
 
 # Streamlit 포트
