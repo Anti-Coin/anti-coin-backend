@@ -18,4 +18,4 @@ COPY scripts/ /app/scripts
 COPY utils/ /app/utils
 
 # 실행 명령
-CMD ["python", "-u", "scripts/pipeline_worker.py"]
+CMD ["python", "-u", "-m", "scripts.pipeline_worker"]
