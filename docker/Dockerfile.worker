@@ -18,4 +18,5 @@ COPY scripts/ /app/scripts
 COPY utils/ /app/utils
 
 # 실행 명령
-CMD ["python", "-u", "-m", "scripts.pipeline_worker"]
+# umask => json 기본 권한 644
+ENTRYPOINT ["sh", "-lc", "umask 022 && exec python -u -m scripts.pipeline_worker"]
