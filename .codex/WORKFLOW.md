@@ -4,8 +4,9 @@ Authoritative for: execution sequence for non-trivial work.
 ## Default Flow
 1) Analyze
 2) Discuss/Critique
-3) Patch
-4) Verify
+3) Test Design (for code changes)
+4) Patch
+5) Verify
 
 For high-risk tasks, use multiple turns and make the stage explicit.
 
@@ -21,11 +22,16 @@ For high-risk tasks, use multiple turns and make the stage explicit.
 - Choose the lowest-risk path.
 - Check practical operability in current environment before tool/design adoption.
 
-### 3) Patch
+### 3) Test Design (for code changes)
+- Define failure modes first.
+- Add/plan at least one automated test before or with the patch.
+- For bug fixes, prefer regression test first (Red -> Green -> Refactor).
+
+### 4) Patch
 - Keep changes minimal and scoped (`R6`, `R7`).
 - No speculative redesign.
 
-### 4) Verify
+### 5) Verify
 - Provide evidence (`VERIFY.md`).
 - Report what was verified and what was not.
 - Capture key learning from failures or near-misses for next iteration.
