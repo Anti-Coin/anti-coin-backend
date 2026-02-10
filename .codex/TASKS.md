@@ -17,8 +17,14 @@ If not, split it.
 
 ## Required Lifecycle
 1) Plan: objective, scope, files, assumptions, risks.
-2) Patch: minimal focused changes.
-3) Verify: evidence of correctness and non-regression (`VERIFY.md`).
+2) Test Design: failure scenarios and expected guardrails.
+3) Patch: minimal focused changes.
+4) Verify: evidence of correctness and non-regression (`VERIFY.md`).
+
+## Test Requirement
+- Bug fix task should include a regression test by default.
+- New behavior task should include at least one positive and one failure-path test.
+- If test is deferred, record reason and follow-up task ID.
 
 ## If Complexity Expands Mid-Task
 - Stop scope growth.

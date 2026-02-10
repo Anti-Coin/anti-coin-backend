@@ -8,6 +8,7 @@ Authoritative for: pre-merge and pre-apply review gate.
 - [ ] Stability is preserved/improved (`R1`, `R2`)
 - [ ] Data/time correctness is maintained (`R3`, `R4`, `R5`)
 - [ ] Verification evidence exists (`R10`, `VERIFY.md`)
+- [ ] Regression test exists for bug fix or defer reason is documented
 - [ ] Risk/corner cases are disclosed (`RISK.md`)
 
 ### Warning

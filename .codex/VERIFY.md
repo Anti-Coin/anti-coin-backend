@@ -12,6 +12,14 @@ Each non-trivial task must include at least one:
 
 If not possible, explain why and state residual risk.
 
+## TDD-Oriented Rule
+When practical:
+1) write failing test first (or in same patch with explicit failure scenario),
+2) implement minimal fix,
+3) keep regression test permanent.
+
+For bug fixes, absence of regression test must be justified.
+
 ## Required Coverage (as applicable)
 1) Functional correctness
 2) Stability/runtime safety

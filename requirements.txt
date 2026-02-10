@@ -8,3 +8,4 @@ influxdb-client
 python-dotenv
 fastapi[uvicorn]
 uvicorn
+pytest

@@ -4,6 +4,7 @@ Authoritative for: when to ask first vs proceed.
 ## Ask First If Any Critical Variable Is Missing
 - Runtime/deployment assumption
 - Failure policy (retry/stop/alert/degrade)
+- Boundary between philosophy and domain policy
 - Data contract (schema/timezone/freshness/idempotency)
 - Definition of done and non-regression target
 - Verification method

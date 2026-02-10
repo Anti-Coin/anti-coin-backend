@@ -17,7 +17,8 @@ Authoritative for: repository structure and ownership boundaries.
 ### Data/artifact paths
 - `models/`: serialized model artifacts.
 - `static_data/` (runtime mount): generated history/prediction JSON artifacts.
-- `tests/`: load-test script(s).
+- `tests/`: unit and load-test scripts.
+- `docs/`: living plan, task board, decisions, debt register, handoff.
 
 ## Current Data Flow
 `ccxt/binance -> worker -> InfluxDB + static JSON -> nginx/static + fastapi -> streamlit`
