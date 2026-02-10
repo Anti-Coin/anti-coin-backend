@@ -9,7 +9,8 @@ from datetime import datetime, timezone, timedelta
 import json
 from pathlib import Path
 from utils.logger import get_logger
-from utils.config import FRESHNESS_THRESHOLDS
+from utils.config import FRESHNESS_THRESHOLDS, FRESHNESS_HARD_THRESHOLDS
+from utils.freshness import classify_freshness, parse_utc_timestamp
 
 logger = get_logger(__name__)
 
@@ -172,40 +173,55 @@ def check_status(symbol: str, timeframe: str = "1h"):
         if not updated_at_str:
             raise HTTPException(status_code=503, detail="Invalid data format")
 
-        try:
-            updated_at = datetime.fromisoformat(
-                updated_at_str.replace("Z", "+00:00")
-            )
-        except ValueError:
+        updated_at = parse_utc_timestamp(updated_at_str)
+        if updated_at is None:
             raise HTTPException(status_code=503, detail="Invalid data format")
 
         now = datetime.now(timezone.utc)
 
         # 임계값 조회 (기본 값 65분)
         default_limit = FRESHNESS_THRESHOLDS.get("1h", timedelta(minutes=65))
-        limit = FRESHNESS_THRESHOLDS.get(timeframe, default_limit)
+        default_hard_limit = FRESHNESS_HARD_THRESHOLDS.get("1h", default_limit * 2)
+        soft_limit = FRESHNESS_THRESHOLDS.get(timeframe, default_limit)
+        hard_limit = FRESHNESS_HARD_THRESHOLDS.get(
+            timeframe, max(default_hard_limit, soft_limit * 2)
+        )
 
-        if (now - updated_at) > limit:
-            # 데이터가 상한 경우
+        freshness = classify_freshness(
+            updated_at=updated_at,
+            now=now,
+            soft_limit=soft_limit,
+            hard_limit=hard_limit,
+        )
+
+        if freshness.status == "hard_stale":
             raise HTTPException(
                 status_code=503,
-                detail=f"Data is stale. Last updated: {updated_at_str}",
+                detail=f"Data is stale beyond hard limit. Last updated: {updated_at_str}",
             )
+
     except json.JSONDecodeError:
         raise HTTPException(status_code=503, detail="Data corruption detected")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Status Check Error: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
-    # 신선함
-    return {"status": "ok", "updated_at": updated_at_str}
+    response = {
+        "status": freshness.status,
+        "updated_at": updated_at_str,
+        "age_minutes": round(freshness.age.total_seconds() / 60, 2),
+        "threshold_minutes": {
+            "soft": int(freshness.soft_limit.total_seconds() // 60),
+            "hard": int(freshness.hard_limit.total_seconds() // 60),
+        },
+    }
+    if freshness.status == "stale":
+        response["warning"] = "Data is stale but within soft-stale tolerance."
+    return response
 
 
 @app.get("/")
 def health_check():
     return {"status": "ok", "models_loaded": list(loaded_models.keys())}
-
-
-@app.on_event("shutdown")
-def shutdown_event():
-    client.close()
