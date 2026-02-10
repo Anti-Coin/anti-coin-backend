@@ -65,10 +65,12 @@ def test_detect_alert_event_only_for_unhealthy_transitions_and_recovery():
     assert detect_alert_event(None, "fresh") is None
     assert detect_alert_event("fresh", "stale") is None
     assert detect_alert_event("fresh", "hard_stale") == "hard_stale"
+    assert detect_alert_event("fresh", "missing") == "missing"
     assert detect_alert_event("hard_stale", "hard_stale") is None
     assert detect_alert_event("hard_stale", "corrupt") == "corrupt"
     assert detect_alert_event("corrupt", "stale") == "recovery"
-    assert detect_alert_event("corrupt", "missing") is None
+    assert detect_alert_event("corrupt", "missing") == "missing"
+    assert detect_alert_event("missing", "stale") == "recovery"
 
 
 def test_run_monitor_cycle_deduplicates_and_emits_recovery(tmp_path):

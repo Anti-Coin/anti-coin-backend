@@ -14,7 +14,7 @@
 | TD-001 | Ingest | closed candle 경계 미구현 | 미완료 캔들 저장 가능성 | open | A-004 | 경계 계산 유틸 추가 후 fetch 경로 적용 |
 | TD-002 | Ingest | gap detector 미구현 | 데이터 누락 장기화 가능 | open | A-005 | 누락 구간 계산 로직 추가 |
 | TD-003 | Ingest | gap refill 잡 미구현 | 누락 자동 복구 불가 | open | A-006 | gap 기반 재수집 루틴 구현 |
-| TD-004 | Alerting | hard_stale/corrupt/recovery 알림 미연동 | 운영자 탐지 지연 | mitigated | A-010 | 배포 환경에서 monitor 서비스 기동/알림 확인 후 `resolved` 전환 |
+| TD-004 | Alerting | hard_stale/corrupt/missing/recovery 알림 미연동 | 운영자 탐지 지연 | mitigated | A-010 | 배포 환경에서 monitor 서비스 기동/알림 확인 후 `resolved` 전환 |
 | TD-005 | API | timeframe-aware 파일 네이밍 미완성 | 확장 시 라우팅 혼선 | open | B-002 | 파일명 규칙 통일 |
 | TD-006 | API | manifest 미구현 | 상태 가시성 부족 | open | B-004 | manifest 생성 경로 추가 |
 | TD-007 | Worker | 워커 경계 조건 테스트 부족 | 회귀 리스크 증가 | open | A-011-6 | fetch pagination 테스트 추가 |

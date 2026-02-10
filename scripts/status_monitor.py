@@ -37,7 +37,7 @@ def _parse_positive_int_env(name: str, default: int) -> int:
 MONITOR_POLL_SECONDS = _parse_positive_int_env("MONITOR_POLL_SECONDS", 60)
 
 HEALTHY_STATUSES = {"fresh", "stale"}
-ALERTABLE_UNHEALTHY_STATUSES = {"hard_stale", "corrupt"}
+ALERTABLE_UNHEALTHY_STATUSES = {"hard_stale", "corrupt", "missing"}
 
 
 @dataclass(frozen=True)

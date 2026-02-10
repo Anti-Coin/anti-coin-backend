@@ -86,7 +86,7 @@
   - 운영 알림은 호출 유무와 무관하게 백엔드에서 지속 감시 필요
 - Decision:
   - A-010은 별도 모니터 스크립트로 구현한다.
-  - 알림 이벤트는 `hard_stale`, `corrupt`, `recovery` 상태전이에만 제한한다.
+  - 알림 이벤트는 `hard_stale`, `corrupt`, `missing`, `recovery` 상태전이에 제한한다.
   - `stale(soft)`는 알림 대상이 아니라 경고 노출 대상이다.
 - Consequence:
   - Worker 다운/호출 부재 상황에서도 상태 감시 가능

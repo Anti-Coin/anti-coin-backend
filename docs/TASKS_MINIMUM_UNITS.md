@@ -21,7 +21,7 @@
 | A-007 | P0 | 원자적 JSON 쓰기 도입 ✅ | 공통 writer 유틸 | 완료 (2026-02-10): static JSON 저장 경로에 atomic write 적용 |
 | A-008 | P0 | freshness 분류 유틸 (`fresh/stale/hard_stale/corrupt`) ✅ | 공통 판정 함수 | 완료 (2026-02-10): `utils/freshness.py` 도입 및 분류 테스트 통과 |
 | A-009 | P0 | status 엔드포인트에 상태 상세 반영 ✅ | API 응답 스키마 업데이트 | 완료 (2026-02-10): soft stale 경고, hard stale 차단, 예외 처리 보강 |
-| A-010 | P1 | alerting 규칙 확장 (hard_stale/corrupt/recovery) ✅ | 모니터 + 알림 분기 로직 | 완료 (2026-02-10): 별도 모니터 스크립트 + 상태전이 알림/테스트 반영 |
+| A-010 | P1 | alerting 규칙 확장 (hard_stale/corrupt/missing/recovery) ✅ | 모니터 + 알림 분기 로직 | 완료 (2026-02-10): 별도 모니터 스크립트 + 상태전이 알림/테스트 반영 |
 | A-011 | P1 | 기본 회귀 테스트 추가 🔄 | 단위/통합 테스트 | 진행중 (2026-02-10): 우선 단위 테스트부터 확대 |
 | A-012 | P1 | 세션 정렬 문서 체계 구축 ✅ | identity/constraints/debt/handoff 문서 | 완료 (2026-02-10): 새 세션 bootstrap 가능한 문서 스택 구성 |
 
@@ -83,7 +83,7 @@
 ## 8. A-010 세부 태스크 (Alert Monitor)
 | ID | Priority | Task | 산출물 | Done 조건 |
 |---|---|---|---|---|
-| A-010-1 | P1 | 알림 설계 고정 (이벤트/대상/중복억제) ✅ | 문서/결정 로그 | 완료 (2026-02-10): hard_stale/corrupt/recovery 전이 규칙 확정 |
+| A-010-1 | P1 | 알림 설계 고정 (이벤트/대상/중복억제) ✅ | 문서/결정 로그 | 완료 (2026-02-10): hard_stale/corrupt/missing/recovery 전이 규칙 확정 |
 | A-010-2 | P1 | 별도 모니터 스크립트 구현 ✅ | `scripts/status_monitor.py` | 완료 (2026-02-10): static artifact 상태 주기 점검 구현 |
 | A-010-3 | P1 | Discord 알림 연동 ✅ | webhook 전송 로직 | 완료 (2026-02-10): 이벤트 메시지 템플릿 + 전송 처리 |
 | A-010-4 | P1 | 상태전이 테스트 ✅ | 단위 테스트 | 완료 (2026-02-10): 중복 억제/복구 알림 케이스 검증 |
