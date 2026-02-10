@@ -24,6 +24,7 @@ def atomic_write_json(
             temp_file.flush()
             os.fsync(temp_file.fileno())
         os.replace(temp_path, file_path)
+        os.chmod(file_path, 0o644)
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
