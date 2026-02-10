@@ -70,6 +70,23 @@ services:
       - ./models:/app/models
       - ./static_data:/app/static_data
 
+  monitor:
+    image: ghcr.io/anti-coin/anti-coin-backend-worker:latest
+    container_name: coin-monitor
+    environment:
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
+      TARGET_SYMBOLS: ${TARGET_SYMBOLS}
+      INGEST_TIMEFRAMES: ${INGEST_TIMEFRAMES}
+      FRESHNESS_THRESHOLDS_MINUTES: ${FRESHNESS_THRESHOLDS_MINUTES}
+      FRESHNESS_HARD_THRESHOLDS_MINUTES: ${FRESHNESS_HARD_THRESHOLDS_MINUTES}
+      MONITOR_POLL_SECONDS: ${MONITOR_POLL_SECONDS}
+    depends_on:
+      - worker
+    restart: always
+    volumes:
+      - ./static_data:/app/static_data
+    command: ["python", "-u", "-m", "scripts.status_monitor"]
+
   prometheus:
     image: prom/prometheus:latest
     container_name: coin-prometheus
