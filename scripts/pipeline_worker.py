@@ -7,10 +7,11 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import json
 import requests
 import traceback
 from utils.logger import get_logger
+from utils.config import TARGET_SYMBOLS, PRIMARY_TIMEFRAME
+from utils.file_io import atomic_write_json
 
 logger = get_logger(__name__)
 
@@ -28,8 +29,8 @@ os.makedirs(MODELS_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 
 # 수집 대상 및 설정
-TARGET_COINS = ["BTC/USDT", "ETH/USDT", "XRP/USDT", "SOL/USDT", "DOGE/USDT"]
-TIMEFRAME = "1h"
+TARGET_COINS = TARGET_SYMBOLS
+TIMEFRAME = PRIMARY_TIMEFRAME
 LOOKBACK_DAYS = 30  # 과거 30일치 데이터 유지
 
 
@@ -86,15 +87,15 @@ def save_history_to_json(df, symbol):
             "data": export_df[
                 ["timestamp", "open", "high", "low", "close", "volume"]
             ].to_dict(orient="records"),
-            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "updated_at": datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
             "type": "history_1h",
         }
 
         safe_symbol = symbol.replace("/", "_")
         file_path = STATIC_DIR / f"history_{safe_symbol}.json"
-
-        with open(file_path, "w") as f:
-            json.dump(json_output, f)  # indet=None로 용량 절약
+        atomic_write_json(file_path, json_output)
 
         logger.info(f"[{symbol}] 정적 파일 생성 완료: {file_path}")
     except Exception as e:
@@ -106,6 +107,7 @@ def fetch_and_save(write_api, symbol, since_ts):
     ccxt로 데이터 가져와서 InfluxDB에 저장
     """
     exchange = ccxt.binance()
+    exchange.enableRateLimit = True
 
     # since_ts가 datetime 객체라면 밀리초(int)로 변환 필요
     if isinstance(since_ts, datetime):
@@ -114,21 +116,60 @@ def fetch_and_save(write_api, symbol, since_ts):
         since_ms = int(since_ts)  # 이미 int면 그대로
 
     try:
-        # 데이터 가져오기
-        ohlcv = exchange.fetch_ohlcv(
-            symbol, TIMEFRAME, since=since_ms, limit=1000
-        )  # 약 41일 치
+        fetch_limit = 1000
+        timeframe_ms = exchange.parse_timeframe(TIMEFRAME) * 1000
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
 
-        if not ohlcv:
+        cursor = since_ms
+        page_count = 0
+        chunks = []
+
+        # Backfill pagination: limit=1000 단발 호출 대신 누락 구간을 순차적으로 수집
+        while cursor <= now_ms:
+            ohlcv = exchange.fetch_ohlcv(
+                symbol, TIMEFRAME, since=cursor, limit=fetch_limit
+            )
+            if not ohlcv:
+                break
+
+            page_count += 1
+            chunks.append(
+                pd.DataFrame(
+                    ohlcv,
+                    columns=[
+                        "timestamp",
+                        "open",
+                        "high",
+                        "low",
+                        "close",
+                        "volume",
+                    ],
+                )
+            )
+
+            last_ts = ohlcv[-1][0]
+            if last_ts < cursor:
+                logger.warning(
+                    f"[{symbol}] Pagination cursor 역행 감지. last_ts={last_ts}, cursor={cursor}"
+                )
+                break
+
+            next_cursor = last_ts + timeframe_ms
+            if len(ohlcv) < fetch_limit or next_cursor <= cursor:
+                break
+
+            cursor = next_cursor
+
+        if not chunks:
             logger.info(f"[{symbol}] 새로운 데이터 없음.")
             return
 
-        df = pd.DataFrame(
-            ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"]
-        )
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms").dt.tz_localize(
-            "UTC"
-        )
+        df = pd.concat(chunks, ignore_index=True)
+        df.drop_duplicates(subset=["timestamp"], keep="last", inplace=True)
+        df.sort_values(by="timestamp", inplace=True)
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"], unit="ms"
+        ).dt.tz_localize("UTC")
         df.set_index("timestamp", inplace=True)
 
         # 태그 추가
@@ -142,7 +183,9 @@ def fetch_and_save(write_api, symbol, since_ts):
             data_frame_measurement_name="ohlcv",
             data_frame_tag_columns=["symbol"],
         )
-        logger.info(f"[{symbol}] {len(df)}개 봉 저장 완료 (Last: {df.index[-1]})")
+        logger.info(
+            f"[{symbol}] {len(df)}개 봉 저장 완료 (pages={page_count}, Last={df.index[-1]})"
+        )
 
         # TODO: SSG 파일 생성을 DB 조회 후 덮어쓰기로 구현?
 
@@ -165,7 +208,9 @@ def run_prediction_and_save(write_api, symbol):
         # 예측 (현재 시점부터 24시간)
         now = datetime.now(timezone.utc)
         # .replace(minute=0, second=0, microsecond=0) => UTC 통일
-        future = pd.DataFrame({"ds": pd.date_range(start=now, periods=24, freq="h")})
+        future = pd.DataFrame(
+            {"ds": pd.date_range(start=now, periods=24, freq="h")}
+        )
         future["ds"] = future["ds"].dt.tz_localize(None)  # prophet은 tz-naive
 
         # As-Is: 여기서는 과거 데이터 없이 모델이 기억하는 패턴으로만 예측
@@ -173,7 +218,9 @@ def run_prediction_and_save(write_api, symbol):
         forecast = model.predict(future)
 
         # 필요한 데이터만 추출
-        next_24h = forecast[forecast["ds"] > now.replace(tzinfo=None)].head(24).copy()
+        next_24h = (
+            forecast[forecast["ds"] > now.replace(tzinfo=None)].head(24).copy()
+        )
 
         if next_24h.empty:
             logger.warning(f"[{symbol}] 예측 범위 생성 실패.")
@@ -204,9 +251,7 @@ def run_prediction_and_save(write_api, symbol):
         # 파일 저장 (덮어쓰기)
         safe_symbol = symbol.replace("/", "_")
         file_path = STATIC_DIR / f"prediction_{safe_symbol}.json"
-
-        with open(file_path, "w") as f:
-            json.dump(json_output, f, indent=2)
+        atomic_write_json(file_path, json_output, indent=2)
 
         logger.info(f"[{symbol}] SSG 파일 생성 완료: {file_path}")
 
@@ -216,7 +261,9 @@ def run_prediction_and_save(write_api, symbol):
         )  # 불필요한 연산 같기는 한데,,, 방어용???
         next_24h = next_24h[["ds", "yhat", "yhat_lower", "yhat_upper"]]
         next_24h.rename(columns={"ds": "timestamp"}, inplace=True)
-        next_24h.set_index("timestamp", inplace=True)  # InfluxDB는 index가 timestamp
+        next_24h.set_index(
+            "timestamp", inplace=True
+        )  # InfluxDB는 index가 timestamp
         next_24h["symbol"] = symbol
 
         write_api.write(
@@ -257,7 +304,9 @@ def run_worker():
         f"[Pipeline Worker] Started. Target: {TARGET_COINS}, Timeframe: {TIMEFRAME}"
     )
 
-    client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
+    client = InfluxDBClient(
+        url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG
+    )
     write_api = client.write_api(write_options=SYNCHRONOUS)
     query_api = client.query_api()
 
@@ -280,8 +329,12 @@ def run_worker():
                     since = last_time
                 else:
                     # 데이터가 아예 없으면 30일 전부터
-                    since = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
-                    logger.info(f"[{symbol}] 초기 데이터 수집 시작 (30일 전부터)")
+                    since = datetime.now(timezone.utc) - timedelta(
+                        days=LOOKBACK_DAYS
+                    )
+                    logger.info(
+                        f"[{symbol}] 초기 데이터 수집 시작 (30일 전부터)"
+                    )
 
                 # 수집
                 fetch_and_save(write_api, symbol, since)

@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
 import time
+from utils.config import TARGET_SYMBOLS
 
 st.set_page_config(page_title="Coin Predict MVP", layout="wide")
 
@@ -127,9 +128,7 @@ st.markdown("코인 예측 모니터링 시스템")
 
 # 사이드바
 st.sidebar.header("Control Panel")
-symbol = st.sidebar.selectbox(
-    "Target Asset", ["BTC/USDT", "ETH/USDT", "XRP/USDT", "SOL/USDT", "DOGE/USDT"]
-)
+symbol = st.sidebar.selectbox("Target Asset", TARGET_SYMBOLS)
 
 if st.sidebar.button("Refresh Data"):
     st.cache_data.clear()  # 캐시 비우기 (새로고침)
@@ -206,6 +205,9 @@ with st.expander("View Raw JSON Content"):
                 if not forecast_df.empty
                 else {}
             ),
-            "metadata": {"history_updated": h_updated, "forecast_updated": f_updated},
+            "metadata": {
+                "history_updated": h_updated,
+                "forecast_updated": f_updated,
+            },
         }
     )

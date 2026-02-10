@@ -9,6 +9,7 @@ from datetime import datetime, timezone, timedelta
 import json
 from pathlib import Path
 from utils.logger import get_logger
+from utils.config import FRESHNESS_THRESHOLDS
 
 logger = get_logger(__name__)
 
@@ -21,14 +22,6 @@ INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET")
 # 정적 파일 경로 (Docker compose에서 /app/static_data로 마운트 됨)
 BASE_DIR = Path("/app")
 STATIC_DIR = BASE_DIR / "static_data"
-
-# Timeframe별 허용 임계값 (Timeframe + 여유시간)
-# 현재는 1h만 사용. 추후 확장을 위해 구조를 잡아둠.
-THRESHOLDS = {
-    "1h": timedelta(minutes=65),
-    "4h": timedelta(minutes=250),
-    "1d": timedelta(hours=25),
-}
 
 client = None
 
@@ -104,7 +97,9 @@ def get_history(symbol: str):
     df = query_influx(symbol, "ohlcv", days=30)
 
     if df is None:
-        raise HTTPException(status_code=404, detail=f"No history data for {symbol}")
+        raise HTTPException(
+            status_code=404, detail=f"No history data for {symbol}"
+        )
 
     # 필요한 컬럼만 추출
     cols = ["timestamp", "open", "high", "low", "close", "volume"]
@@ -136,7 +131,9 @@ def predict_price(symbol: str):
     df = df[df["timestamp"] > now]
 
     if df is None or df.empty:
-        raise HTTPException(status_code=503, detail="System outdated. Worker is down.")
+        raise HTTPException(
+            status_code=503, detail="System outdated. Worker is down."
+        )
 
     cols = ["timestamp", "yhat", "yhat_lower", "yhat_upper"]
     available_cols = [c for c in cols if c in df.columns]
@@ -176,19 +173,23 @@ def check_status(symbol: str, timeframe: str = "1h"):
             raise HTTPException(status_code=503, detail="Invalid data format")
 
         try:
-            updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
+            updated_at = datetime.fromisoformat(
+                updated_at_str.replace("Z", "+00:00")
+            )
         except ValueError:
             raise HTTPException(status_code=503, detail="Invalid data format")
 
         now = datetime.now(timezone.utc)
 
         # 임계값 조회 (기본 값 65분)
-        limit = THRESHOLDS.get(timeframe, timedelta(minutes=65))
+        default_limit = FRESHNESS_THRESHOLDS.get("1h", timedelta(minutes=65))
+        limit = FRESHNESS_THRESHOLDS.get(timeframe, default_limit)
 
         if (now - updated_at) > limit:
             # 데이터가 상한 경우
             raise HTTPException(
-                status_code=503, detail=f"Data is stale. Last updated: {updated_at_str}"
+                status_code=503,
+                detail=f"Data is stale. Last updated: {updated_at_str}",
             )
     except json.JSONDecodeError:
         raise HTTPException(status_code=503, detail="Data corruption detected")

@@ -4,16 +4,19 @@ from prophet import Prophet
 from prophet.serialize import model_to_json
 import os
 from pathlib import Path
+from utils.config import TARGET_SYMBOLS, PRIMARY_TIMEFRAME
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-def train_and_save(symbol="BTC/USDT"):
+def train_and_save(
+    symbol: str = "BTC/USDT", timeframe: str = PRIMARY_TIMEFRAME
+):
     print(f"[{symbol}] 모델 학습 시작...")
 
     # 데이터 수집 (최근 500시간)
     exchange = ccxt.binance()
-    ohlcv = exchange.fetch_ohlcv(symbol, "1h", limit=500)
+    ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=500)
     df = pd.DataFrame(
         ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"]
     )
@@ -38,5 +41,5 @@ def train_and_save(symbol="BTC/USDT"):
 
 
 if __name__ == "__main__":
-    for symbol in ["BTC/USDT", "ETH/USDT", "XRP/USDT", "SOL/USDT", "DOGE/USDT"]:
+    for symbol in TARGET_SYMBOLS:
         train_and_save(symbol)
