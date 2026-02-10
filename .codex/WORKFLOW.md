@@ -1,6 +1,9 @@
 # WORKFLOW.md
 Authoritative for: execution sequence for non-trivial work.
 
+## Session Start
+Before `Default Flow`, run startup alignment from `STARTUP_PROTOCOL.md`.
+
 ## Default Flow
 1) Analyze
 2) Discuss/Critique

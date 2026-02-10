@@ -12,6 +12,11 @@ Authoritative for: project goals, constraints, and tradeoff intent.
 - Decide after deep discussion on non-trivial topics.
 - Always think about edge cases and failure paths before implementation.
 
+## Philosophy vs Domain Policy
+- Philosophy: stable engineering stance and collaboration values.
+- Domain policy: market-data specific rules that may change with domain/service scope.
+- Example in this repo: freshness/stale exposure policy is domain-driven, not universal philosophy.
+
 ## Delivery Philosophy
 - Prefer practical MVP delivery over perfectionism.
 - Treat failures as learning input, then iterate with small safe changes.
@@ -33,6 +38,12 @@ Authoritative for: project goals, constraints, and tradeoff intent.
 - Static JSON artifacts for serving
 - Gatekeeper-style freshness checks
 - UTC for internal time
+
+## Source of Truth Docs
+- `docs/PROJECT_IDENTITY.md`: project philosophy and goals
+- `docs/OPERATING_CONSTRAINTS.md`: runtime and ops constraints
+- `docs/TECH_DEBT_REGISTER.md`: debt tracking
+- `docs/SESSION_HANDOFF.md`: latest execution context
 
 ## Tooling Stance
 - Heavy orchestration is conditional, not default (`R8`).

@@ -20,8 +20,9 @@ Retries and reruns must not corrupt data or produce inconsistent artifacts.
 ### R4) UTC internally
 Use UTC for internal time. Convert only at boundaries (UI/output if needed).
 
-### R5) Freshness honesty
-Do not serve stale/invalid data as fresh. Degrade explicitly (for example, 503).
+### R5) Freshness honesty (domain policy)
+In this market-data project, do not serve stale/invalid data as fresh.
+Degrade explicitly (warning/503 based on current policy).
 
 ### R6) One task, one purpose
 Do not mix unrelated concerns in one task.

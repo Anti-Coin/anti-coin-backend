@@ -23,6 +23,7 @@
 | A-009 | P0 | status 엔드포인트에 상태 상세 반영 ✅ | API 응답 스키마 업데이트 | 완료 (2026-02-10): soft stale 경고, hard stale 차단, 예외 처리 보강 |
 | A-010 | P1 | alerting 규칙 확장 (hard_stale/corrupt 시 알림) | 알림 분기 로직 | 조건별 알림 전송 확인 |
 | A-011 | P1 | 기본 회귀 테스트 추가 🔄 | 단위/통합 테스트 | 진행중 (2026-02-10): 우선 단위 테스트부터 확대 |
+| A-012 | P1 | 세션 정렬 문서 체계 구축 ✅ | identity/constraints/debt/handoff 문서 | 완료 (2026-02-10): 새 세션 bootstrap 가능한 문서 스택 구성 |
 
 ## 2. Phase B (Timeframe Expansion) - A 완료 후
 | ID | Priority | Task | 산출물 | Done 조건 |
@@ -66,6 +67,7 @@
 2. Task 완료 시 실제 영향 파일 경로를 남긴다.
 3. Task 실패/보류 시 원인과 다음 시도 조건을 한 줄로 기록한다.
 4. 모델 관련 Task(D-xxx)는 품질 지표와 롤백 경로가 없으면 `Done` 처리하지 않는다.
+5. 새 기술 부채 발견 시 `TECH_DEBT_REGISTER` 업데이트 없이는 완료 처리하지 않는다.
 
 ## 7. A-011 세부 태스크 (테스트 체계)
 | ID | Priority | Task | 산출물 | Done 조건 |
@@ -93,3 +95,5 @@
    변경 파일: `api/main.py`, `tests/test_api_status.py`
 7. 2026-02-10: A-011-1~5 완료
    변경 파일: `pytest.ini`, `tests/test_file_io.py`, `tests/test_freshness.py`, `tests/test_api_status.py`, `tests/test_config.py`, `requirements.txt`
+8. 2026-02-10: A-012 완료
+   변경 파일: `docs/README.md`, `docs/PROJECT_IDENTITY.md`, `docs/ENGINEERING_CONSTITUTION.md`, `docs/OPERATING_CONSTRAINTS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/SESSION_HANDOFF.md`, `docs/GLOSSARY.md`, `docs/SESSION_BOOTSTRAP_PROMPT.md`, `.codex/STARTUP_PROTOCOL.md`, `.codex/CONTEXT.md`, `.codex/RULES.md`, `.codex/WORKFLOW.md`, `.codex/QUESTIONS.md`, `.codex/REPO_MAP.md`
