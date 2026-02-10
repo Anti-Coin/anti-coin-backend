@@ -7,6 +7,7 @@
 1. Phase A 진행 중
 2. 완료: A-001, A-003, A-007, A-008, A-009, A-010
 3. 테스트: A-011-1~5 + A-010-4 완료 (`pytest` 26개 통과)
+4. monitor 실행 충돌 핫픽스 적용(ENTRYPOINT/CMD 분리)
 
 ## 2. 다음 우선 작업
 1. A-004: closed candle 경계 유틸

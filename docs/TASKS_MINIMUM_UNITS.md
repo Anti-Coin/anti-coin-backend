@@ -88,6 +88,7 @@
 | A-010-3 | P1 | Discord 알림 연동 ✅ | webhook 전송 로직 | 완료 (2026-02-10): 이벤트 메시지 템플릿 + 전송 처리 |
 | A-010-4 | P1 | 상태전이 테스트 ✅ | 단위 테스트 | 완료 (2026-02-10): 중복 억제/복구 알림 케이스 검증 |
 | A-010-5 | P2 | 런타임 서비스 연결 ✅ | `docker-compose.yml` | 완료 (2026-02-10): monitor 서비스 추가 |
+| A-010-6 | P1 | worker/monitor 실행 엔트리포인트 분리 ✅ | `docker/Dockerfile.worker` | 완료 (2026-02-10): worker 기본 CMD + 범용 ENTRYPOINT 전환 |
 
 ## 9. 작업 이력
 1. 2026-02-10: A-001 완료
@@ -110,3 +111,5 @@
    변경 파일: `docs/TASKS_MINIMUM_UNITS.md`, `docs/PLAN_LIVING_HYBRID.md`, `docs/DECISIONS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/SESSION_HANDOFF.md`
 10. 2026-02-10: A-010 완료
    변경 파일: `scripts/status_monitor.py`, `tests/test_status_monitor.py`, `docker-compose.yml`, `.env.example`, `docs/TASKS_MINIMUM_UNITS.md`
+11. 2026-02-10: A-010 후속 패치 완료
+   변경 파일: `docker/entrypoint_worker.sh`, `docker/Dockerfile.worker`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/DECISIONS.md`, `docs/SESSION_HANDOFF.md`

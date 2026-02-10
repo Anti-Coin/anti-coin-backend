@@ -24,6 +24,7 @@
 | TD-011 | Modeling | shadow 추론/평가 파이프라인 미구현 | 모델 비교 근거 부족 | open | D-003,D-004 | shadow 결과 저장/리포트 구현 |
 | TD-012 | Modeling | 자동 재학습/승격 게이트 미구현 | 모델 운영 수작업 부담 | open | D-006,D-007,D-005 | 수동 트리거부터 도입 |
 | TD-013 | Reliability | atomic JSON 권한 이슈 (회귀 위험) | nginx 읽기 실패 재발 가능 | mitigated | A-007,A-011-2 | 회귀 테스트 유지 및 CI 연동 |
+| TD-014 | Deployment | worker 이미지 ENTRYPOINT 고정으로 monitor 커맨드 충돌 | monitor 오작동/중복 worker 실행 가능 | resolved | A-010-6 | 범용 ENTRYPOINT + worker 기본 CMD로 분리 적용 |
 
 ## 3. 상태 정의
 1. `open`: 미해결

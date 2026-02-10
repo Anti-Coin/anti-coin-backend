@@ -91,3 +91,16 @@
 - Consequence:
   - Worker 다운/호출 부재 상황에서도 상태 감시 가능
   - 알림 노이즈 감소 (상태전이 기반)
+
+## D-2026-02-10-08
+- Date: 2026-02-10
+- Status: Accepted
+- Context:
+  - worker 이미지가 고정 ENTRYPOINT로 `pipeline_worker`를 강제해 monitor 실행과 충돌
+  - monitor 서비스에서 command override가 의도대로 적용되지 않는 위험 확인
+- Decision:
+  - worker 이미지는 범용 ENTRYPOINT(umask 설정 + exec) + 기본 CMD(`pipeline_worker`) 구조로 전환
+  - monitor는 compose `command`로 `scripts.status_monitor`를 실행한다.
+- Consequence:
+  - worker/monitor 공용 이미지 재사용 가능
+  - monitor가 별도 Dockerfile 없이 독립 프로세스로 실행 가능
