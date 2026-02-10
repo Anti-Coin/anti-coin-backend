@@ -25,6 +25,7 @@
 | TD-012 | Modeling | 자동 재학습/승격 게이트 미구현 | 모델 운영 수작업 부담 | open | D-006,D-007,D-005 | 수동 트리거부터 도입 |
 | TD-013 | Reliability | atomic JSON 권한 이슈 (회귀 위험) | nginx 읽기 실패 재발 가능 | mitigated | A-007,A-011-2 | 회귀 테스트 유지 및 CI 연동 |
 | TD-014 | Deployment | worker 이미지 ENTRYPOINT 고정으로 monitor 커맨드 충돌 | monitor 오작동/중복 worker 실행 가능 | resolved | A-010-6 | 범용 ENTRYPOINT + worker 기본 CMD로 분리 적용 |
+| TD-015 | Data Consistency | Influx-JSON 최신 시각 불일치 자동 검증 미구현 | 운영자가 오래된 JSON을 정상으로 오해할 수 있음 | open | A-014 | Influx 최신 시각 vs static `updated_at` 비교 로직/알림 추가 |
 
 ## 3. 상태 정의
 1. `open`: 미해결

@@ -25,6 +25,8 @@
 3. Corrupt 데이터와 Hard Stale 데이터는 차단한다.
 4. `admin/app.py`는 운영 데이터 플레인이 아닌 개발자 점검 도구로 취급한다.
 5. 1분봉은 초기 단계에서 예측 제공 대상이 아니다.
+6. 데이터 권위(Source of Truth)는 InfluxDB로 고정한다.
+7. 예측 시작 시점은 timeframe별 다음 closed candle 경계(UTC)로 고정한다.
 
 ## 3. 목표와 비목표
 ### 목표
@@ -42,6 +44,7 @@
 2. 1d/1w/1M: 장기 이력 직접 수집
 3. 모델 입력 전처리에서만 Forward Fill 허용 (원천 시계열 오염 방지)
 4. 신선도 상태를 `fresh/stale/hard_stale/corrupt`로 분리
+5. 사용자 제공용 예측 타임스탬프는 rolling now가 아닌 candle 경계 기준으로 정렬
 
 ## 5. 단계별 로드맵
 ## Phase A: Reliability Baseline
@@ -113,6 +116,8 @@ Exit Criteria:
 3. Task 추가/삭제는 `docs/TASKS_MINIMUM_UNITS.md`에서 먼저 반영한다.
 4. 모델 자동화 관련 순서 변경 시, 변경 이유(성능/안정성/리소스)를 한 줄 이상 기록한다.
 5. 작업으로 발생한 기술 부채는 `docs/TECH_DEBT_REGISTER.md`에 반영한다.
+6. 코드-only 변경(외부 동작 불변)은 문서 갱신을 생략할 수 있다.
+7. 계획 수행 불가 상태가 발생하면 `PLAN`과 `TASKS`를 같은 세션에서 함께 갱신한다.
 
 ## 8. 리스크와 대응
 1. Exchange API rate limit: pagination 속도 제한/재시도 백오프
@@ -149,3 +154,5 @@ Exit Criteria:
 9. 2026-02-10: A-010(상태전이 알림 모니터) 완료
 10. 2026-02-10: A-010 후속 패치(ENTRYPOINT/CMD 충돌 해결) 완료
 11. 2026-02-10: 이번 작업에서 Phase/우선순위 변경 없음
+12. 2026-02-10: 데이터 권위(Source of Truth)를 InfluxDB로 명시
+13. 2026-02-10: 예측 시작 시점을 candle 경계 기준으로 정렬

@@ -24,6 +24,8 @@
 | A-010 | P1 | alerting 규칙 확장 (hard_stale/corrupt/missing/recovery) ✅ | 모니터 + 알림 분기 로직 | 완료 (2026-02-10): 별도 모니터 스크립트 + 상태전이 알림/테스트 반영 |
 | A-011 | P1 | 기본 회귀 테스트 추가 🔄 | 단위/통합 테스트 | 진행중 (2026-02-10): 우선 단위 테스트부터 확대 |
 | A-012 | P1 | 세션 정렬 문서 체계 구축 ✅ | identity/constraints/debt/handoff 문서 | 완료 (2026-02-10): 새 세션 bootstrap 가능한 문서 스택 구성 |
+| A-013 | P1 | 예측 시작 시점 경계 기준 정렬 ✅ | 경계 계산 유틸 + worker 예측 로직 | 완료 (2026-02-10): timeframe 경계(UTC) 기준으로 예측 시작점 고정 |
+| A-014 | P1 | Influx-JSON 일관성 점검 추가 | 불일치 감지 로직/알림 | Influx 최신 시각과 static JSON 시각 불일치 탐지 가능 |
 
 ## 2. Phase B (Timeframe Expansion) - A 완료 후
 | ID | Priority | Task | 산출물 | Done 조건 |
@@ -113,3 +115,7 @@
    변경 파일: `scripts/status_monitor.py`, `tests/test_status_monitor.py`, `docker-compose.yml`, `.env.example`, `docs/TASKS_MINIMUM_UNITS.md`
 11. 2026-02-10: A-010 후속 패치 완료
    변경 파일: `docker/entrypoint_worker.sh`, `docker/Dockerfile.worker`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/DECISIONS.md`, `docs/SESSION_HANDOFF.md`
+12. 2026-02-10: A-013 완료
+   변경 파일: `utils/time_alignment.py`, `scripts/pipeline_worker.py`, `tests/test_time_alignment.py`
+13. 2026-02-10: 문서 갱신 정책/신뢰 소스 결정 반영
+   변경 파일: `docs/DECISIONS.md`, `docs/PLAN_LIVING_HYBRID.md`, `docs/OPERATING_CONSTRAINTS.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`
