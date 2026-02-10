@@ -21,7 +21,7 @@
 | A-007 | P0 | 원자적 JSON 쓰기 도입 ✅ | 공통 writer 유틸 | 완료 (2026-02-10): static JSON 저장 경로에 atomic write 적용 |
 | A-008 | P0 | freshness 분류 유틸 (`fresh/stale/hard_stale/corrupt`) ✅ | 공통 판정 함수 | 완료 (2026-02-10): `utils/freshness.py` 도입 및 분류 테스트 통과 |
 | A-009 | P0 | status 엔드포인트에 상태 상세 반영 ✅ | API 응답 스키마 업데이트 | 완료 (2026-02-10): soft stale 경고, hard stale 차단, 예외 처리 보강 |
-| A-010 | P1 | alerting 규칙 확장 (hard_stale/corrupt 시 알림) | 알림 분기 로직 | 조건별 알림 전송 확인 |
+| A-010 | P1 | alerting 규칙 확장 (hard_stale/corrupt/recovery) ✅ | 모니터 + 알림 분기 로직 | 완료 (2026-02-10): 별도 모니터 스크립트 + 상태전이 알림/테스트 반영 |
 | A-011 | P1 | 기본 회귀 테스트 추가 🔄 | 단위/통합 테스트 | 진행중 (2026-02-10): 우선 단위 테스트부터 확대 |
 | A-012 | P1 | 세션 정렬 문서 체계 구축 ✅ | identity/constraints/debt/handoff 문서 | 완료 (2026-02-10): 새 세션 bootstrap 가능한 문서 스택 구성 |
 
@@ -59,8 +59,8 @@
 1. A-004
 2. A-005
 3. A-006
-4. A-010
-5. A-011-6
+4. A-011-6
+5. A-011-7
 
 ## 6. 태스크 운용 규칙
 1. Task 시작 전 `Assignee`, `ETA`, `Risk`를 기록한다.
@@ -80,7 +80,16 @@
 | A-011-6 | P2 | 워커 핵심 유틸 테스트(점진 도입) | 단위 테스트 | backfill/fetch 경계조건 1차 검증 |
 | A-011-7 | P2 | CI 테스트 게이트 도입 | workflow 변경 | 테스트 실패 시 배포 단계 진입 금지 |
 
-## 8. 작업 이력
+## 8. A-010 세부 태스크 (Alert Monitor)
+| ID | Priority | Task | 산출물 | Done 조건 |
+|---|---|---|---|---|
+| A-010-1 | P1 | 알림 설계 고정 (이벤트/대상/중복억제) ✅ | 문서/결정 로그 | 완료 (2026-02-10): hard_stale/corrupt/recovery 전이 규칙 확정 |
+| A-010-2 | P1 | 별도 모니터 스크립트 구현 ✅ | `scripts/status_monitor.py` | 완료 (2026-02-10): static artifact 상태 주기 점검 구현 |
+| A-010-3 | P1 | Discord 알림 연동 ✅ | webhook 전송 로직 | 완료 (2026-02-10): 이벤트 메시지 템플릿 + 전송 처리 |
+| A-010-4 | P1 | 상태전이 테스트 ✅ | 단위 테스트 | 완료 (2026-02-10): 중복 억제/복구 알림 케이스 검증 |
+| A-010-5 | P2 | 런타임 서비스 연결 ✅ | `docker-compose.yml` | 완료 (2026-02-10): monitor 서비스 추가 |
+
+## 9. 작업 이력
 1. 2026-02-10: A-001 완료
    변경 파일: `utils/config.py`, `scripts/pipeline_worker.py`, `scripts/train_model.py`, `api/main.py`, `admin/app.py`, `.env.example`
 2. 2026-02-10: A-003 완료
@@ -97,3 +106,7 @@
    변경 파일: `pytest.ini`, `tests/test_file_io.py`, `tests/test_freshness.py`, `tests/test_api_status.py`, `tests/test_config.py`, `requirements.txt`
 8. 2026-02-10: A-012 완료
    변경 파일: `docs/README.md`, `docs/PROJECT_IDENTITY.md`, `docs/ENGINEERING_CONSTITUTION.md`, `docs/OPERATING_CONSTRAINTS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/SESSION_HANDOFF.md`, `docs/GLOSSARY.md`, `docs/SESSION_BOOTSTRAP_PROMPT.md`, `.codex/STARTUP_PROTOCOL.md`, `.codex/CONTEXT.md`, `.codex/RULES.md`, `.codex/WORKFLOW.md`, `.codex/QUESTIONS.md`, `.codex/REPO_MAP.md`
+9. 2026-02-10: A-010 시작
+   변경 파일: `docs/TASKS_MINIMUM_UNITS.md`, `docs/PLAN_LIVING_HYBRID.md`, `docs/DECISIONS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/SESSION_HANDOFF.md`
+10. 2026-02-10: A-010 완료
+   변경 파일: `scripts/status_monitor.py`, `tests/test_status_monitor.py`, `docker-compose.yml`, `.env.example`, `docs/TASKS_MINIMUM_UNITS.md`
