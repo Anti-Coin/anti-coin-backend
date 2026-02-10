@@ -14,6 +14,11 @@ DEFAULT_FRESHNESS_THRESHOLD_MINUTES = {
     "4h": 250,
     "1d": 25 * 60,
 }
+DEFAULT_FRESHNESS_HARD_THRESHOLD_MINUTES = {
+    "1h": 130,
+    "4h": 500,
+    "1d": 50 * 60,
+}
 
 
 def _parse_csv_env(raw: str | None, default: list[str]) -> list[str]:
@@ -24,10 +29,12 @@ def _parse_csv_env(raw: str | None, default: list[str]) -> list[str]:
     return values or default.copy()
 
 
-def _parse_thresholds(raw: str | None) -> dict[str, timedelta]:
+def _parse_thresholds(
+    raw: str | None, defaults: dict[str, int]
+) -> dict[str, timedelta]:
     thresholds = {
         timeframe: timedelta(minutes=minutes)
-        for timeframe, minutes in DEFAULT_FRESHNESS_THRESHOLD_MINUTES.items()
+        for timeframe, minutes in defaults.items()
     }
     if not raw:
         return thresholds
@@ -59,5 +66,10 @@ PRIMARY_TIMEFRAME = (
     INGEST_TIMEFRAMES[0] if INGEST_TIMEFRAMES else DEFAULT_INGEST_TIMEFRAMES[0]
 )
 FRESHNESS_THRESHOLDS = _parse_thresholds(
-    os.getenv("FRESHNESS_THRESHOLDS_MINUTES")
+    os.getenv("FRESHNESS_THRESHOLDS_MINUTES"),
+    DEFAULT_FRESHNESS_THRESHOLD_MINUTES,
+)
+FRESHNESS_HARD_THRESHOLDS = _parse_thresholds(
+    os.getenv("FRESHNESS_HARD_THRESHOLDS_MINUTES"),
+    DEFAULT_FRESHNESS_HARD_THRESHOLD_MINUTES,
 )
