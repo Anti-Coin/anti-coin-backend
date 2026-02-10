@@ -50,3 +50,16 @@
 - Consequence:
   - 기능 누락 없이 로드맵 가시성 확보
   - 일정 지연 시 문서 갱신을 통해 합의 상태를 유지
+
+## D-2026-02-10-05
+- Date: 2026-02-10
+- Status: Accepted
+- Context:
+  - 로컬 전체 실행 없이 원격 배포 환경에서 버그 발견 지연
+  - 최근 파일 권한 이슈가 배포 후 발견됨
+- Decision:
+  - 테스트 확장은 Incremental TDD 방식으로 진행한다.
+  - 우선순위는 파일 I/O, freshness, status 에러처리, config 파서 순으로 둔다.
+- Consequence:
+  - 회귀 장애를 테스트로 고정 가능
+  - 대규모 일괄 도입 대신 작은 단위로 품질을 축적

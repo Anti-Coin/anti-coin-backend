@@ -19,10 +19,10 @@
 | A-005 | P0 | gap detector 구현 | 누락 구간 계산 로직 | 테스트 케이스에서 gap 식별 성공 |
 | A-006 | P0 | gap refill 잡 추가 | 복구 실행 함수 | gap 발생 후 복구 확인 |
 | A-007 | P0 | 원자적 JSON 쓰기 도입 ✅ | 공통 writer 유틸 | 완료 (2026-02-10): static JSON 저장 경로에 atomic write 적용 |
-| A-008 | P0 | freshness 분류 유틸 (`fresh/stale/hard_stale/corrupt`) | 공통 판정 함수 | 샘플 입력별 상태 일치 |
-| A-009 | P0 | status 엔드포인트에 상태 상세 반영 | API 응답 스키마 업데이트 | 상태값 + 경고 메시지 노출 |
+| A-008 | P0 | freshness 분류 유틸 (`fresh/stale/hard_stale/corrupt`) ✅ | 공통 판정 함수 | 완료 (2026-02-10): `utils/freshness.py` 도입 및 분류 테스트 통과 |
+| A-009 | P0 | status 엔드포인트에 상태 상세 반영 ✅ | API 응답 스키마 업데이트 | 완료 (2026-02-10): soft stale 경고, hard stale 차단, 예외 처리 보강 |
 | A-010 | P1 | alerting 규칙 확장 (hard_stale/corrupt 시 알림) | 알림 분기 로직 | 조건별 알림 전송 확인 |
-| A-011 | P1 | 기본 회귀 테스트 추가 | 단위/통합 테스트 | 핵심 시나리오 CI 통과 |
+| A-011 | P1 | 기본 회귀 테스트 추가 🔄 | 단위/통합 테스트 | 진행중 (2026-02-10): 우선 단위 테스트부터 확대 |
 
 ## 2. Phase B (Timeframe Expansion) - A 완료 후
 | ID | Priority | Task | 산출물 | Done 조건 |
@@ -55,11 +55,11 @@
 | D-009 | P2 | Drift 알림 연동 | drift 감지 + alert 분기 | 임계 초과 시 경고 발송 |
 
 ## 5. 즉시 시작 권장 Task 묶음 (이번 사이클)
-1. A-008
-2. A-009
-3. A-004
-4. A-005
-5. A-006
+1. A-004
+2. A-005
+3. A-006
+4. A-010
+5. A-011-6
 
 ## 6. 태스크 운용 규칙
 1. Task 시작 전 `Assignee`, `ETA`, `Risk`를 기록한다.
@@ -67,10 +67,29 @@
 3. Task 실패/보류 시 원인과 다음 시도 조건을 한 줄로 기록한다.
 4. 모델 관련 Task(D-xxx)는 품질 지표와 롤백 경로가 없으면 `Done` 처리하지 않는다.
 
-## 7. 작업 이력
+## 7. A-011 세부 태스크 (테스트 체계)
+| ID | Priority | Task | 산출물 | Done 조건 |
+|---|---|---|---|---|
+| A-011-1 | P1 | 테스트 인프라 정리 (`pytest`, 공통 fixture) ✅ | `tests/` 기반 구조 | 완료 (2026-02-10): `pytest.ini` + 테스트 실행 경로 정리 |
+| A-011-2 | P1 | 파일 I/O 테스트 (`atomic_write_json`) ✅ | 단위 테스트 | 완료 (2026-02-10): 권한/원자교체/실패 temp 정리 검증 |
+| A-011-3 | P1 | Freshness 로직 테스트 ✅ | 단위 테스트 | 완료 (2026-02-10): 상태 분류/예외/미래시간 케이스 검증 |
+| A-011-4 | P1 | Status API 에러처리 테스트 ✅ | 단위/경량 API 테스트 | 완료 (2026-02-10): 포맷 오류/손상/stale/hard_stale 회귀 고정 |
+| A-011-5 | P2 | 설정 파서 테스트 (`config`) ✅ | 단위 테스트 | 완료 (2026-02-10): env 파싱 경계조건 검증 |
+| A-011-6 | P2 | 워커 핵심 유틸 테스트(점진 도입) | 단위 테스트 | backfill/fetch 경계조건 1차 검증 |
+| A-011-7 | P2 | CI 테스트 게이트 도입 | workflow 변경 | 테스트 실패 시 배포 단계 진입 금지 |
+
+## 8. 작업 이력
 1. 2026-02-10: A-001 완료
    변경 파일: `utils/config.py`, `scripts/pipeline_worker.py`, `scripts/train_model.py`, `api/main.py`, `admin/app.py`, `.env.example`
 2. 2026-02-10: A-003 완료
    변경 파일: `scripts/pipeline_worker.py`
 3. 2026-02-10: A-007 완료
    변경 파일: `utils/file_io.py`, `scripts/pipeline_worker.py`
+4. 2026-02-10: A-011 시작
+   변경 파일: `docs/PLAN_LIVING_HYBRID.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/DECISIONS.md`, `docs/TEST_STRATEGY.md`
+5. 2026-02-10: A-008 완료
+   변경 파일: `utils/freshness.py`, `utils/config.py`, `api/main.py`, `.env.example`
+6. 2026-02-10: A-009 완료
+   변경 파일: `api/main.py`, `tests/test_api_status.py`
+7. 2026-02-10: A-011-1~5 완료
+   변경 파일: `pytest.ini`, `tests/test_file_io.py`, `tests/test_freshness.py`, `tests/test_api_status.py`, `tests/test_config.py`, `requirements.txt`
