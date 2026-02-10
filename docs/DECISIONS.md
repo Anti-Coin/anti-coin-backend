@@ -77,3 +77,70 @@
 - Consequence:
   - 새 세션 시작 시 정렬 속도 향상
   - 논의 누락/중복 가능성 감소
+
+## D-2026-02-10-07
+- Date: 2026-02-10
+- Status: Accepted
+- Context:
+  - `/status`는 프론트엔드 경고 판단을 위한 경로이며 호출 의존성이 있음
+  - 운영 알림은 호출 유무와 무관하게 백엔드에서 지속 감시 필요
+- Decision:
+  - A-010은 별도 모니터 스크립트로 구현한다.
+  - 알림 이벤트는 `hard_stale`, `corrupt`, `missing`, `recovery` 상태전이에 제한한다.
+  - `stale(soft)`는 알림 대상이 아니라 경고 노출 대상이다.
+- Consequence:
+  - Worker 다운/호출 부재 상황에서도 상태 감시 가능
+  - 알림 노이즈 감소 (상태전이 기반)
+
+## D-2026-02-10-08
+- Date: 2026-02-10
+- Status: Accepted
+- Context:
+  - worker 이미지가 고정 ENTRYPOINT로 `pipeline_worker`를 강제해 monitor 실행과 충돌
+  - monitor 서비스에서 command override가 의도대로 적용되지 않는 위험 확인
+- Decision:
+  - worker 이미지는 범용 ENTRYPOINT(umask 설정 + exec) + 기본 CMD(`pipeline_worker`) 구조로 전환
+  - monitor는 compose `command`로 `scripts.status_monitor`를 실행한다.
+- Consequence:
+  - worker/monitor 공용 이미지 재사용 가능
+  - monitor가 별도 Dockerfile 없이 독립 프로세스로 실행 가능
+
+## D-2026-02-10-09
+- Date: 2026-02-10
+- Status: Accepted
+- Context:
+  - InfluxDB와 정적 JSON을 동시에 운용하면서 데이터 권위(Source of Truth) 경계가 문서상 명시되지 않음
+  - 장애 대응 시 "무엇을 기준으로 복구/검증할지" 판단 기준이 필요
+- Decision:
+  - 데이터 권위는 InfluxDB로 고정한다.
+  - 정적 JSON은 사용자 제공을 위한 파생 산출물(derived artifact)로 정의한다.
+- Consequence:
+  - 복구/검증은 InfluxDB 기준으로 수행한다.
+  - 정적 JSON은 재생성 가능한 산출물로 취급한다.
+
+## D-2026-02-10-10
+- Date: 2026-02-10
+- Status: Accepted
+- Context:
+  - 예측 시작 시점을 `now` 기준 rolling으로 두면 실행 시각마다 타임스탬프가 흔들려 비교/회귀 평가가 어려움
+  - 시계열 정합성과 운영 일관성을 위해 경계 정렬 필요
+- Decision:
+  - 예측 시작 시점은 각 timeframe의 "다음 closed candle 경계(UTC)"로 고정한다.
+  - `now` rolling 시작 방식은 사용자 제공 경로에서 사용하지 않는다.
+- Consequence:
+  - 예측 결과의 시간축 정렬이 고정되어 비교/모니터링/회귀 분석이 쉬워진다.
+  - 캔들 경계 유틸의 정확성이 중요해진다.
+
+## D-2026-02-10-11
+- Date: 2026-02-10
+- Status: Accepted
+- Context:
+  - 모든 변경마다 전 문서를 갱신하면 토큰/운영 비용이 과도해짐
+  - 반대로 문서를 너무 줄이면 세션 전환 시 맥락 손실이 커짐
+- Decision:
+  - 문서 갱신은 "코드-only 생략 가능 + 조건부 필수 갱신" 정책을 채택한다.
+  - 새 기술 부채가 생기면 `TECH_DEBT_REGISTER` 갱신은 필수다.
+  - 기존 계획 수행 불가 상태가 되면 `PLAN`과 `TASKS`를 즉시 갱신한다.
+- Consequence:
+  - 문서 비용을 통제하면서도 중요한 결정/리스크는 추적 가능하다.
+  - 문서 누락으로 인한 재논의 비용을 줄일 수 있다.

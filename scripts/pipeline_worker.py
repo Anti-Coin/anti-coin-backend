@@ -12,6 +12,10 @@ import traceback
 from utils.logger import get_logger
 from utils.config import TARGET_SYMBOLS, PRIMARY_TIMEFRAME
 from utils.file_io import atomic_write_json
+from utils.time_alignment import (
+    next_timeframe_boundary,
+    timeframe_to_pandas_freq,
+)
 
 logger = get_logger(__name__)
 
@@ -205,11 +209,17 @@ def run_prediction_and_save(write_api, symbol):
         with open(model_file, "r") as fin:
             model = model_from_json(fin.read())
 
-        # 예측 (현재 시점부터 24시간)
+        # 예측 시작 시점을 "다음 캔들 경계"로 정렬한다.
+        # 예: 10:37 + 1h -> 11:00 시작
         now = datetime.now(timezone.utc)
-        # .replace(minute=0, second=0, microsecond=0) => UTC 통일
+        prediction_start = next_timeframe_boundary(now, TIMEFRAME)
+        prediction_freq = timeframe_to_pandas_freq(TIMEFRAME)
         future = pd.DataFrame(
-            {"ds": pd.date_range(start=now, periods=24, freq="h")}
+            {
+                "ds": pd.date_range(
+                    start=prediction_start, periods=24, freq=prediction_freq
+                )
+            }
         )
         future["ds"] = future["ds"].dt.tz_localize(None)  # prophet은 tz-naive
 
@@ -217,17 +227,15 @@ def run_prediction_and_save(write_api, symbol):
         # To-Do: Training Worker 구축
         forecast = model.predict(future)
 
-        # 필요한 데이터만 추출
-        next_24h = (
-            forecast[forecast["ds"] > now.replace(tzinfo=None)].head(24).copy()
-        )
+        # 필요한 데이터만 추출 (경계 기준으로 생성했으므로 head만 사용)
+        next_forecast = forecast.head(24).copy()
 
-        if next_24h.empty:
+        if next_forecast.empty:
             logger.warning(f"[{symbol}] 예측 범위 생성 실패.")
             return
 
         # 저장 (SSG)
-        export_data = next_24h[["ds", "yhat", "yhat_lower", "yhat_upper"]]
+        export_data = next_forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]]
         export_data["ds"] = pd.to_datetime(export_data["ds"]).dt.strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
@@ -253,27 +261,29 @@ def run_prediction_and_save(write_api, symbol):
         file_path = STATIC_DIR / f"prediction_{safe_symbol}.json"
         atomic_write_json(file_path, json_output, indent=2)
 
-        logger.info(f"[{symbol}] SSG 파일 생성 완료: {file_path}")
+        logger.info(
+            f"[{symbol}] SSG 파일 생성 완료: {file_path} (start={prediction_start.strftime('%Y-%m-%dT%H:%M:%SZ')}, freq={TIMEFRAME})"
+        )
 
         # 저장(DB)
-        next_24h["ds"] = pd.to_datetime(next_24h["ds"]).dt.tz_localize(
+        next_forecast["ds"] = pd.to_datetime(next_forecast["ds"]).dt.tz_localize(
             "UTC"
         )  # 불필요한 연산 같기는 한데,,, 방어용???
-        next_24h = next_24h[["ds", "yhat", "yhat_lower", "yhat_upper"]]
-        next_24h.rename(columns={"ds": "timestamp"}, inplace=True)
-        next_24h.set_index(
+        next_forecast = next_forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]]
+        next_forecast.rename(columns={"ds": "timestamp"}, inplace=True)
+        next_forecast.set_index(
             "timestamp", inplace=True
         )  # InfluxDB는 index가 timestamp
-        next_24h["symbol"] = symbol
+        next_forecast["symbol"] = symbol
 
         write_api.write(
             bucket=INFLUXDB_BUCKET,
             org=INFLUXDB_ORG,
-            record=next_24h,
+            record=next_forecast,
             data_frame_measurement_name="prediction",
             data_frame_tag_columns=["symbol"],
         )
-        logger.info(f"[{symbol}] {len(next_24h)}개 예측 저장 완료")
+        logger.info(f"[{symbol}] {len(next_forecast)}개 예측 저장 완료")
 
     except Exception as e:
         logger.error(f"[{symbol}] 예측 에러: {e}")
