@@ -26,8 +26,10 @@ class CoinUser(HttpUser):
     #             response.json()
     #         except json.JSONDecodeError:
     #             response.failure("JSON Decode Error")
-                
+
     @task
     def get_static_prediction(self):
-        with self.client.get("/static/prediction_BTC_USDT.json", catch_response=True) as response:
+        with self.client.get(
+            "/static/prediction_BTC_USDT.json", catch_response=True
+        ) as response:
             pass

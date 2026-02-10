@@ -12,13 +12,13 @@
 ## 1. Phase A (Reliability Baseline) - 필수 선행
 | ID | Priority | Task | 산출물 | Done 조건 |
 |---|---|---|---|---|
-| A-001 | P0 | 설정 중앙화 (`symbols`, `timeframes`, freshness threshold) | `config` 모듈 | 심볼/타임프레임/임계값을 1곳에서 수정 가능 |
+| A-001 | P0 | 설정 중앙화 (`symbols`, `timeframes`, freshness threshold) ✅ | `config` 모듈 | 완료 (2026-02-10): 공통 설정 모듈로 참조 경로 통합 |
 | A-002 | P0 | ingest_state 스키마/저장소 도입 | state 저장 코드 + 기본 조회/갱신 함수 | `symbol+timeframe`별 커서 유지 확인 |
-| A-003 | P0 | ccxt 백필 pagination 루프 구현 | fetch 함수 리팩터링 | `limit=1000` 단발 호출 제거 |
+| A-003 | P0 | ccxt 백필 pagination 루프 구현 ✅ | fetch 함수 리팩터링 | 완료 (2026-02-10): 단발 호출 제거 및 페이지 수집 루프 적용 |
 | A-004 | P0 | closed candle 경계 계산 유틸 추가 | 시간 경계 함수 | 미완료 캔들 수집 없음 |
 | A-005 | P0 | gap detector 구현 | 누락 구간 계산 로직 | 테스트 케이스에서 gap 식별 성공 |
 | A-006 | P0 | gap refill 잡 추가 | 복구 실행 함수 | gap 발생 후 복구 확인 |
-| A-007 | P0 | 원자적 JSON 쓰기 도입 | 공통 writer 유틸 | 부분 파일/파손 파일 재현 실패 |
+| A-007 | P0 | 원자적 JSON 쓰기 도입 ✅ | 공통 writer 유틸 | 완료 (2026-02-10): static JSON 저장 경로에 atomic write 적용 |
 | A-008 | P0 | freshness 분류 유틸 (`fresh/stale/hard_stale/corrupt`) | 공통 판정 함수 | 샘플 입력별 상태 일치 |
 | A-009 | P0 | status 엔드포인트에 상태 상세 반영 | API 응답 스키마 업데이트 | 상태값 + 경고 메시지 노출 |
 | A-010 | P1 | alerting 규칙 확장 (hard_stale/corrupt 시 알림) | 알림 분기 로직 | 조건별 알림 전송 확인 |
@@ -55,14 +55,22 @@
 | D-009 | P2 | Drift 알림 연동 | drift 감지 + alert 분기 | 임계 초과 시 경고 발송 |
 
 ## 5. 즉시 시작 권장 Task 묶음 (이번 사이클)
-1. A-001
-2. A-003
-3. A-007
-4. A-008
-5. A-009
+1. A-008
+2. A-009
+3. A-004
+4. A-005
+5. A-006
 
 ## 6. 태스크 운용 규칙
 1. Task 시작 전 `Assignee`, `ETA`, `Risk`를 기록한다.
 2. Task 완료 시 실제 영향 파일 경로를 남긴다.
 3. Task 실패/보류 시 원인과 다음 시도 조건을 한 줄로 기록한다.
 4. 모델 관련 Task(D-xxx)는 품질 지표와 롤백 경로가 없으면 `Done` 처리하지 않는다.
+
+## 7. 작업 이력
+1. 2026-02-10: A-001 완료
+   변경 파일: `utils/config.py`, `scripts/pipeline_worker.py`, `scripts/train_model.py`, `api/main.py`, `admin/app.py`, `.env.example`
+2. 2026-02-10: A-003 완료
+   변경 파일: `scripts/pipeline_worker.py`
+3. 2026-02-10: A-007 완료
+   변경 파일: `utils/file_io.py`, `scripts/pipeline_worker.py`
