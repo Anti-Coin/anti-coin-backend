@@ -4,8 +4,10 @@ from pathlib import Path
 
 from scripts.status_monitor import (
     _parse_positive_int_env,
+    apply_influx_json_consistency,
     detect_alert_event,
     evaluate_symbol_timeframe,
+    get_latest_ohlcv_timestamp,
     run_monitor_cycle,
 )
 
@@ -122,3 +124,111 @@ def test_parse_positive_int_env_returns_default_on_invalid(monkeypatch):
 def test_parse_positive_int_env_returns_value_when_valid(monkeypatch):
     monkeypatch.setenv("MONITOR_POLL_SECONDS", "15")
     assert _parse_positive_int_env("MONITOR_POLL_SECONDS", 60) == 15
+
+
+class _FakeRecord:
+    def __init__(self, dt: datetime):
+        self._dt = dt
+
+    def get_time(self) -> datetime:
+        return self._dt
+
+
+class _FakeTable:
+    def __init__(self, records: list[_FakeRecord]):
+        self.records = records
+
+
+class _FakeQueryApi:
+    def __init__(
+        self, latest_by_symbol: dict[str, datetime | list[datetime] | None]
+    ):
+        self._latest_by_symbol = latest_by_symbol
+
+    def query(self, query: str):
+        marker = 'r["symbol"] == "'
+        start = query.find(marker)
+        if start < 0:
+            return []
+        start += len(marker)
+        end = query.find('"', start)
+        symbol = query[start:end]
+        latest = self._latest_by_symbol.get(symbol)
+        if latest is None:
+            return []
+        if isinstance(latest, list):
+            return [_FakeTable([_FakeRecord(dt)]) for dt in latest]
+        return [_FakeTable([_FakeRecord(latest)])]
+
+
+def test_get_latest_ohlcv_timestamp_returns_latest_value(monkeypatch):
+    monkeypatch.setattr("scripts.status_monitor.INFLUXDB_BUCKET", "market_data")
+    query_api = _FakeQueryApi(
+        {"BTC/USDT": datetime(2026, 2, 10, 11, 0, tzinfo=timezone.utc)}
+    )
+
+    latest = get_latest_ohlcv_timestamp(query_api, "BTC/USDT")
+    assert latest == datetime(2026, 2, 10, 11, 0, tzinfo=timezone.utc)
+
+
+def test_get_latest_ohlcv_timestamp_uses_max_across_tables(monkeypatch):
+    monkeypatch.setattr("scripts.status_monitor.INFLUXDB_BUCKET", "market_data")
+    query_api = _FakeQueryApi(
+        {
+            "BTC/USDT": [
+                datetime(2026, 2, 10, 10, 0, tzinfo=timezone.utc),
+                datetime(2026, 2, 10, 11, 30, tzinfo=timezone.utc),
+            ]
+        }
+    )
+
+    latest = get_latest_ohlcv_timestamp(query_api, "BTC/USDT")
+    assert latest == datetime(2026, 2, 10, 11, 30, tzinfo=timezone.utc)
+
+
+def test_run_monitor_cycle_marks_hard_stale_when_influx_json_gap_exceeds_limit(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr("scripts.status_monitor.INFLUXDB_BUCKET", "market_data")
+    now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
+    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T12:00:00Z")
+    query_api = _FakeQueryApi(
+        {"BTC/USDT": datetime(2026, 2, 10, 10, 0, tzinfo=timezone.utc)}
+    )
+
+    state = {}
+    events = run_monitor_cycle(
+        state=state,
+        now=now,
+        symbols=["BTC/USDT"],
+        timeframes=["1h"],
+        static_dir=tmp_path,
+        soft_thresholds={"1h": timedelta(minutes=10)},
+        hard_thresholds={"1h": timedelta(minutes=30)},
+        query_api=query_api,
+    )
+
+    assert [e.event for e in events] == ["hard_stale"]
+    snapshot = state["BTC/USDT|1h"]
+    assert snapshot.status == "hard_stale"
+    assert "influx_json_mismatch" in snapshot.detail
+
+
+def test_apply_influx_json_consistency_keeps_status_when_gap_within_limit(
+    tmp_path,
+):
+    now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
+    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T12:00:00Z")
+    snapshot = evaluate_symbol_timeframe(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        now=now,
+        static_dir=tmp_path,
+        soft_thresholds={"1h": timedelta(minutes=10)},
+        hard_thresholds={"1h": timedelta(minutes=30)},
+    )
+    latest_ohlcv_ts = datetime(2026, 2, 10, 11, 40, tzinfo=timezone.utc)
+
+    checked = apply_influx_json_consistency(snapshot, latest_ohlcv_ts)
+    assert checked.status == snapshot.status
+    assert checked.detail == snapshot.detail

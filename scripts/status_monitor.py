@@ -1,12 +1,14 @@
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
+from influxdb_client import InfluxDBClient
 
 from utils.config import INGEST_TIMEFRAMES, TARGET_SYMBOLS
+from utils.freshness import parse_utc_timestamp
 from utils.logger import get_logger
 from utils.prediction_status import (
     PredictionStatusSnapshot,
@@ -17,6 +19,10 @@ logger = get_logger(__name__)
 
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 STATIC_DATA_DIR = Path(os.getenv("STATIC_DATA_DIR", "/app/static_data"))
+INFLUXDB_URL = os.getenv("INFLUXDB_URL")
+INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN")
+INFLUXDB_ORG = os.getenv("INFLUXDB_ORG")
+INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET")
 
 
 def _parse_positive_int_env(name: str, default: int) -> int:
@@ -88,6 +94,97 @@ def detect_alert_event(previous_status: str | None, current_status: str) -> str 
     return None
 
 
+def get_latest_ohlcv_timestamp(query_api, symbol: str) -> datetime | None:
+    """
+    Return the latest OHLCV timestamp for a given symbol.
+
+    NOTE:
+    Flux `last()` may return one record per group (e.g., per field/series),
+    so the query result can contain multiple tables. We therefore compute
+    the global max `_time` in Python to ensure a single authoritative
+    latest timestamp across all returned series.
+
+    All timestamps are normalized to UTC before comparison to avoid
+    naive/aware datetime comparison issues.
+    """
+    if query_api is None or not INFLUXDB_BUCKET:
+        return None
+
+    query = f"""
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -30d)
+      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
+      |> filter(fn: (r) => r["symbol"] == "{symbol}")
+      |> last(column: "_time")
+    """
+    try:
+        result = query_api.query(query=query)
+        latest_ts: datetime | None = None
+        for table in result:
+            for record in getattr(table, "records", []):
+                ts = record.get_time()
+                if ts is None:
+                    continue
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                else:
+                    ts = ts.astimezone(timezone.utc)
+                if latest_ts is None or ts > latest_ts:
+                    latest_ts = ts
+        return latest_ts
+    except Exception as e:
+        logger.error(f"[Monitor] Influx latest ohlcv query failed for {symbol}: {e}")
+
+    return None
+
+
+def apply_influx_json_consistency(
+    snapshot: MonitorSnapshot, latest_ohlcv_ts: datetime | None
+) -> MonitorSnapshot:
+    # Influx 설정이 없거나, 쿼리 실패/결과 없음 (Influx 장애를 서비스 장애로 오탐 가능)
+    # 따라서, JSON 기준 판정을 존중하여 return.
+    if latest_ohlcv_ts is None:
+        return snapshot
+    # 이미 JSON에서 판정된 상태라면, Influx 기준으로 판정하지 않음.
+    if snapshot.status in {"missing", "corrupt"}:
+        return snapshot
+    # updated_at: JSON이 언제 생성 되었는 지 없고,
+    # hard_limit_minutes: 허용 가능한 최대 갭이 없으면,
+    # Influx vs. JSON 간 갭 규칙을 적용할 수 없음.
+    if snapshot.updated_at is None or snapshot.hard_limit_minutes is None:
+        return snapshot
+
+    # 파싱 실패 => timestamp 형식 오류/문자열 오염 등.
+    updated_at = parse_utc_timestamp(snapshot.updated_at)
+    if updated_at is None:
+        return replace(
+            snapshot,
+            status="corrupt",
+            detail="influx_json_mismatch: invalid snapshot updated_at",
+        )
+
+    gap = updated_at - latest_ohlcv_ts
+    if gap < timedelta(0):
+        gap = -gap
+
+    # JSON 존중. 아마 status = healthy
+    max_gap = timedelta(minutes=snapshot.hard_limit_minutes)
+    if gap <= max_gap:
+        return snapshot
+
+    gap_minutes = round(gap.total_seconds() / 60, 2)
+    return replace(
+        snapshot,
+        status="hard_stale",
+        detail=(
+            "influx_json_mismatch: "
+            f"ohlcv_last={latest_ohlcv_ts.strftime('%Y-%m-%dT%H:%M:%SZ')}, "
+            f"prediction_updated_at={snapshot.updated_at}, "
+            f"gap_minutes={gap_minutes}"
+        ),
+    )
+
+
 def run_monitor_cycle(
     state: dict[str, MonitorSnapshot],
     now: datetime | None = None,
@@ -96,6 +193,7 @@ def run_monitor_cycle(
     static_dir: Path = STATIC_DATA_DIR,
     soft_thresholds: dict[str, timedelta] | None = None,
     hard_thresholds: dict[str, timedelta] | None = None,
+    query_api=None,
 ) -> list[MonitorAlertEvent]:
     resolved_now = now or datetime.now(timezone.utc)
     resolved_symbols = symbols or TARGET_SYMBOLS
@@ -103,6 +201,7 @@ def run_monitor_cycle(
     events: list[MonitorAlertEvent] = []
 
     for symbol in resolved_symbols:
+        latest_ohlcv_ts = get_latest_ohlcv_timestamp(query_api, symbol)
         for timeframe in resolved_timeframes:
             key = f"{symbol}|{timeframe}"
             snapshot = evaluate_symbol_timeframe(
@@ -113,6 +212,7 @@ def run_monitor_cycle(
                 soft_thresholds=soft_thresholds,
                 hard_thresholds=hard_thresholds,
             )
+            snapshot = apply_influx_json_consistency(snapshot, latest_ohlcv_ts)
             previous_status = state.get(key).status if key in state else None
             event = detect_alert_event(previous_status, snapshot.status)
             if event:
@@ -161,19 +261,35 @@ def run_monitor() -> None:
         f"[Status Monitor] started. symbols={TARGET_SYMBOLS}, timeframes={INGEST_TIMEFRAMES}, poll={MONITOR_POLL_SECONDS}s"
     )
 
-    state: dict[str, MonitorSnapshot] = {}
-    while True:
-        cycle_start = time.time()
+    influx_client = None
+    query_api = None
+    if INFLUXDB_URL and INFLUXDB_TOKEN and INFLUXDB_ORG and INFLUXDB_BUCKET:
         try:
-            events = run_monitor_cycle(state)
-            for event in events:
-                send_discord_alert(event)
+            influx_client = InfluxDBClient(
+                url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG
+            )
+            query_api = influx_client.query_api()
+            logger.info("[Status Monitor] Influx consistency check enabled.")
         except Exception as e:
-            logger.error(f"Status monitor cycle error: {e}")
+            logger.error(f"[Status Monitor] Failed to initialize Influx client: {e}")
 
-        elapsed = time.time() - cycle_start
-        sleep_for = max(1.0, MONITOR_POLL_SECONDS - elapsed)
-        time.sleep(sleep_for)
+    state: dict[str, MonitorSnapshot] = {}
+    try:
+        while True:
+            cycle_start = time.time()
+            try:
+                events = run_monitor_cycle(state, query_api=query_api)
+                for event in events:
+                    send_discord_alert(event)
+            except Exception as e:
+                logger.error(f"Status monitor cycle error: {e}")
+
+            elapsed = time.time() - cycle_start
+            sleep_for = max(1.0, MONITOR_POLL_SECONDS - elapsed)
+            time.sleep(sleep_for)
+    finally:
+        if influx_client is not None:
+            influx_client.close()
 
 
 if __name__ == "__main__":

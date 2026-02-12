@@ -74,6 +74,10 @@ services:
     image: ghcr.io/anti-coin/anti-coin-backend-worker:latest
     container_name: coin-monitor
     environment:
+      INFLUXDB_URL: ${INFLUXDB_URL}
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN}
+      INFLUXDB_ORG: ${INFLUXDB_ORG}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET}
       DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
       TARGET_SYMBOLS: ${TARGET_SYMBOLS}
       INGEST_TIMEFRAMES: ${INGEST_TIMEFRAMES}
