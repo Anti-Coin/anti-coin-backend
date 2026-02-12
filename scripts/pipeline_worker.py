@@ -58,12 +58,18 @@ def send_alert(message):
 
 
 def _prediction_health_key(symbol: str, timeframe: str) -> str:
+    """prediction health 엔트리의 고유 키."""
     return f"{symbol}|{timeframe}"
 
 
 def _load_prediction_health(
     path: Path = PREDICTION_HEALTH_FILE,
 ) -> dict[str, dict]:
+    """
+    prediction 단계 health 상태 파일을 로드한다.
+
+    실패 시 빈 dict를 반환한다. (worker 루프를 멈추지 않기 위한 fail-soft)
+    """
     if not path.exists():
         return {}
 
@@ -84,6 +90,7 @@ def _load_prediction_health(
 def _save_prediction_health(
     entries: dict[str, dict], path: Path = PREDICTION_HEALTH_FILE
 ) -> None:
+    """prediction health 상태를 원자적으로 저장한다."""
     payload = {
         "version": 1,
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -100,6 +107,14 @@ def upsert_prediction_health(
     error: str | None = None,
     path: Path = PREDICTION_HEALTH_FILE,
 ) -> tuple[dict, bool, bool]:
+    """
+    prediction 성공/실패 결과를 health 파일에 반영한다.
+
+    반환값:
+    - entry: 반영된 최신 상태 엔트리
+    - previous_degraded: 반영 이전 degraded 여부
+    - current_degraded: 반영 이후 degraded 여부
+    """
     entries = _load_prediction_health(path=path)
     key = _prediction_health_key(symbol, timeframe)
     existing = entries.get(key, {})
@@ -587,6 +602,9 @@ def run_worker():
                     error=prediction_error,
                 )
                 if is_degraded and not was_degraded:
+                    logger.warning(
+                        f"[{symbol}] prediction degraded: reason={health.get('last_error')}"
+                    )
                     send_alert(
                         "[Predict Degraded] "
                         f"{symbol} {TIMEFRAME}\n"
@@ -594,10 +612,17 @@ def run_worker():
                         f"last_success_at={health.get('last_success_at')}"
                     )
                 elif prediction_ok and was_degraded:
+                    logger.info(f"[{symbol}] prediction recovered.")
                     send_alert(
                         "[Predict Recovery] "
                         f"{symbol} {TIMEFRAME}\n"
                         f"last_success_at={health.get('last_success_at')}"
+                    )
+                elif is_degraded:
+                    # degraded 유지 중에는 재알림 대신 누적 실패 횟수만 로그로 남긴다.
+                    logger.info(
+                        f"[{symbol}] prediction still degraded "
+                        f"(consecutive_failures={health.get('consecutive_failures')})"
                     )
 
             # Cycle Overrun 감지 및 주기 보정

@@ -30,6 +30,7 @@
 | A-016 | P2 | API-SSG 경계 문서화 + endpoint sunset 기준 정의 | 운영 정책 문서/체크리스트 | 사용자 경로와 운영/디버그 경로 구분 기준이 명확함 |
 | A-017 | P1 | predict 실패 알림 + degraded 상태 노출 ✅ | 실패 알림 분기 + 상태 필드 | 완료 (2026-02-12): worker predict 실패/복구 상태전이 알림 + `/status`에 `degraded`, `degraded_reason`, last success/failure 노출 |
 | A-018 | P1 | API/Monitor 상태 판정 경로 공통화 ✅ | 공통 evaluator 유틸 + 호출 경로 정리 | 완료 (2026-02-12): 공통 evaluator 도입으로 API/monitor가 동일 파일 선택/동일 freshness 판정을 수행 |
+| A-019 | P2 | 주석/로그 가독성 보강 (핵심 경로 우선) 🔄 | 의도 주석 + 상태전이 로그 + 가이드 문서 반영 | 진행중 (2026-02-12): status/worker/api 핵심 경로 1차 보강 완료, 잔여 경로 점진 적용 |
 
 ## 2. Phase B (Timeframe Expansion) - A 완료 후
 | ID | Priority | Task | 산출물 | Done 조건 |
@@ -66,8 +67,9 @@
 ## 5. 즉시 시작 권장 Task 묶음 (이번 사이클)
 1. A-010-7
 2. A-016
-3. C-005 (설계만, A 게이트 완료 후 코드 착수)
-4. C-006 (설계만, A 게이트 완료 후 코드 착수)
+3. A-019
+4. C-005 (설계만, A 게이트 완료 후 코드 착수)
+5. C-006 (설계만, A 게이트 완료 후 코드 착수)
 
 ## 6. 태스크 운용 규칙
 1. Task 시작 전 `Assignee`, `ETA`, `Risk`를 기록한다.
@@ -151,3 +153,5 @@
    변경 파일: `scripts/status_monitor.py`, `tests/test_status_monitor.py`, `docker-compose.yml`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/PLAN_LIVING_HYBRID.md`
 25. 2026-02-12: A-017 완료
    변경 파일: `scripts/pipeline_worker.py`, `api/main.py`, `tests/test_api_status.py`, `tests/test_pipeline_worker.py`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/PLAN_LIVING_HYBRID.md`, `docs/DECISIONS.md`
+26. 2026-02-12: A-019 진행 (주석/로그 가독성 1차 보강)
+   변경 파일: `scripts/status_monitor.py`, `scripts/pipeline_worker.py`, `api/main.py`, `docs/PROJECT_IDENTITY.md`, `docs/ENGINEERING_CONSTITUTION.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/DECISIONS.md`

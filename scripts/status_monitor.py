@@ -141,6 +141,14 @@ def get_latest_ohlcv_timestamp(query_api, symbol: str) -> datetime | None:
 def apply_influx_json_consistency(
     snapshot: MonitorSnapshot, latest_ohlcv_ts: datetime | None
 ) -> MonitorSnapshot:
+    """
+    Influx(SoT)와 JSON(파생 산출물) 간 시각 갭을 추가 검증한다.
+
+    기본 정책:
+    1) JSON 자체가 이미 missing/corrupt면 그 결과를 우선한다.
+    2) Influx 정보가 없으면 오탐을 피하기 위해 JSON 판정을 유지한다.
+    3) 갭이 hard_limit을 넘는 경우에만 hard_stale로 승격한다.
+    """
     # Influx 설정이 없거나, 쿼리 실패/결과 없음 (Influx 장애를 서비스 장애로 오탐 가능)
     # 따라서, JSON 기준 판정을 존중하여 return.
     if latest_ohlcv_ts is None:
@@ -163,6 +171,7 @@ def apply_influx_json_consistency(
             detail="influx_json_mismatch: invalid snapshot updated_at",
         )
 
+    # 앞/뒤 관계보다 "절대 시각 차이"가 중요하므로 absolute gap으로 계산.
     gap = updated_at - latest_ohlcv_ts
     if gap < timedelta(0):
         gap = -gap
@@ -201,10 +210,11 @@ def run_monitor_cycle(
     events: list[MonitorAlertEvent] = []
 
     for symbol in resolved_symbols:
+        # 심볼 단위로 Influx latest timestamp를 1회 조회하고, timeframe 루프에서 재사용한다.
         latest_ohlcv_ts = get_latest_ohlcv_timestamp(query_api, symbol)
         for timeframe in resolved_timeframes:
             key = f"{symbol}|{timeframe}"
-            snapshot = evaluate_symbol_timeframe(
+            base_snapshot = evaluate_symbol_timeframe(
                 symbol=symbol,
                 timeframe=timeframe,
                 now=resolved_now,
@@ -212,7 +222,16 @@ def run_monitor_cycle(
                 soft_thresholds=soft_thresholds,
                 hard_thresholds=hard_thresholds,
             )
-            snapshot = apply_influx_json_consistency(snapshot, latest_ohlcv_ts)
+            snapshot = apply_influx_json_consistency(
+                base_snapshot, latest_ohlcv_ts
+            )
+            # JSON 단독 판정과 최종 판정이 달라졌다면, 운영자 추적을 위해 명시 로그를 남긴다.
+            if snapshot.status != base_snapshot.status:
+                logger.warning(
+                    "[Monitor] Consistency override: "
+                    f"{symbol} {timeframe} {base_snapshot.status}->{snapshot.status} "
+                    f"detail={snapshot.detail}"
+                )
             previous_status = state.get(key).status if key in state else None
             event = detect_alert_event(previous_status, snapshot.status)
             if event:
