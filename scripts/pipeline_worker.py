@@ -13,6 +13,7 @@ from utils.logger import get_logger
 from utils.config import TARGET_SYMBOLS, PRIMARY_TIMEFRAME
 from utils.file_io import atomic_write_json
 from utils.time_alignment import (
+    detect_timeframe_gaps,
     last_closed_candle_open,
     next_timeframe_boundary,
     timeframe_to_pandas_freq,
@@ -121,60 +122,21 @@ def fetch_and_save(write_api, symbol, since_ts):
         since_ms = int(since_ts)  # 이미 int면 그대로
 
     try:
-        fetch_limit = 1000
-        timeframe_ms = exchange.parse_timeframe(TIMEFRAME) * 1000
         now = datetime.now(timezone.utc)
         now_ms = int(now.timestamp() * 1000)
         last_closed_open = last_closed_candle_open(now, TIMEFRAME)
         last_closed_ms = int(last_closed_open.timestamp() * 1000)
 
-        cursor = since_ms
-        page_count = 0
-        chunks = []
-
-        # Backfill pagination: limit=1000 단발 호출 대신 누락 구간을 순차적으로 수집
-        while cursor <= now_ms:
-            ohlcv = exchange.fetch_ohlcv(
-                symbol, TIMEFRAME, since=cursor, limit=fetch_limit
-            )
-            if not ohlcv:
-                break
-
-            page_count += 1
-            chunks.append(
-                pd.DataFrame(
-                    ohlcv,
-                    columns=[
-                        "timestamp",
-                        "open",
-                        "high",
-                        "low",
-                        "close",
-                        "volume",
-                    ],
-                )
-            )
-
-            last_ts = ohlcv[-1][0]
-            if last_ts < cursor:
-                logger.warning(
-                    f"[{symbol}] Pagination cursor 역행 감지. last_ts={last_ts}, cursor={cursor}"
-                )
-                break
-
-            next_cursor = last_ts + timeframe_ms
-            if len(ohlcv) < fetch_limit or next_cursor <= cursor:
-                break
-
-            cursor = next_cursor
-
-        if not chunks:
+        df, page_count = _fetch_ohlcv_paginated(
+            exchange=exchange,
+            symbol=symbol,
+            timeframe=TIMEFRAME,
+            since_ms=since_ms,
+            until_ms=now_ms,
+        )
+        if df.empty:
             logger.info(f"[{symbol}] 새로운 데이터 없음.")
             return
-
-        df = pd.concat(chunks, ignore_index=True)
-        df.drop_duplicates(subset=["timestamp"], keep="last", inplace=True)
-        df.sort_values(by="timestamp", inplace=True)
 
         # 미완료 캔들은 저장하지 않는다.
         before_filter = len(df)
@@ -189,6 +151,44 @@ def fetch_and_save(write_api, symbol, since_ts):
                 f"[{symbol}] 저장 가능한 closed candle 없음 (last_closed_open={last_closed_open.strftime('%Y-%m-%dT%H:%M:%SZ')})."
             )
             return
+
+        gaps = _detect_gaps_from_ms_timestamps(
+            timestamps_ms=df["timestamp"].tolist(), timeframe=TIMEFRAME
+        )
+        if gaps:
+            total_missing = sum(gap.missing_count for gap in gaps)
+            first_gap = gaps[0]
+            logger.warning(
+                f"[{symbol}] Gap 감지: windows={len(gaps)}, missing={total_missing}, "
+                f"first={first_gap.start_open.strftime('%Y-%m-%dT%H:%M:%SZ')}~"
+                f"{first_gap.end_open.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+            )
+            df, refill_pages = _refill_detected_gaps(
+                exchange=exchange,
+                symbol=symbol,
+                timeframe=TIMEFRAME,
+                source_df=df,
+                gaps=gaps,
+                last_closed_ms=last_closed_ms,
+            )
+            if refill_pages > 0:
+                logger.info(
+                    f"[{symbol}] Gap refill 시도 완료 (pages={refill_pages})"
+                )
+
+            remaining_gaps = _detect_gaps_from_ms_timestamps(
+                timestamps_ms=df["timestamp"].tolist(),
+                timeframe=TIMEFRAME,
+            )
+            if remaining_gaps:
+                remaining_missing = sum(
+                    gap.missing_count for gap in remaining_gaps
+                )
+                logger.warning(
+                    f"[{symbol}] Gap 잔존: windows={len(remaining_gaps)}, missing={remaining_missing}"
+                )
+            else:
+                logger.info(f"[{symbol}] Gap refill 완료.")
 
         df["timestamp"] = pd.to_datetime(
             df["timestamp"], unit="ms"
@@ -214,6 +214,99 @@ def fetch_and_save(write_api, symbol, since_ts):
 
     except Exception as e:
         logger.error(f"[{symbol}] 수집 실패: {e}")
+
+
+def _fetch_ohlcv_paginated(
+    exchange, symbol: str, timeframe: str, since_ms: int, until_ms: int
+) -> tuple[pd.DataFrame, int]:
+    fetch_limit = 1000
+    timeframe_ms = exchange.parse_timeframe(timeframe) * 1000
+    cursor = int(since_ms)
+    page_count = 0
+    chunks: list[pd.DataFrame] = []
+
+    while cursor <= until_ms:
+        ohlcv = exchange.fetch_ohlcv(
+            symbol, timeframe, since=cursor, limit=fetch_limit
+        )
+        if not ohlcv:
+            break
+
+        page_count += 1
+        chunk = pd.DataFrame(
+            ohlcv,
+            columns=[
+                "timestamp",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+            ],
+        )
+        chunk = chunk[chunk["timestamp"] <= until_ms]
+        if chunk.empty:
+            break
+        chunks.append(chunk)
+
+        last_ts = int(chunk.iloc[-1]["timestamp"])
+        if last_ts < cursor:
+            break
+
+        next_cursor = last_ts + timeframe_ms
+        if len(ohlcv) < fetch_limit or next_cursor <= cursor:
+            break
+
+        cursor = next_cursor
+
+    if not chunks:
+        empty_df = pd.DataFrame(
+            columns=["timestamp", "open", "high", "low", "close", "volume"]
+        )
+        return empty_df, page_count
+
+    merged = pd.concat(chunks, ignore_index=True)
+    merged.drop_duplicates(subset=["timestamp"], keep="last", inplace=True)
+    merged.sort_values(by="timestamp", inplace=True)
+    return merged, page_count
+
+
+def _detect_gaps_from_ms_timestamps(
+    timestamps_ms: list[int], timeframe: str
+):
+    candle_opens = [
+        datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc)
+        for ts in timestamps_ms
+    ]
+    return detect_timeframe_gaps(candle_opens, timeframe)
+
+
+def _refill_detected_gaps(
+    exchange,
+    symbol: str,
+    timeframe: str,
+    source_df: pd.DataFrame,
+    gaps,
+    last_closed_ms: int,
+) -> tuple[pd.DataFrame, int]:
+    if not gaps:
+        return source_df, 0
+
+    refill_since_ms = int(gaps[0].start_open.timestamp() * 1000)
+    refill_df, refill_pages = _fetch_ohlcv_paginated(
+        exchange=exchange,
+        symbol=symbol,
+        timeframe=timeframe,
+        since_ms=refill_since_ms,
+        until_ms=last_closed_ms,
+    )
+    if refill_df.empty:
+        return source_df, refill_pages
+
+    merged = pd.concat([source_df, refill_df], ignore_index=True)
+    merged.drop_duplicates(subset=["timestamp"], keep="last", inplace=True)
+    merged.sort_values(by="timestamp", inplace=True)
+    return merged, refill_pages
 
 
 def run_prediction_and_save(write_api, symbol):
