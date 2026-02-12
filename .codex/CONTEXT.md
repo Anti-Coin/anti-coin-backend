@@ -7,26 +7,17 @@ Authoritative for: project goals, constraints, and tradeoff intent.
 3) Grow into a real service, not a demo-only script.
 
 ## AI Usage Philosophy
-- Do not let AI produce large one-shot code blocks by default.
-- Prefer small, iterative changes so the owner keeps project understanding.
-- Decide after deep discussion on non-trivial topics.
-- Always think about edge cases and failure paths before implementation.
+- Prefer small, iterative changes over large one-shot generation.
+- Challenge assumptions before implementation.
+- Treat failure-path design as first-class work.
 
 ## Philosophy vs Domain Policy
 - Philosophy: stable engineering stance and collaboration values.
-- Domain policy: market-data specific rules that may change with domain/service scope.
-- Example in this repo: freshness/stale exposure policy is domain-driven, not universal philosophy.
-
-## Delivery Philosophy
-- Prefer practical MVP delivery over perfectionism.
-- Treat failures as learning input, then iterate with small safe changes.
-- Ask "Can we actually operate this in current environment?" before adopting tools.
-- If a tool is elegant but not operable on current infra, pick the simpler operable option first.
+- Domain policy: market-data specific rules that may evolve.
 
 ## Runtime Reality
 - Target environment: Oracle Free Tier ARM.
-- Resources are limited and long-running behavior matters.
-- Ops overhead is part of cost; simple and observable beats complex.
+- Resources are limited; operational simplicity is part of cost.
 
 ## Non-Negotiable Priority
 1) Stability/reliability
@@ -35,19 +26,14 @@ Authoritative for: project goals, constraints, and tradeoff intent.
 
 ## Current Architecture Direction
 - Worker-centric pipeline
-- Static JSON artifacts for serving
-- Gatekeeper-style freshness checks
+- Static JSON user plane + status/ops API plane
+- InfluxDB as Source of Truth
 - UTC for internal time
 
-## Source of Truth Docs
-- `docs/PROJECT_IDENTITY.md`: project philosophy and goals
-- `docs/OPERATING_CONSTRAINTS.md`: runtime and ops constraints
-- `docs/TECH_DEBT_REGISTER.md`: debt tracking
-- `docs/SESSION_HANDOFF.md`: latest execution context
-
-## Tooling Stance
-- Heavy orchestration is conditional, not default (`R8`).
-- Any big-tool proposal must include cost, alternatives, and rollback.
+## Context Budget Policy
+1) Read active docs first (`CONTEXT_MIN`, `DECISIONS`, `PLAN`, `TASKS`).
+2) Open archive docs only when current decision/task cannot be justified from active docs.
+3) When archive is used, reference only the needed file/section.
 
 ## Scope Guard
 Do not jump roadmap phases without explicit request.
