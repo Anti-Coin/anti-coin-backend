@@ -95,6 +95,18 @@ def detect_alert_event(previous_status: str | None, current_status: str) -> str 
 
 
 def get_latest_ohlcv_timestamp(query_api, symbol: str) -> datetime | None:
+    """
+    Return the latest OHLCV timestamp for a given symbol.
+
+    NOTE:
+    Flux `last()` may return one record per group (e.g., per field/series),
+    so the query result can contain multiple tables. We therefore compute
+    the global max `_time` in Python to ensure a single authoritative
+    latest timestamp across all returned series.
+
+    All timestamps are normalized to UTC before comparison to avoid
+    naive/aware datetime comparison issues.
+    """
     if query_api is None or not INFLUXDB_BUCKET:
         return None
 
@@ -129,13 +141,20 @@ def get_latest_ohlcv_timestamp(query_api, symbol: str) -> datetime | None:
 def apply_influx_json_consistency(
     snapshot: MonitorSnapshot, latest_ohlcv_ts: datetime | None
 ) -> MonitorSnapshot:
+    # Influx 설정이 없거나, 쿼리 실패/결과 없음 (Influx 장애를 서비스 장애로 오탐 가능)
+    # 따라서, JSON 기준 판정을 존중하여 return.
     if latest_ohlcv_ts is None:
         return snapshot
+    # 이미 JSON에서 판정된 상태라면, Influx 기준으로 판정하지 않음.
     if snapshot.status in {"missing", "corrupt"}:
         return snapshot
+    # updated_at: JSON이 언제 생성 되었는 지 없고,
+    # hard_limit_minutes: 허용 가능한 최대 갭이 없으면,
+    # Influx vs. JSON 간 갭 규칙을 적용할 수 없음.
     if snapshot.updated_at is None or snapshot.hard_limit_minutes is None:
         return snapshot
 
+    # 파싱 실패 => timestamp 형식 오류/문자열 오염 등.
     updated_at = parse_utc_timestamp(snapshot.updated_at)
     if updated_at is None:
         return replace(
@@ -148,6 +167,7 @@ def apply_influx_json_consistency(
     if gap < timedelta(0):
         gap = -gap
 
+    # JSON 존중. 아마 status = healthy
     max_gap = timedelta(minutes=snapshot.hard_limit_minutes)
     if gap <= max_gap:
         return snapshot
@@ -251,9 +271,7 @@ def run_monitor() -> None:
             query_api = influx_client.query_api()
             logger.info("[Status Monitor] Influx consistency check enabled.")
         except Exception as e:
-            logger.error(
-                f"[Status Monitor] Failed to initialize Influx client: {e}"
-            )
+            logger.error(f"[Status Monitor] Failed to initialize Influx client: {e}")
 
     state: dict[str, MonitorSnapshot] = {}
     try:
