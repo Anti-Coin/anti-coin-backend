@@ -6,9 +6,11 @@ from scripts.status_monitor import (
     _parse_positive_int_env,
     apply_influx_json_consistency,
     detect_alert_event,
+    detect_realert_event,
     evaluate_symbol_timeframe,
     get_latest_ohlcv_timestamp,
     run_monitor_cycle,
+    update_status_cycle_counter,
 )
 
 
@@ -75,14 +77,42 @@ def test_detect_alert_event_only_for_unhealthy_transitions_and_recovery():
     assert detect_alert_event("missing", "stale") == "recovery"
 
 
+def test_detect_realert_event_for_hard_and_soft_statuses(monkeypatch):
+    monkeypatch.setattr("scripts.status_monitor.MONITOR_RE_ALERT_CYCLES", 3)
+
+    assert detect_realert_event("hard_stale", 1) is None
+    assert detect_realert_event("hard_stale", 2) is None
+    assert detect_realert_event("hard_stale", 3) == "hard_stale_repeat"
+    assert detect_realert_event("hard_stale", 4) is None
+    assert detect_realert_event("hard_stale", 6) == "hard_stale_repeat"
+
+    assert detect_realert_event("stale", 2) is None
+    assert detect_realert_event("stale", 3) == "soft_stale_repeat"
+    assert detect_realert_event("stale", 6) == "soft_stale_repeat"
+    assert detect_realert_event("fresh", 6) is None
+
+
+def test_update_status_cycle_counter_resets_on_status_change():
+    counters: dict[str, dict[str, str | int]] = {}
+    key = "BTC/USDT|1h"
+
+    assert update_status_cycle_counter(counters, key, "stale") == 1
+    assert update_status_cycle_counter(counters, key, "stale") == 2
+    assert update_status_cycle_counter(counters, key, "stale") == 3
+    assert update_status_cycle_counter(counters, key, "fresh") == 1
+    assert update_status_cycle_counter(counters, key, "fresh") == 2
+
+
 def test_run_monitor_cycle_deduplicates_and_emits_recovery(tmp_path):
     state = {}
+    status_counters = {}
     symbol = "BTC/USDT"
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
 
     _write_prediction(tmp_path, symbol, "2026-02-10T11:30:00Z")
     events = run_monitor_cycle(
         state=state,
+        status_counters=status_counters,
         now=now,
         symbols=[symbol],
         timeframes=["1h"],
@@ -94,6 +124,7 @@ def test_run_monitor_cycle_deduplicates_and_emits_recovery(tmp_path):
 
     events = run_monitor_cycle(
         state=state,
+        status_counters=status_counters,
         now=now,
         symbols=[symbol],
         timeframes=["1h"],
@@ -106,6 +137,7 @@ def test_run_monitor_cycle_deduplicates_and_emits_recovery(tmp_path):
     _write_prediction(tmp_path, symbol, "2026-02-10T11:58:00Z")
     events = run_monitor_cycle(
         state=state,
+        status_counters=status_counters,
         now=now,
         symbols=[symbol],
         timeframes=["1h"],
@@ -114,6 +146,104 @@ def test_run_monitor_cycle_deduplicates_and_emits_recovery(tmp_path):
         hard_thresholds={"1h": timedelta(minutes=20)},
     )
     assert [e.event for e in events] == ["recovery"]
+
+
+def test_run_monitor_cycle_realerts_on_repeated_hard_stale(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr("scripts.status_monitor.MONITOR_RE_ALERT_CYCLES", 3)
+    state = {}
+    status_counters = {}
+    symbol = "BTC/USDT"
+    now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
+
+    _write_prediction(tmp_path, symbol, "2026-02-10T11:30:00Z")
+
+    events = run_monitor_cycle(
+        state=state,
+        status_counters=status_counters,
+        now=now,
+        symbols=[symbol],
+        timeframes=["1h"],
+        static_dir=tmp_path,
+        soft_thresholds={"1h": timedelta(minutes=10)},
+        hard_thresholds={"1h": timedelta(minutes=20)},
+    )
+    assert [e.event for e in events] == ["hard_stale"]
+
+    events = run_monitor_cycle(
+        state=state,
+        status_counters=status_counters,
+        now=now,
+        symbols=[symbol],
+        timeframes=["1h"],
+        static_dir=tmp_path,
+        soft_thresholds={"1h": timedelta(minutes=10)},
+        hard_thresholds={"1h": timedelta(minutes=20)},
+    )
+    assert events == []
+
+    events = run_monitor_cycle(
+        state=state,
+        status_counters=status_counters,
+        now=now,
+        symbols=[symbol],
+        timeframes=["1h"],
+        static_dir=tmp_path,
+        soft_thresholds={"1h": timedelta(minutes=10)},
+        hard_thresholds={"1h": timedelta(minutes=20)},
+    )
+    assert [e.event for e in events] == ["hard_stale_repeat"]
+    assert events[0].cycles_in_status == 3
+
+
+def test_run_monitor_cycle_realerts_on_repeated_soft_stale(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr("scripts.status_monitor.MONITOR_RE_ALERT_CYCLES", 3)
+    state = {}
+    status_counters = {}
+    symbol = "BTC/USDT"
+    now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
+
+    _write_prediction(tmp_path, symbol, "2026-02-10T11:50:00Z")
+
+    events = run_monitor_cycle(
+        state=state,
+        status_counters=status_counters,
+        now=now,
+        symbols=[symbol],
+        timeframes=["1h"],
+        static_dir=tmp_path,
+        soft_thresholds={"1h": timedelta(minutes=5)},
+        hard_thresholds={"1h": timedelta(minutes=20)},
+    )
+    assert events == []
+
+    events = run_monitor_cycle(
+        state=state,
+        status_counters=status_counters,
+        now=now,
+        symbols=[symbol],
+        timeframes=["1h"],
+        static_dir=tmp_path,
+        soft_thresholds={"1h": timedelta(minutes=5)},
+        hard_thresholds={"1h": timedelta(minutes=20)},
+    )
+    assert events == []
+
+    events = run_monitor_cycle(
+        state=state,
+        status_counters=status_counters,
+        now=now,
+        symbols=[symbol],
+        timeframes=["1h"],
+        static_dir=tmp_path,
+        soft_thresholds={"1h": timedelta(minutes=5)},
+        hard_thresholds={"1h": timedelta(minutes=20)},
+    )
+    assert [e.event for e in events] == ["soft_stale_repeat"]
+    assert events[0].cycles_in_status == 3
 
 
 def test_parse_positive_int_env_returns_default_on_invalid(monkeypatch):
