@@ -1,6 +1,12 @@
 from datetime import timedelta
 
-from utils.config import _parse_csv_env, _parse_thresholds
+import pytest
+
+from utils.config import (
+    _enforce_phase_a_timeframe_guard,
+    _parse_csv_env,
+    _parse_thresholds,
+)
 
 
 def test_parse_csv_env_returns_default_on_empty_input():
@@ -30,3 +36,16 @@ def test_parse_thresholds_ignores_invalid_values():
     assert parsed["1h"] == timedelta(minutes=65)
     assert "2h" not in parsed
 
+
+def test_enforce_phase_a_timeframe_guard_accepts_only_1h():
+    assert _enforce_phase_a_timeframe_guard(["1h"]) == ["1h"]
+
+
+def test_enforce_phase_a_timeframe_guard_rejects_non_1h():
+    with pytest.raises(ValueError):
+        _enforce_phase_a_timeframe_guard(["4h"])
+
+
+def test_enforce_phase_a_timeframe_guard_rejects_multiple_timeframes():
+    with pytest.raises(ValueError):
+        _enforce_phase_a_timeframe_guard(["1h", "4h"])

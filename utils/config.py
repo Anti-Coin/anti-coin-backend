@@ -9,6 +9,7 @@ DEFAULT_TARGET_SYMBOLS = [
     "DOGE/USDT",
 ]
 DEFAULT_INGEST_TIMEFRAMES = ["1h"]
+PHASE_A_FIXED_TIMEFRAME = "1h"
 DEFAULT_FRESHNESS_THRESHOLD_MINUTES = {
     "1h": 65,
     "4h": 250,
@@ -56,11 +57,26 @@ def _parse_thresholds(
     return thresholds
 
 
+def _enforce_phase_a_timeframe_guard(timeframes: list[str]) -> list[str]:
+    """
+    Phase B 이전에는 운영 타임프레임을 1h로 고정한다.
+    """
+    if len(timeframes) != 1 or timeframes[0] != PHASE_A_FIXED_TIMEFRAME:
+        rendered = ",".join(timeframes) if timeframes else "(empty)"
+        raise ValueError(
+            "INGEST_TIMEFRAMES must be exactly '1h' before Phase B. "
+            f"Got: {rendered}"
+        )
+    return timeframes.copy()
+
+
 TARGET_SYMBOLS = _parse_csv_env(
     os.getenv("TARGET_SYMBOLS"), DEFAULT_TARGET_SYMBOLS
 )
-INGEST_TIMEFRAMES = _parse_csv_env(
-    os.getenv("INGEST_TIMEFRAMES"), DEFAULT_INGEST_TIMEFRAMES
+INGEST_TIMEFRAMES = _enforce_phase_a_timeframe_guard(
+    _parse_csv_env(
+        os.getenv("INGEST_TIMEFRAMES"), DEFAULT_INGEST_TIMEFRAMES
+    )
 )
 PRIMARY_TIMEFRAME = (
     INGEST_TIMEFRAMES[0] if INGEST_TIMEFRAMES else DEFAULT_INGEST_TIMEFRAMES[0]

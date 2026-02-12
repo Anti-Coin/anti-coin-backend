@@ -1,6 +1,6 @@
 # Coin Predict 최소 단위 Task 보드
 
-- Last Updated: 2026-02-10
+- Last Updated: 2026-02-12
 - Rule: 각 Task는 독립 PR 단위로 완료 가능해야 한다.
 - Rule: 하나의 Task는 하나의 핵심 결과물만 만든다.
 
@@ -26,6 +26,8 @@
 | A-012 | P1 | 세션 정렬 문서 체계 구축 ✅ | identity/constraints/debt/handoff 문서 | 완료 (2026-02-10): 새 세션 bootstrap 가능한 문서 스택 구성 |
 | A-013 | P1 | 예측 시작 시점 경계 기준 정렬 ✅ | 경계 계산 유틸 + worker 예측 로직 | 완료 (2026-02-10): timeframe 경계(UTC) 기준으로 예측 시작점 고정 |
 | A-014 | P1 | Influx-JSON 일관성 점검 추가 | 불일치 감지 로직/알림 | Influx 최신 시각과 static JSON 시각 불일치 탐지 가능 |
+| A-015 | P1 | Phase B 이전 `INGEST_TIMEFRAMES=1h` 운영 가드 추가 ✅ | config/runtime 검증 로직 | 완료 (2026-02-12): `INGEST_TIMEFRAMES`가 `1h` 단일값이 아니면 fail-fast로 실행 차단 |
+| A-016 | P2 | API-SSG 경계 문서화 + endpoint sunset 기준 정의 | 운영 정책 문서/체크리스트 | 사용자 경로와 운영/디버그 경로 구분 기준이 명확함 |
 
 ## 2. Phase B (Timeframe Expansion) - A 완료 후
 | ID | Priority | Task | 산출물 | Done 조건 |
@@ -63,6 +65,7 @@
 3. A-006
 4. A-011-6
 5. A-011-7
+6. A-010-7 (A-011-7 완료 후)
 
 ## 6. 태스크 운용 규칙
 1. Task 시작 전 `Assignee`, `ETA`, `Risk`를 기록한다.
@@ -91,6 +94,7 @@
 | A-010-4 | P1 | 상태전이 테스트 ✅ | 단위 테스트 | 완료 (2026-02-10): 중복 억제/복구 알림 케이스 검증 |
 | A-010-5 | P2 | 런타임 서비스 연결 ✅ | `docker-compose.yml` | 완료 (2026-02-10): monitor 서비스 추가 |
 | A-010-6 | P1 | worker/monitor 실행 엔트리포인트 분리 ✅ | `docker/Dockerfile.worker` | 완료 (2026-02-10): worker 기본 CMD + 범용 ENTRYPOINT 전환 |
+| A-010-7 | P2 | unhealthy 상태 3사이클 이상 지속 시 재알림 | monitor 로직 + 단위 테스트 | 최초 알림 유실 시 재인지 가능, 알림 폭주 방지 규칙 검증 |
 
 ## 9. 작업 이력
 1. 2026-02-10: A-001 완료
@@ -119,3 +123,7 @@
    변경 파일: `utils/time_alignment.py`, `scripts/pipeline_worker.py`, `tests/test_time_alignment.py`
 13. 2026-02-10: 문서 갱신 정책/신뢰 소스 결정 반영
    변경 파일: `docs/DECISIONS.md`, `docs/PLAN_LIVING_HYBRID.md`, `docs/OPERATING_CONSTRAINTS.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`
+14. 2026-02-12: 운영 경계/알림 정책 정렬 문서화
+   변경 파일: `docs/DECISIONS.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`
+15. 2026-02-12: A-015 완료
+   변경 파일: `utils/config.py`, `tests/test_config.py`, `docs/TASKS_MINIMUM_UNITS.md`

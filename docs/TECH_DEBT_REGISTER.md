@@ -1,6 +1,6 @@
 # Coin Predict Technical Debt Register
 
-- Last Updated: 2026-02-10
+- Last Updated: 2026-02-12
 - Purpose: 기술 부채를 세션 간 누락 없이 추적
 
 ## 1. 운용 규칙
@@ -26,6 +26,9 @@
 | TD-013 | Reliability | atomic JSON 권한 이슈 (회귀 위험) | nginx 읽기 실패 재발 가능 | mitigated | A-007,A-011-2 | 회귀 테스트 유지 및 CI 연동 |
 | TD-014 | Deployment | worker 이미지 ENTRYPOINT 고정으로 monitor 커맨드 충돌 | monitor 오작동/중복 worker 실행 가능 | resolved | A-010-6 | 범용 ENTRYPOINT + worker 기본 CMD로 분리 적용 |
 | TD-015 | Data Consistency | Influx-JSON 최신 시각 불일치 자동 검증 미구현 | 운영자가 오래된 JSON을 정상으로 오해할 수 있음 | open | A-014 | Influx 최신 시각 vs static `updated_at` 비교 로직/알림 추가 |
+| TD-016 | Alerting | unhealthy 상태 장기 지속 시 재알림 미구현 | 최초 상태전이 알림 유실 시 장애 인지 지연 | open | A-010-7 | 3사이클 이상 지속 시 재알림 + 알림 폭주 억제 테스트 추가 |
+| TD-017 | Runtime Guard | Phase B 이전 다중 timeframe 설정 방어 미구현 | `missing` 오탐 증가 및 운영 판단 혼선 | open | A-015 | `INGEST_TIMEFRAMES=1h` 운영 가드(경고/차단) 추가 |
+| TD-018 | Serving Policy | API-SSG 경계 및 endpoint sunset 기준 미정의 | 사용자/운영 경로 혼선, 불필요한 유지비 지속 | open | A-016 | 경계 정책/삭제 조건 문서화 후 점진 정리 |
 
 ## 3. 상태 정의
 1. `open`: 미해결
