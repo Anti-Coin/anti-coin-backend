@@ -46,4 +46,3 @@ def test_classify_freshness_rejects_invalid_limits():
         classify_freshness(now, now, timedelta(minutes=0))
     with pytest.raises(ValueError):
         classify_freshness(now, now, timedelta(minutes=10), timedelta(minutes=5))
-

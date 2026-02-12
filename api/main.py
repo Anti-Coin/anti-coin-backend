@@ -163,9 +163,7 @@ def get_history(symbol: str):
     df = query_influx(symbol, "ohlcv", days=30)
 
     if df is None:
-        raise HTTPException(
-            status_code=404, detail=f"No history data for {symbol}"
-        )
+        raise HTTPException(status_code=404, detail=f"No history data for {symbol}")
 
     # 필요한 컬럼만 추출
     cols = ["timestamp", "open", "high", "low", "close", "volume"]
@@ -197,9 +195,7 @@ def predict_price(symbol: str):
     df = df[df["timestamp"] > now]
 
     if df is None or df.empty:
-        raise HTTPException(
-            status_code=503, detail="System outdated. Worker is down."
-        )
+        raise HTTPException(status_code=503, detail="System outdated. Worker is down.")
 
     cols = ["timestamp", "yhat", "yhat_lower", "yhat_upper"]
     available_cols = [c for c in cols if c in df.columns]

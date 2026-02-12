@@ -19,9 +19,7 @@ def _write_prediction_health_file(tmp_path, entries: dict) -> None:
         json.dumps(
             {
                 "version": 1,
-                "updated_at": datetime.now(timezone.utc).strftime(
-                    "%Y-%m-%dT%H:%M:%SZ"
-                ),
+                "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "entries": entries,
             }
         )
@@ -144,7 +142,9 @@ def test_check_status_exposes_degraded_state_from_prediction_health(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(api_main, "STATIC_DIR", tmp_path)
-    monkeypatch.setattr(api_main, "PREDICTION_HEALTH_FILE", tmp_path / "prediction_health.json")
+    monkeypatch.setattr(
+        api_main, "PREDICTION_HEALTH_FILE", tmp_path / "prediction_health.json"
+    )
     monkeypatch.setattr(api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=10)})
     monkeypatch.setattr(
         api_main, "FRESHNESS_HARD_THRESHOLDS", {"1h": timedelta(minutes=20)}
@@ -182,7 +182,9 @@ def test_check_status_marks_degraded_when_prediction_health_file_is_corrupted(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(api_main, "STATIC_DIR", tmp_path)
-    monkeypatch.setattr(api_main, "PREDICTION_HEALTH_FILE", tmp_path / "prediction_health.json")
+    monkeypatch.setattr(
+        api_main, "PREDICTION_HEALTH_FILE", tmp_path / "prediction_health.json"
+    )
     monkeypatch.setattr(api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=10)})
     monkeypatch.setattr(
         api_main, "FRESHNESS_HARD_THRESHOLDS", {"1h": timedelta(minutes=20)}

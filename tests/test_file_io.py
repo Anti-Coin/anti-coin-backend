@@ -29,7 +29,9 @@ def test_atomic_write_json_applies_world_readable_mode_on_posix(tmp_path):
     assert file_mode == 0o644
 
 
-def test_atomic_write_json_cleans_temp_file_and_keeps_previous_content_on_failure(tmp_path):
+def test_atomic_write_json_cleans_temp_file_and_keeps_previous_content_on_failure(
+    tmp_path,
+):
     target = tmp_path / "prediction_ETH_USDT.json"
     target.write_text('{"stable": true}')
 
@@ -39,4 +41,3 @@ def test_atomic_write_json_cleans_temp_file_and_keeps_previous_content_on_failur
 
     assert json.loads(target.read_text()) == {"stable": True}
     assert not list(tmp_path.glob(f".{target.name}.*"))
-

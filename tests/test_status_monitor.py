@@ -148,9 +148,7 @@ def test_run_monitor_cycle_deduplicates_and_emits_recovery(tmp_path):
     assert [e.event for e in events] == ["recovery"]
 
 
-def test_run_monitor_cycle_realerts_on_repeated_hard_stale(
-    tmp_path, monkeypatch
-):
+def test_run_monitor_cycle_realerts_on_repeated_hard_stale(tmp_path, monkeypatch):
     monkeypatch.setattr("scripts.status_monitor.MONITOR_RE_ALERT_CYCLES", 3)
     state = {}
     status_counters = {}
@@ -197,9 +195,7 @@ def test_run_monitor_cycle_realerts_on_repeated_hard_stale(
     assert events[0].cycles_in_status == 3
 
 
-def test_run_monitor_cycle_realerts_on_repeated_soft_stale(
-    tmp_path, monkeypatch
-):
+def test_run_monitor_cycle_realerts_on_repeated_soft_stale(tmp_path, monkeypatch):
     monkeypatch.setattr("scripts.status_monitor.MONITOR_RE_ALERT_CYCLES", 3)
     state = {}
     status_counters = {}
@@ -270,9 +266,7 @@ class _FakeTable:
 
 
 class _FakeQueryApi:
-    def __init__(
-        self, latest_by_symbol: dict[str, datetime | list[datetime] | None]
-    ):
+    def __init__(self, latest_by_symbol: dict[str, datetime | list[datetime] | None]):
         self._latest_by_symbol = latest_by_symbol
 
     def query(self, query: str):
