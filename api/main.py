@@ -5,12 +5,11 @@ from contextlib import asynccontextmanager
 import pandas as pd
 import os
 import time
-from datetime import datetime, timezone, timedelta
-import json
+from datetime import datetime, timezone
 from pathlib import Path
 from utils.logger import get_logger
 from utils.config import FRESHNESS_THRESHOLDS, FRESHNESS_HARD_THRESHOLDS
-from utils.freshness import classify_freshness, parse_utc_timestamp
+from utils.prediction_status import evaluate_prediction_status
 
 logger = get_logger(__name__)
 
@@ -153,55 +152,30 @@ def check_status(symbol: str, timeframe: str = "1h"):
     정적 파일의 신선도(Freshness) 검사
     - 파일이 없거나, 너무 오래되었으면 503에러 반환
     """
-    safe_symbol = symbol.replace("/", "_")
-
-    # 파일 명 결정 (TODO:추후 Timeframe 확장에 대비한 네이밍 규칙 필요)
-    # 현재 MVP는 prediction_BTC_USDT.json 고정 사용 중
-    filename = f"prediction_{safe_symbol}.json"
-    file_path = STATIC_DIR / filename
-
-    if not file_path.exists():
-        raise HTTPException(status_code=503, detail="Not initialized yet.")
-
     try:
-        # 메타 데이터 읽기 (전체보다 헤더를 읽는 게 빠르지만, json이므로 우선 모두 로드)
-        # 파일 크기가 작으므로 I/O 부담은 미미함.
-        with open(file_path, "r") as f:
-            data = json.load(f)
-
-        updated_at_str = data.get("updated_at")
-        if not updated_at_str:
-            raise HTTPException(status_code=503, detail="Invalid data format")
-
-        updated_at = parse_utc_timestamp(updated_at_str)
-        if updated_at is None:
-            raise HTTPException(status_code=503, detail="Invalid data format")
-
-        now = datetime.now(timezone.utc)
-
-        # 임계값 조회 (기본 값 65분)
-        default_limit = FRESHNESS_THRESHOLDS.get("1h", timedelta(minutes=65))
-        default_hard_limit = FRESHNESS_HARD_THRESHOLDS.get("1h", default_limit * 2)
-        soft_limit = FRESHNESS_THRESHOLDS.get(timeframe, default_limit)
-        hard_limit = FRESHNESS_HARD_THRESHOLDS.get(
-            timeframe, max(default_hard_limit, soft_limit * 2)
+        snapshot = evaluate_prediction_status(
+            symbol=symbol,
+            timeframe=timeframe,
+            now=datetime.now(timezone.utc),
+            static_dir=STATIC_DIR,
+            soft_thresholds=FRESHNESS_THRESHOLDS,
+            hard_thresholds=FRESHNESS_HARD_THRESHOLDS,
         )
 
-        freshness = classify_freshness(
-            updated_at=updated_at,
-            now=now,
-            soft_limit=soft_limit,
-            hard_limit=hard_limit,
-        )
+        if snapshot.status == "missing":
+            raise HTTPException(status_code=503, detail="Not initialized yet.")
 
-        if freshness.status == "hard_stale":
+        if snapshot.status == "corrupt":
+            if snapshot.error_code == "json_decode_error":
+                raise HTTPException(status_code=503, detail="Data corruption detected")
+            raise HTTPException(status_code=503, detail="Invalid data format")
+
+        if snapshot.status == "hard_stale":
             raise HTTPException(
                 status_code=503,
-                detail=f"Data is stale beyond hard limit. Last updated: {updated_at_str}",
+                detail="Data is stale beyond hard limit. "
+                f"Last updated: {snapshot.updated_at}",
             )
-
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=503, detail="Data corruption detected")
     except HTTPException:
         raise
     except Exception as e:
@@ -209,15 +183,15 @@ def check_status(symbol: str, timeframe: str = "1h"):
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
     response = {
-        "status": freshness.status,
-        "updated_at": updated_at_str,
-        "age_minutes": round(freshness.age.total_seconds() / 60, 2),
+        "status": snapshot.status,
+        "updated_at": snapshot.updated_at,
+        "age_minutes": snapshot.age_minutes,
         "threshold_minutes": {
-            "soft": int(freshness.soft_limit.total_seconds() // 60),
-            "hard": int(freshness.hard_limit.total_seconds() // 60),
+            "soft": snapshot.soft_limit_minutes,
+            "hard": snapshot.hard_limit_minutes,
         },
     }
-    if freshness.status == "stale":
+    if snapshot.status == "stale":
         response["warning"] = "Data is stale but within soft-stale tolerance."
     return response
 

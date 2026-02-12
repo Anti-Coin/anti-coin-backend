@@ -1,4 +1,3 @@
-import json
 import os
 import time
 from dataclasses import dataclass
@@ -7,14 +6,12 @@ from pathlib import Path
 
 import requests
 
-from utils.config import (
-    FRESHNESS_HARD_THRESHOLDS,
-    FRESHNESS_THRESHOLDS,
-    INGEST_TIMEFRAMES,
-    TARGET_SYMBOLS,
-)
-from utils.freshness import classify_freshness, parse_utc_timestamp
+from utils.config import INGEST_TIMEFRAMES, TARGET_SYMBOLS
 from utils.logger import get_logger
+from utils.prediction_status import (
+    PredictionStatusSnapshot,
+    evaluate_prediction_status,
+)
 
 logger = get_logger(__name__)
 
@@ -40,14 +37,7 @@ HEALTHY_STATUSES = {"fresh", "stale"}
 ALERTABLE_UNHEALTHY_STATUSES = {"hard_stale", "corrupt", "missing"}
 
 
-@dataclass(frozen=True)
-class MonitorSnapshot:
-    symbol: str
-    timeframe: str
-    status: str
-    detail: str
-    updated_at: str | None = None
-    age_minutes: float | None = None
+MonitorSnapshot = PredictionStatusSnapshot
 
 
 @dataclass(frozen=True)
@@ -60,35 +50,6 @@ class MonitorAlertEvent:
     current_snapshot: MonitorSnapshot
 
 
-def _safe_symbol(symbol: str) -> str:
-    return symbol.replace("/", "_")
-
-
-def prediction_file_candidates(
-    symbol: str, timeframe: str, static_dir: Path = STATIC_DATA_DIR
-) -> list[Path]:
-    """prediction file 목록을 반환. 1h의 경우 legacy 파일을 포함"""
-    safe_symbol = _safe_symbol(symbol)
-    timeframe_file = static_dir / f"prediction_{safe_symbol}_{timeframe}.json"
-
-    if timeframe == "1h":
-        legacy_file = static_dir / f"prediction_{safe_symbol}.json"
-        return [timeframe_file, legacy_file]
-
-    return [timeframe_file]
-
-
-def _read_prediction_file(file_path: Path) -> dict | None:
-    try:
-        with open(file_path, "r") as f:
-            return json.load(f)
-    except json.JSONDecodeError:
-        return None
-    except OSError as e:
-        logger.error(f"Failed to read file {file_path}: {e}")
-        return None
-
-
 def evaluate_symbol_timeframe(
     symbol: str,
     timeframe: str,
@@ -97,60 +58,13 @@ def evaluate_symbol_timeframe(
     soft_thresholds: dict[str, timedelta] | None = None,
     hard_thresholds: dict[str, timedelta] | None = None,
 ) -> MonitorSnapshot:
-    resolved_now = now or datetime.now(timezone.utc)
-    resolved_soft = soft_thresholds or FRESHNESS_THRESHOLDS
-    resolved_hard = hard_thresholds or FRESHNESS_HARD_THRESHOLDS
-
-    default_soft = resolved_soft.get("1h", timedelta(minutes=65))
-    default_hard = resolved_hard.get("1h", default_soft * 2)
-    soft_limit = resolved_soft.get(timeframe, default_soft)
-    hard_limit = resolved_hard.get(timeframe, max(default_hard, soft_limit * 2))
-
-    # Prediction 파일을 순회
-    for file_path in prediction_file_candidates(symbol, timeframe, static_dir):
-        if not file_path.exists():
-            continue
-
-        payload = _read_prediction_file(file_path)
-        if payload is None:  # 파일을 읽는 과정에서 Error -> corrupt
-            return MonitorSnapshot(
-                symbol=symbol,
-                timeframe=timeframe,
-                status="corrupt",
-                detail=f"JSON decode error: {file_path.name}",
-            )
-
-        updated_at_str = payload.get("updated_at")
-        updated_at = parse_utc_timestamp(updated_at_str)
-        if updated_at is None:  # updated_at이 없음 -> corrupt
-            return MonitorSnapshot(
-                symbol=symbol,
-                timeframe=timeframe,
-                status="corrupt",
-                detail=f"Invalid updated_at format: {file_path.name}",
-            )
-
-        freshness = classify_freshness(
-            updated_at=updated_at,
-            now=resolved_now,
-            soft_limit=soft_limit,
-            hard_limit=hard_limit,
-        )
-        return MonitorSnapshot(
-            symbol=symbol,
-            timeframe=timeframe,
-            status=freshness.status,
-            detail=f"checked={file_path.name}",
-            updated_at=updated_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            age_minutes=round(freshness.age.total_seconds() / 60, 2),
-        )
-
-    # 파일이 없음
-    return MonitorSnapshot(
+    return evaluate_prediction_status(
         symbol=symbol,
         timeframe=timeframe,
-        status="missing",
-        detail="Prediction file is missing.",
+        now=now,
+        static_dir=static_dir,
+        soft_thresholds=soft_thresholds,
+        hard_thresholds=hard_thresholds,
     )
 
 

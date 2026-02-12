@@ -29,7 +29,7 @@
 | A-015 | P1 | Phase B 이전 `INGEST_TIMEFRAMES=1h` 운영 가드 추가 ✅ | config/runtime 검증 로직 | 완료 (2026-02-12): `INGEST_TIMEFRAMES`가 `1h` 단일값이 아니면 fail-fast로 실행 차단 |
 | A-016 | P2 | API-SSG 경계 문서화 + endpoint sunset 기준 정의 | 운영 정책 문서/체크리스트 | 사용자 경로와 운영/디버그 경로 구분 기준이 명확함 |
 | A-017 | P1 | predict 실패 알림 + degraded 상태 노출 | 실패 알림 분기 + 상태 필드 | soft stale 경고 정책을 유지하면서 degraded를 분리 신호로 노출 |
-| A-018 | P1 | API/Monitor 상태 판정 경로 공통화 | 공통 evaluator 유틸 + 호출 경로 정리 | API/monitor가 동일 파일 선택/동일 freshness 판정을 수행 |
+| A-018 | P1 | API/Monitor 상태 판정 경로 공통화 ✅ | 공통 evaluator 유틸 + 호출 경로 정리 | 완료 (2026-02-12): 공통 evaluator 도입으로 API/monitor가 동일 파일 선택/동일 freshness 판정을 수행 |
 
 ## 2. Phase B (Timeframe Expansion) - A 완료 후
 | ID | Priority | Task | 산출물 | Done 조건 |
@@ -65,12 +65,11 @@
 
 ## 5. 즉시 시작 권장 Task 묶음 (이번 사이클)
 1. A-002
-2. A-018
-3. A-014
-4. A-017
-5. A-010-7
-6. C-005 (설계만, A 게이트 완료 후 코드 착수)
-7. C-006 (설계만, A 게이트 완료 후 코드 착수)
+2. A-014
+3. A-017
+4. A-010-7
+5. C-005 (설계만, A 게이트 완료 후 코드 착수)
+6. C-006 (설계만, A 게이트 완료 후 코드 착수)
 
 ## 6. 태스크 운용 규칙
 1. Task 시작 전 `Assignee`, `ETA`, `Risk`를 기록한다.
@@ -146,3 +145,5 @@
    변경 파일: `.github/workflows/deploy.yml`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`
 21. 2026-02-12: Phase A 우선순위/신호 정책 재정렬 문서화
    변경 파일: `docs/DECISIONS.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/PLAN_LIVING_HYBRID.md`, `docs/TECH_DEBT_REGISTER.md`
+22. 2026-02-12: A-018 완료
+   변경 파일: `utils/prediction_status.py`, `api/main.py`, `scripts/status_monitor.py`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/PLAN_LIVING_HYBRID.md`

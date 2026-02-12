@@ -181,3 +181,4 @@ Exit Criteria:
 17. 2026-02-12: A-005 완료 (gap detector 도입, 누락 구간 감지/경고 기반 확보)
 18. 2026-02-12: prediction 보존/실패 신호/trigger 전환 정책 결정(D-2026-02-12-18)
 19. 2026-02-12: Phase A 우선순위 재정렬 및 `soft stale`/`degraded` 분리 정책 확정(D-2026-02-12-19~22)
+20. 2026-02-12: A-018 완료 (API/monitor 상태 판정 경로 공통 evaluator로 통합)
