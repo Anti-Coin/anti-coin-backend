@@ -25,7 +25,7 @@
 | A-011 | P1 | 기본 회귀 테스트 추가 🔄 | 단위/통합 테스트 | 진행중 (2026-02-10): 우선 단위 테스트부터 확대 |
 | A-012 | P1 | 세션 정렬 문서 체계 구축 ✅ | identity/constraints/debt/handoff 문서 | 완료 (2026-02-10): 새 세션 bootstrap 가능한 문서 스택 구성 |
 | A-013 | P1 | 예측 시작 시점 경계 기준 정렬 ✅ | 경계 계산 유틸 + worker 예측 로직 | 완료 (2026-02-10): timeframe 경계(UTC) 기준으로 예측 시작점 고정 |
-| A-014 | P1 | Influx-JSON 일관성 점검 추가 | 불일치 감지 로직/알림 | Influx 최신 시각과 static JSON 시각 불일치 탐지 + `/predict` 미래값 운영 스모크체크 기록 |
+| A-014 | P1 | Influx-JSON 일관성 점검 추가 🔄 | 불일치 감지 로직/알림 | 진행중 (2026-02-12): Influx 최신 시각 vs static `updated_at` 불일치 감지/`hard_stale` 승격 구현 및 단위 테스트 완료, `/predict` 미래값 운영 스모크체크 대기 |
 | A-015 | P1 | Phase B 이전 `INGEST_TIMEFRAMES=1h` 운영 가드 추가 ✅ | config/runtime 검증 로직 | 완료 (2026-02-12): `INGEST_TIMEFRAMES`가 `1h` 단일값이 아니면 fail-fast로 실행 차단 |
 | A-016 | P2 | API-SSG 경계 문서화 + endpoint sunset 기준 정의 | 운영 정책 문서/체크리스트 | 사용자 경로와 운영/디버그 경로 구분 기준이 명확함 |
 | A-017 | P1 | predict 실패 알림 + degraded 상태 노출 | 실패 알림 분기 + 상태 필드 | soft stale 경고 정책을 유지하면서 degraded를 분리 신호로 노출 |
@@ -148,3 +148,5 @@
    변경 파일: `utils/prediction_status.py`, `api/main.py`, `scripts/status_monitor.py`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/PLAN_LIVING_HYBRID.md`
 23. 2026-02-12: A-002 완료
    변경 파일: `utils/ingest_state.py`, `scripts/pipeline_worker.py`, `tests/test_ingest_state.py`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/PLAN_LIVING_HYBRID.md`
+24. 2026-02-12: A-014 진행 (코드/테스트 반영)
+   변경 파일: `scripts/status_monitor.py`, `tests/test_status_monitor.py`, `docker-compose.yml`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/PLAN_LIVING_HYBRID.md`
