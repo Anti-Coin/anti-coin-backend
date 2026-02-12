@@ -12,6 +12,7 @@ import traceback
 from utils.logger import get_logger
 from utils.config import TARGET_SYMBOLS, PRIMARY_TIMEFRAME
 from utils.file_io import atomic_write_json
+from utils.ingest_state import IngestStateStore
 from utils.time_alignment import (
     detect_timeframe_gaps,
     last_closed_candle_open,
@@ -38,6 +39,7 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 TARGET_COINS = TARGET_SYMBOLS
 TIMEFRAME = PRIMARY_TIMEFRAME
 LOOKBACK_DAYS = 30  # 과거 30일치 데이터 유지
+INGEST_STATE_FILE = STATIC_DIR / "ingest_state.json"
 
 
 def send_alert(message):
@@ -108,7 +110,7 @@ def save_history_to_json(df, symbol):
         logger.error(f"[{symbol}] 정적 파일 생성 실패: {e}")
 
 
-def fetch_and_save(write_api, symbol, since_ts):
+def fetch_and_save(write_api, symbol, since_ts) -> tuple[datetime | None, str]:
     """
     ccxt로 데이터 가져와서 InfluxDB에 저장
     """
@@ -136,7 +138,7 @@ def fetch_and_save(write_api, symbol, since_ts):
         )
         if df.empty:
             logger.info(f"[{symbol}] 새로운 데이터 없음.")
-            return
+            return None, "no_data"
 
         # 미완료 캔들은 저장하지 않는다.
         before_filter = len(df)
@@ -150,7 +152,7 @@ def fetch_and_save(write_api, symbol, since_ts):
             logger.info(
                 f"[{symbol}] 저장 가능한 closed candle 없음 (last_closed_open={last_closed_open.strftime('%Y-%m-%dT%H:%M:%SZ')})."
             )
-            return
+            return None, "no_data"
 
         gaps = _detect_gaps_from_ms_timestamps(
             timestamps_ms=df["timestamp"].tolist(), timeframe=TIMEFRAME
@@ -209,11 +211,14 @@ def fetch_and_save(write_api, symbol, since_ts):
         logger.info(
             f"[{symbol}] {len(df)}개 봉 저장 완료 (pages={page_count}, Last={df.index[-1]})"
         )
+        latest_saved_at = df.index[-1].to_pydatetime().astimezone(timezone.utc)
 
         # TODO: SSG 파일 생성을 DB 조회 후 덮어쓰기로 구현?
+        return latest_saved_at, "saved"
 
     except Exception as e:
         logger.error(f"[{symbol}] 수집 실패: {e}")
+        return None, "failed"
 
 
 def _fetch_ohlcv_paginated(
@@ -431,6 +436,7 @@ def run_worker():
     )
     write_api = client.write_api(write_options=SYNCHRONOUS)
     query_api = client.query_api()
+    ingest_state_store = IngestStateStore(INGEST_STATE_FILE)
 
     send_alert("Worker Started.")
 
@@ -442,24 +448,44 @@ def run_worker():
             )
 
             for symbol in TARGET_COINS:
-                # DB에서 마지막 데이터 시간 확인
-                last_time = get_last_timestamp(query_api, symbol)
-
-                # 시작 시간 결정 (Since)
-                if last_time:
-                    # 마지막 데이터가 있으면, 그 시간부터 다시 가져옴 (덮어쓰기 업데이트)
-                    since = last_time
+                state_since = ingest_state_store.get_last_closed(symbol, TIMEFRAME)
+                if state_since:
+                    since = state_since
                 else:
-                    # 데이터가 아예 없으면 30일 전부터
-                    since = datetime.now(timezone.utc) - timedelta(
-                        days=LOOKBACK_DAYS
-                    )
-                    logger.info(
-                        f"[{symbol}] 초기 데이터 수집 시작 (30일 전부터)"
-                    )
+                    # DB에서 마지막 데이터 시간 확인
+                    last_time = get_last_timestamp(query_api, symbol)
+
+                    # 시작 시간 결정 (Since)
+                    if last_time:
+                        # 마지막 데이터가 있으면, 그 시간부터 다시 가져옴 (덮어쓰기 업데이트)
+                        since = last_time
+                    else:
+                        # 데이터가 아예 없으면 30일 전부터
+                        since = datetime.now(timezone.utc) - timedelta(
+                            days=LOOKBACK_DAYS
+                        )
+                        logger.info(
+                            f"[{symbol}] 초기 데이터 수집 시작 (30일 전부터)"
+                        )
 
                 # 수집
-                fetch_and_save(write_api, symbol, since)
+                latest_saved_at, ingest_result = fetch_and_save(
+                    write_api, symbol, since
+                )
+                if ingest_result == "saved":
+                    ingest_state_store.upsert(
+                        symbol,
+                        TIMEFRAME,
+                        last_closed_ts=latest_saved_at,
+                        status="ok",
+                    )
+                elif ingest_result == "failed":
+                    ingest_state_store.upsert(
+                        symbol,
+                        TIMEFRAME,
+                        last_closed_ts=state_since,
+                        status="failed",
+                    )
 
                 # History 파일 갱신
                 update_full_history_file(query_api, symbol)

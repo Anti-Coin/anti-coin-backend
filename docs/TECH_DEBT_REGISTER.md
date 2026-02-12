@@ -35,7 +35,7 @@
 | TD-022 | Freshness Semantics | prediction 파일 `updated_at` 기반 fresh 판정이 입력 데이터 stale을 가릴 수 있음 | freshness honesty 훼손 및 운영 오판 가능 | open | A-014,A-017 | 입력 데이터 최신 시각과 prediction 생성 시각을 분리 노출하고 정합성 체크 연동 |
 | TD-023 | Status Consistency | API와 monitor의 prediction 파일 선택/판정 경로가 분리됨 | 동일 시점 상태 불일치 및 경보 혼선 가능 | resolved | A-018 | `utils/prediction_status.py` 공통 evaluator 도입 및 API/monitor 공용 경로 통합 완료 |
 | TD-024 | Alerting | worker 단계별 부분 실패가 운영 알림으로 충분히 승격되지 않음 | 프로세스 생존 상태에서 기능 실패 장기 미탐지 가능 | open | A-017,A-010-7 | 단계 실패를 degraded/alert 이벤트로 승격하고 지속 실패 재알림과 연동 |
-| TD-025 | Ingest Recovery | DB last + 30일 룩백 기반 since 결정 | 장기 중단 후 복구 지점 부정확/과다 백필 가능 | open | A-002 | ingest_state durable cursor 저장소 도입 및 재시작 복구 기준 고정 |
+| TD-025 | Ingest Recovery | DB last + 30일 룩백 기반 since 결정 | 장기 중단 후 복구 지점 부정확/과다 백필 가능 | resolved | A-002 | `utils/ingest_state.py` 도입으로 `symbol+timeframe` 커서 저장/재시작 복구 기준 고정 완료 |
 
 ## 3. 상태 정의
 1. `open`: 미해결
