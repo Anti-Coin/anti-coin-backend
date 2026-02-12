@@ -30,8 +30,12 @@
 | TD-017 | Runtime Guard | Phase B 이전 다중 timeframe 설정 방어 미구현 | `missing` 오탐 증가 및 운영 판단 혼선 | resolved | A-015 | `INGEST_TIMEFRAMES=1h` fail-fast 가드 적용 완료 |
 | TD-018 | Serving Policy | API-SSG 경계 및 endpoint sunset 기준 미정의 | 사용자/운영 경로 혼선, 불필요한 유지비 지속 | open | A-016 | 경계 정책/삭제 조건 문서화 후 점진 정리 |
 | TD-019 | Worker Architecture | ingest/predict/export 단일 worker 결합 구조 | 특정 단계 지연/장애가 전체 파이프라인 SLA를 악화 | open | C-005 | 단계별 worker 분리 순서/의존성 정의 후 점진 분리 |
-| TD-020 | Scheduling | 고정 간격 while-loop 중심 스케줄 | timeframe별 리소스 낭비/경계 불일치 가능 | open | C-006 | timeframe 경계/새 closed candle 감지 기반 트리거로 전환 |
-| TD-021 | Failure Signaling | predict 실패 시 degraded 상태/알림 표준 미구현 | 마지막 정상값 제공 중 실패 사실이 숨겨질 수 있음 | open | A-017 | 실패 알림 + 상태 메타(`degraded`,`last_success_at`) 노출 구현 |
+| TD-020 | Scheduling | 고정 간격 while-loop 중심 스케줄 | timeframe별 리소스 낭비/경계 불일치 가능 | open | C-006 | Phase A에서는 단기 패치 없이 defer, C-006에서 timeframe 경계 기반 트리거로 전환 |
+| TD-021 | Failure Signaling | predict 실패 시 degraded 상태/알림 표준 미구현 | 마지막 정상값 제공 중 실패 사실이 숨겨질 수 있음 | open | A-017 | soft stale 경고 정책과 분리된 degraded 신호(`degraded`,`last_success_at`)를 노출 |
+| TD-022 | Freshness Semantics | prediction 파일 `updated_at` 기반 fresh 판정이 입력 데이터 stale을 가릴 수 있음 | freshness honesty 훼손 및 운영 오판 가능 | open | A-014,A-017 | 입력 데이터 최신 시각과 prediction 생성 시각을 분리 노출하고 정합성 체크 연동 |
+| TD-023 | Status Consistency | API와 monitor의 prediction 파일 선택/판정 경로가 분리됨 | 동일 시점 상태 불일치 및 경보 혼선 가능 | open | A-018 | 공통 evaluator 유틸 도입 및 API/monitor 공용 경로로 통합 |
+| TD-024 | Alerting | worker 단계별 부분 실패가 운영 알림으로 충분히 승격되지 않음 | 프로세스 생존 상태에서 기능 실패 장기 미탐지 가능 | open | A-017,A-010-7 | 단계 실패를 degraded/alert 이벤트로 승격하고 지속 실패 재알림과 연동 |
+| TD-025 | Ingest Recovery | DB last + 30일 룩백 기반 since 결정 | 장기 중단 후 복구 지점 부정확/과다 백필 가능 | open | A-002 | ingest_state durable cursor 저장소 도입 및 재시작 복구 기준 고정 |
 
 ## 3. 상태 정의
 1. `open`: 미해결

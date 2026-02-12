@@ -25,10 +25,11 @@
 | A-011 | P1 | 기본 회귀 테스트 추가 🔄 | 단위/통합 테스트 | 진행중 (2026-02-10): 우선 단위 테스트부터 확대 |
 | A-012 | P1 | 세션 정렬 문서 체계 구축 ✅ | identity/constraints/debt/handoff 문서 | 완료 (2026-02-10): 새 세션 bootstrap 가능한 문서 스택 구성 |
 | A-013 | P1 | 예측 시작 시점 경계 기준 정렬 ✅ | 경계 계산 유틸 + worker 예측 로직 | 완료 (2026-02-10): timeframe 경계(UTC) 기준으로 예측 시작점 고정 |
-| A-014 | P1 | Influx-JSON 일관성 점검 추가 | 불일치 감지 로직/알림 | Influx 최신 시각과 static JSON 시각 불일치 탐지 가능 |
+| A-014 | P1 | Influx-JSON 일관성 점검 추가 | 불일치 감지 로직/알림 | Influx 최신 시각과 static JSON 시각 불일치 탐지 + `/predict` 미래값 운영 스모크체크 기록 |
 | A-015 | P1 | Phase B 이전 `INGEST_TIMEFRAMES=1h` 운영 가드 추가 ✅ | config/runtime 검증 로직 | 완료 (2026-02-12): `INGEST_TIMEFRAMES`가 `1h` 단일값이 아니면 fail-fast로 실행 차단 |
 | A-016 | P2 | API-SSG 경계 문서화 + endpoint sunset 기준 정의 | 운영 정책 문서/체크리스트 | 사용자 경로와 운영/디버그 경로 구분 기준이 명확함 |
-| A-017 | P1 | predict 실패 알림 + degraded 상태 노출 | 실패 알림 분기 + 상태 필드 | 마지막 정상 prediction 유지와 실패 사실 노출이 동시에 동작 |
+| A-017 | P1 | predict 실패 알림 + degraded 상태 노출 | 실패 알림 분기 + 상태 필드 | soft stale 경고 정책을 유지하면서 degraded를 분리 신호로 노출 |
+| A-018 | P1 | API/Monitor 상태 판정 경로 공통화 | 공통 evaluator 유틸 + 호출 경로 정리 | API/monitor가 동일 파일 선택/동일 freshness 판정을 수행 |
 
 ## 2. Phase B (Timeframe Expansion) - A 완료 후
 | ID | Priority | Task | 산출물 | Done 조건 |
@@ -63,10 +64,13 @@
 | D-009 | P2 | Drift 알림 연동 | drift 감지 + alert 분기 | 임계 초과 시 경고 발송 |
 
 ## 5. 즉시 시작 권장 Task 묶음 (이번 사이클)
-1. A-010-7
-2. A-017
-3. C-005 (분리 기준/순서 설계 포함)
-4. C-006
+1. A-002
+2. A-018
+3. A-014
+4. A-017
+5. A-010-7
+6. C-005 (설계만, A 게이트 완료 후 코드 착수)
+7. C-006 (설계만, A 게이트 완료 후 코드 착수)
 
 ## 6. 태스크 운용 규칙
 1. Task 시작 전 `Assignee`, `ETA`, `Risk`를 기록한다.
@@ -75,6 +79,7 @@
 4. 모델 관련 Task(D-xxx)는 품질 지표와 롤백 경로가 없으면 `Done` 처리하지 않는다.
 5. 새 기술 부채 발견 시 `TECH_DEBT_REGISTER` 업데이트 없이는 완료 처리하지 않는다.
 6. 코드 변경 Task 완료 시 같은 세션에서 `TASKS`와 관련 문서(`PLAN`, `TECH_DEBT`, `DECISIONS`)를 동기화한다.
+7. Phase C 코드 구현 태스크(`C-xxx`)는 `A-002`, `A-018`, `A-014`, `A-017`, `A-010-7` 완료 전에는 설계/문서 작업만 허용한다.
 
 ## 7. A-011 세부 태스크 (테스트 체계)
 | ID | Priority | Task | 산출물 | Done 조건 |
@@ -139,3 +144,5 @@
    변경 파일: `tests/test_pipeline_worker.py`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`
 20. 2026-02-12: A-011-7 완료
    변경 파일: `.github/workflows/deploy.yml`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`
+21. 2026-02-12: Phase A 우선순위/신호 정책 재정렬 문서화
+   변경 파일: `docs/DECISIONS.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/PLAN_LIVING_HYBRID.md`, `docs/TECH_DEBT_REGISTER.md`
