@@ -6,6 +6,7 @@ from scripts.pipeline_worker import (
     _detect_gaps_from_ms_timestamps,
     _fetch_ohlcv_paginated,
     _refill_detected_gaps,
+    upsert_prediction_health,
 )
 
 
@@ -89,3 +90,43 @@ def test_refill_detected_gaps_recovers_missing_candle():
         _to_ms(base + timedelta(hours=2)),
         _to_ms(base + timedelta(hours=3)),
     ]
+
+
+def test_upsert_prediction_health_tracks_failure_and_recovery(tmp_path):
+    health_path = tmp_path / "prediction_health.json"
+
+    first, was_degraded, is_degraded = upsert_prediction_health(
+        "BTC/USDT",
+        "1h",
+        prediction_ok=False,
+        error="model_missing",
+        path=health_path,
+    )
+    assert was_degraded is False
+    assert is_degraded is True
+    assert first["consecutive_failures"] == 1
+    assert first["last_success_at"] is None
+    assert first["last_error"] == "model_missing"
+
+    second, was_degraded, is_degraded = upsert_prediction_health(
+        "BTC/USDT",
+        "1h",
+        prediction_ok=False,
+        error="model_missing",
+        path=health_path,
+    )
+    assert was_degraded is True
+    assert is_degraded is True
+    assert second["consecutive_failures"] == 2
+
+    third, was_degraded, is_degraded = upsert_prediction_health(
+        "BTC/USDT",
+        "1h",
+        prediction_ok=True,
+        path=health_path,
+    )
+    assert was_degraded is True
+    assert is_degraded is False
+    assert third["consecutive_failures"] == 0
+    assert third["last_success_at"] is not None
+    assert third["last_failure_at"] is not None

@@ -25,17 +25,18 @@
 | TD-012 | Modeling | 자동 재학습/승격 게이트 미구현 | 모델 운영 수작업 부담 | open | D-006,D-007,D-005 | 수동 트리거부터 도입 |
 | TD-013 | Reliability | atomic JSON 권한 이슈 (회귀 위험) | nginx 읽기 실패 재발 가능 | mitigated | A-007,A-011-2 | 회귀 테스트 유지 및 CI 연동 |
 | TD-014 | Deployment | worker 이미지 ENTRYPOINT 고정으로 monitor 커맨드 충돌 | monitor 오작동/중복 worker 실행 가능 | resolved | A-010-6 | 범용 ENTRYPOINT + worker 기본 CMD로 분리 적용 |
-| TD-015 | Data Consistency | Influx-JSON 최신 시각 불일치 검증은 도입됐지만 운영 스모크 근거가 아직 없음 | 운영자가 검증 커버리지를 과신할 수 있음 | mitigated | A-014 | `/predict` 미래값 운영 스모크체크를 기록하고 통과 시 `resolved` 전환 |
+| TD-015 | Data Consistency | Influx-JSON 최신 시각 불일치 검증 미구현 | 운영자가 오래된 JSON을 정상으로 오해할 수 있음 | resolved | A-014 | Influx 최신 시각 vs static `updated_at` 비교/승격 로직 구현 + `/predict` 미래값 운영 스모크체크(전체 심볼) 확인 완료 |
 | TD-016 | Alerting | unhealthy 상태 장기 지속 시 재알림 미구현 | 최초 상태전이 알림 유실 시 장애 인지 지연 | open | A-010-7 | 3사이클 이상 지속 시 재알림 + 알림 폭주 억제 테스트 추가 |
 | TD-017 | Runtime Guard | Phase B 이전 다중 timeframe 설정 방어 미구현 | `missing` 오탐 증가 및 운영 판단 혼선 | resolved | A-015 | `INGEST_TIMEFRAMES=1h` fail-fast 가드 적용 완료 |
 | TD-018 | Serving Policy | API-SSG 경계 및 endpoint sunset 기준 미정의 | 사용자/운영 경로 혼선, 불필요한 유지비 지속 | open | A-016 | 경계 정책/삭제 조건 문서화 후 점진 정리 |
 | TD-019 | Worker Architecture | ingest/predict/export 단일 worker 결합 구조 | 특정 단계 지연/장애가 전체 파이프라인 SLA를 악화 | open | C-005 | 단계별 worker 분리 순서/의존성 정의 후 점진 분리 |
 | TD-020 | Scheduling | 고정 간격 while-loop 중심 스케줄 | timeframe별 리소스 낭비/경계 불일치 가능 | open | C-006 | Phase A에서는 단기 패치 없이 defer, C-006에서 timeframe 경계 기반 트리거로 전환 |
-| TD-021 | Failure Signaling | predict 실패 시 degraded 상태/알림 표준 미구현 | 마지막 정상값 제공 중 실패 사실이 숨겨질 수 있음 | open | A-017 | soft stale 경고 정책과 분리된 degraded 신호(`degraded`,`last_success_at`)를 노출 |
-| TD-022 | Freshness Semantics | prediction 파일 `updated_at` 기반 fresh 판정이 입력 데이터 stale을 가릴 수 있음 | freshness honesty 훼손 및 운영 오판 가능 | open | A-014,A-017 | A-014 정합성 체크를 운영 검증으로 고정하고, A-017에서 입력 최신 시각/예측 생성 시각 분리 노출 |
+| TD-021 | Failure Signaling | predict 실패 시 degraded 상태/알림 표준 미구현 | 마지막 정상값 제공 중 실패 사실이 숨겨질 수 있음 | resolved | A-017 | worker predict 실패/복구 상태전이 알림 + `/status` degraded/last success/failure 노출 적용 완료 |
+| TD-022 | Freshness Semantics | prediction 파일 `updated_at` 기반 fresh 판정이 입력 데이터 stale을 가릴 수 있음 | freshness honesty 훼손 및 운영 오판 가능 | open | A-014,A-017 | A-014 정합성 체크 운영 검증은 완료, 입력 데이터 최신 시각(`ohlcv_last`)의 사용자 노출 경로 추가 검토 필요 |
 | TD-023 | Status Consistency | API와 monitor의 prediction 파일 선택/판정 경로가 분리됨 | 동일 시점 상태 불일치 및 경보 혼선 가능 | resolved | A-018 | `utils/prediction_status.py` 공통 evaluator 도입 및 API/monitor 공용 경로 통합 완료 |
-| TD-024 | Alerting | worker 단계별 부분 실패가 운영 알림으로 충분히 승격되지 않음 | 프로세스 생존 상태에서 기능 실패 장기 미탐지 가능 | open | A-017,A-010-7 | 단계 실패를 degraded/alert 이벤트로 승격하고 지속 실패 재알림과 연동 |
+| TD-024 | Alerting | worker 단계별 부분 실패가 운영 알림으로 충분히 승격되지 않음 | 프로세스 생존 상태에서 기능 실패 장기 미탐지 가능 | mitigated | A-017,A-010-7 | predict 단계 상태전이 알림은 반영됨. 지속 실패/soft_stale 3사이클 재알림은 A-010-7에서 마무리 |
 | TD-025 | Ingest Recovery | DB last + 30일 룩백 기반 since 결정 | 장기 중단 후 복구 지점 부정확/과다 백필 가능 | resolved | A-002 | `utils/ingest_state.py` 도입으로 `symbol+timeframe` 커서 저장/재시작 복구 기준 고정 완료 |
+| TD-026 | Maintainability | 주석/로그 밀도가 경로별로 불균등함 | 신규 세션/회귀 분석 시 의도 파악 지연 | open | A-019 | 핵심 경로부터 의도 주석과 상태전이 로그를 점진 보강 |
 
 ## 3. 상태 정의
 1. `open`: 미해결
