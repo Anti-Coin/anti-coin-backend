@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from influxdb_client import InfluxDBClient
 from contextlib import asynccontextmanager
 import pandas as pd
+import json
 import os
 import time
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET")
 # 정적 파일 경로 (Docker compose에서 /app/static_data로 마운트 됨)
 BASE_DIR = Path("/app")
 STATIC_DIR = BASE_DIR / "static_data"
+PREDICTION_HEALTH_FILE = STATIC_DIR / "prediction_health.json"
 
 client = None
 
@@ -56,6 +58,58 @@ app.add_middleware(
 
 # 전역 모델 저장소
 loaded_models = {}
+
+
+def _prediction_health_key(symbol: str, timeframe: str) -> str:
+    return f"{symbol}|{timeframe}"
+
+
+def _load_prediction_health(symbol: str, timeframe: str) -> dict:
+    default = {
+        "degraded": False,
+        "last_success_at": None,
+        "last_failure_at": None,
+        "last_error": None,
+        "consecutive_failures": 0,
+    }
+    if not PREDICTION_HEALTH_FILE.exists():
+        return default
+
+    try:
+        with open(PREDICTION_HEALTH_FILE, "r") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.error(f"Prediction health read failed: {e}")
+        fallback = default.copy()
+        fallback["degraded"] = True
+        fallback["last_error"] = "prediction_health_read_error"
+        return fallback
+
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        logger.error("Prediction health format invalid: entries is not a dict.")
+        fallback = default.copy()
+        fallback["degraded"] = True
+        fallback["last_error"] = "prediction_health_format_error"
+        return fallback
+
+    entry = entries.get(_prediction_health_key(symbol, timeframe))
+    if not isinstance(entry, dict):
+        return default
+
+    raw_failures = entry.get("consecutive_failures", 0)
+    try:
+        failures = int(raw_failures)
+    except (TypeError, ValueError):
+        failures = 0
+
+    return {
+        "degraded": bool(entry.get("degraded", False)),
+        "last_success_at": entry.get("last_success_at"),
+        "last_failure_at": entry.get("last_failure_at"),
+        "last_error": entry.get("last_error"),
+        "consecutive_failures": failures,
+    }
 
 
 # InfluxDB 쿼리 헬퍼 함수
@@ -191,6 +245,15 @@ def check_status(symbol: str, timeframe: str = "1h"):
             "hard": snapshot.hard_limit_minutes,
         },
     }
+    health = _load_prediction_health(symbol, timeframe)
+    response["degraded"] = health["degraded"]
+    response["last_prediction_success_at"] = health["last_success_at"]
+    response["last_prediction_failure_at"] = health["last_failure_at"]
+    response["prediction_failure_count"] = health["consecutive_failures"]
+    if health["degraded"]:
+        response["degraded_reason"] = (
+            health["last_error"] or "prediction_pipeline_degraded"
+        )
     if snapshot.status == "stale":
         response["warning"] = "Data is stale but within soft-stale tolerance."
     return response

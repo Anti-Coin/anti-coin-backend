@@ -25,10 +25,10 @@
 | A-011 | P1 | 기본 회귀 테스트 추가 🔄 | 단위/통합 테스트 | 진행중 (2026-02-10): 우선 단위 테스트부터 확대 |
 | A-012 | P1 | 세션 정렬 문서 체계 구축 ✅ | identity/constraints/debt/handoff 문서 | 완료 (2026-02-10): 새 세션 bootstrap 가능한 문서 스택 구성 |
 | A-013 | P1 | 예측 시작 시점 경계 기준 정렬 ✅ | 경계 계산 유틸 + worker 예측 로직 | 완료 (2026-02-10): timeframe 경계(UTC) 기준으로 예측 시작점 고정 |
-| A-014 | P1 | Influx-JSON 일관성 점검 추가 🔄 | 불일치 감지 로직/알림 | 진행중 (2026-02-12): Influx 최신 시각 vs static `updated_at` 불일치 감지/`hard_stale` 승격 구현 및 단위 테스트 완료, `/predict` 미래값 운영 스모크체크 대기 |
+| A-014 | P1 | Influx-JSON 일관성 점검 추가 ✅ | 불일치 감지 로직/알림 | 완료 (2026-02-12): Influx 최신 시각 vs static `updated_at` 불일치 감지/`hard_stale` 승격 구현 + `/predict` 미래값 운영 스모크체크(전체 심볼) 확인 |
 | A-015 | P1 | Phase B 이전 `INGEST_TIMEFRAMES=1h` 운영 가드 추가 ✅ | config/runtime 검증 로직 | 완료 (2026-02-12): `INGEST_TIMEFRAMES`가 `1h` 단일값이 아니면 fail-fast로 실행 차단 |
 | A-016 | P2 | API-SSG 경계 문서화 + endpoint sunset 기준 정의 | 운영 정책 문서/체크리스트 | 사용자 경로와 운영/디버그 경로 구분 기준이 명확함 |
-| A-017 | P1 | predict 실패 알림 + degraded 상태 노출 | 실패 알림 분기 + 상태 필드 | soft stale 경고 정책을 유지하면서 degraded를 분리 신호로 노출 |
+| A-017 | P1 | predict 실패 알림 + degraded 상태 노출 ✅ | 실패 알림 분기 + 상태 필드 | 완료 (2026-02-12): worker predict 실패/복구 상태전이 알림 + `/status`에 `degraded`, `degraded_reason`, last success/failure 노출 |
 | A-018 | P1 | API/Monitor 상태 판정 경로 공통화 ✅ | 공통 evaluator 유틸 + 호출 경로 정리 | 완료 (2026-02-12): 공통 evaluator 도입으로 API/monitor가 동일 파일 선택/동일 freshness 판정을 수행 |
 
 ## 2. Phase B (Timeframe Expansion) - A 완료 후
@@ -64,11 +64,10 @@
 | D-009 | P2 | Drift 알림 연동 | drift 감지 + alert 분기 | 임계 초과 시 경고 발송 |
 
 ## 5. 즉시 시작 권장 Task 묶음 (이번 사이클)
-1. A-014
-2. A-017
-3. A-010-7
-4. C-005 (설계만, A 게이트 완료 후 코드 착수)
-5. C-006 (설계만, A 게이트 완료 후 코드 착수)
+1. A-010-7
+2. A-016
+3. C-005 (설계만, A 게이트 완료 후 코드 착수)
+4. C-006 (설계만, A 게이트 완료 후 코드 착수)
 
 ## 6. 태스크 운용 규칙
 1. Task 시작 전 `Assignee`, `ETA`, `Risk`를 기록한다.
@@ -99,7 +98,7 @@
 | A-010-4 | P1 | 상태전이 테스트 ✅ | 단위 테스트 | 완료 (2026-02-10): 중복 억제/복구 알림 케이스 검증 |
 | A-010-5 | P2 | 런타임 서비스 연결 ✅ | `docker-compose.yml` | 완료 (2026-02-10): monitor 서비스 추가 |
 | A-010-6 | P1 | worker/monitor 실행 엔트리포인트 분리 ✅ | `docker/Dockerfile.worker` | 완료 (2026-02-10): worker 기본 CMD + 범용 ENTRYPOINT 전환 |
-| A-010-7 | P2 | unhealthy 상태 3사이클 이상 지속 시 재알림 | monitor 로직 + 단위 테스트 | 최초 알림 유실 시 재인지 가능, 알림 폭주 방지 규칙 검증 |
+| A-010-7 | P2 | 상태 3사이클 지속/반복 재알림 (`hard_stale/corrupt/missing` + `soft_stale`) | monitor 로직 + 단위 테스트 | hard 계열은 3사이클 주기 재알림, soft_stale은 연속 3사이클부터 재알림 시작, 알림 폭주 방지 규칙 검증 |
 
 ## 9. 작업 이력
 1. 2026-02-10: A-001 완료
@@ -148,5 +147,7 @@
    변경 파일: `utils/prediction_status.py`, `api/main.py`, `scripts/status_monitor.py`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/PLAN_LIVING_HYBRID.md`
 23. 2026-02-12: A-002 완료
    변경 파일: `utils/ingest_state.py`, `scripts/pipeline_worker.py`, `tests/test_ingest_state.py`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/PLAN_LIVING_HYBRID.md`
-24. 2026-02-12: A-014 진행 (코드/테스트 반영)
+24. 2026-02-12: A-014 완료
    변경 파일: `scripts/status_monitor.py`, `tests/test_status_monitor.py`, `docker-compose.yml`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/PLAN_LIVING_HYBRID.md`
+25. 2026-02-12: A-017 완료
+   변경 파일: `scripts/pipeline_worker.py`, `api/main.py`, `tests/test_api_status.py`, `tests/test_pipeline_worker.py`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/PLAN_LIVING_HYBRID.md`, `docs/DECISIONS.md`

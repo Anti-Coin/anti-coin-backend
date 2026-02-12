@@ -3,6 +3,7 @@ import pandas as pd
 from influxdb_client import InfluxDBClient
 from influxdb_client.client.write_api import SYNCHRONOUS
 from prophet.serialize import model_from_json
+import json
 import os
 import time
 from datetime import datetime, timedelta, timezone
@@ -40,6 +41,7 @@ TARGET_COINS = TARGET_SYMBOLS
 TIMEFRAME = PRIMARY_TIMEFRAME
 LOOKBACK_DAYS = 30  # 과거 30일치 데이터 유지
 INGEST_STATE_FILE = STATIC_DIR / "ingest_state.json"
+PREDICTION_HEALTH_FILE = STATIC_DIR / "prediction_health.json"
 
 
 def send_alert(message):
@@ -53,6 +55,88 @@ def send_alert(message):
         requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=5)
     except Exception as e:
         logger.error(f"Failed to send alert: {e}")
+
+
+def _prediction_health_key(symbol: str, timeframe: str) -> str:
+    return f"{symbol}|{timeframe}"
+
+
+def _load_prediction_health(
+    path: Path = PREDICTION_HEALTH_FILE,
+) -> dict[str, dict]:
+    if not path.exists():
+        return {}
+
+    try:
+        with open(path, "r") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.error(f"Failed to load prediction health file: {e}")
+        return {}
+
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        logger.error("Invalid prediction health format: entries is not a dict.")
+        return {}
+    return entries
+
+
+def _save_prediction_health(
+    entries: dict[str, dict], path: Path = PREDICTION_HEALTH_FILE
+) -> None:
+    payload = {
+        "version": 1,
+        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "entries": entries,
+    }
+    atomic_write_json(path, payload, indent=2)
+
+
+def upsert_prediction_health(
+    symbol: str,
+    timeframe: str,
+    *,
+    prediction_ok: bool,
+    error: str | None = None,
+    path: Path = PREDICTION_HEALTH_FILE,
+) -> tuple[dict, bool, bool]:
+    entries = _load_prediction_health(path=path)
+    key = _prediction_health_key(symbol, timeframe)
+    existing = entries.get(key, {})
+    previous_degraded = bool(existing.get("degraded", False))
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    if prediction_ok:
+        entry = {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "degraded": False,
+            "last_success_at": now_utc,
+            "last_failure_at": existing.get("last_failure_at"),
+            "last_error": None,
+            "consecutive_failures": 0,
+            "updated_at": now_utc,
+        }
+    else:
+        raw_failures = existing.get("consecutive_failures", 0)
+        try:
+            previous_failures = int(raw_failures)
+        except (TypeError, ValueError):
+            previous_failures = 0
+        entry = {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "degraded": True,
+            "last_success_at": existing.get("last_success_at"),
+            "last_failure_at": now_utc,
+            "last_error": error or "prediction_failed",
+            "consecutive_failures": previous_failures + 1,
+            "updated_at": now_utc,
+        }
+
+    entries[key] = entry
+    _save_prediction_health(entries, path=path)
+    return entry, previous_degraded, bool(entry["degraded"])
 
 
 def get_last_timestamp(query_api, symbol):
@@ -314,13 +398,13 @@ def _refill_detected_gaps(
     return merged, refill_pages
 
 
-def run_prediction_and_save(write_api, symbol):
+def run_prediction_and_save(write_api, symbol) -> tuple[bool, str | None]:
     """모델 로드 -> 예측 -> 저장"""
     # 모델 로드
     model_file = MODELS_DIR / f"model_{symbol.replace('/', '_')}.json"
     if not model_file.exists():
         logger.warning(f"[{symbol}] 모델 없음")
-        return
+        return False, "model_missing"
 
     try:
         with open(model_file, "r") as fin:
@@ -349,7 +433,7 @@ def run_prediction_and_save(write_api, symbol):
 
         if next_forecast.empty:
             logger.warning(f"[{symbol}] 예측 범위 생성 실패.")
-            return
+            return False, "empty_forecast"
 
         # 저장 (SSG)
         export_data = next_forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]]
@@ -401,9 +485,11 @@ def run_prediction_and_save(write_api, symbol):
             data_frame_tag_columns=["symbol"],
         )
         logger.info(f"[{symbol}] {len(next_forecast)}개 예측 저장 완료")
+        return True, None
 
     except Exception as e:
         logger.error(f"[{symbol}] 예측 에러: {e}")
+        return False, f"prediction_error: {e}"
 
 
 def update_full_history_file(query_api, symbol):
@@ -491,7 +577,28 @@ def run_worker():
                 update_full_history_file(query_api, symbol)
 
                 # 예측
-                run_prediction_and_save(write_api, symbol)
+                prediction_ok, prediction_error = run_prediction_and_save(
+                    write_api, symbol
+                )
+                health, was_degraded, is_degraded = upsert_prediction_health(
+                    symbol,
+                    TIMEFRAME,
+                    prediction_ok=prediction_ok,
+                    error=prediction_error,
+                )
+                if is_degraded and not was_degraded:
+                    send_alert(
+                        "[Predict Degraded] "
+                        f"{symbol} {TIMEFRAME}\n"
+                        f"reason={health.get('last_error')}\n"
+                        f"last_success_at={health.get('last_success_at')}"
+                    )
+                elif prediction_ok and was_degraded:
+                    send_alert(
+                        "[Predict Recovery] "
+                        f"{symbol} {TIMEFRAME}\n"
+                        f"last_success_at={health.get('last_success_at')}"
+                    )
 
             # Cycle Overrun 감지 및 주기 보정
             elapsed = time.time() - start_time
