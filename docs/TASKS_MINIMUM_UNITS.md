@@ -26,7 +26,7 @@
 | A-012 | P1 | 세션 정렬 문서 체계 구축 ✅ | identity/constraints/debt/handoff 문서 | 완료 (2026-02-10): 새 세션 bootstrap 가능한 문서 스택 구성 |
 | A-013 | P1 | 예측 시작 시점 경계 기준 정렬 ✅ | 경계 계산 유틸 + worker 예측 로직 | 완료 (2026-02-10): timeframe 경계(UTC) 기준으로 예측 시작점 고정 |
 | A-014 | P1 | Influx-JSON 일관성 점검 추가 | 불일치 감지 로직/알림 | Influx 최신 시각과 static JSON 시각 불일치 탐지 가능 |
-| A-015 | P1 | Phase B 이전 `INGEST_TIMEFRAMES=1h` 운영 가드 추가 | config/runtime 검증 로직 | 다중 timeframe 설정 시 경고 또는 실행 차단으로 오탐/혼선 방지 |
+| A-015 | P1 | Phase B 이전 `INGEST_TIMEFRAMES=1h` 운영 가드 추가 ✅ | config/runtime 검증 로직 | 완료 (2026-02-12): `INGEST_TIMEFRAMES`가 `1h` 단일값이 아니면 fail-fast로 실행 차단 |
 | A-016 | P2 | API-SSG 경계 문서화 + endpoint sunset 기준 정의 | 운영 정책 문서/체크리스트 | 사용자 경로와 운영/디버그 경로 구분 기준이 명확함 |
 
 ## 2. Phase B (Timeframe Expansion) - A 완료 후
@@ -65,8 +65,7 @@
 3. A-006
 4. A-011-6
 5. A-011-7
-6. A-015
-7. A-010-7 (A-011-7 완료 후)
+6. A-010-7 (A-011-7 완료 후)
 
 ## 6. 태스크 운용 규칙
 1. Task 시작 전 `Assignee`, `ETA`, `Risk`를 기록한다.
@@ -126,3 +125,5 @@
    변경 파일: `docs/DECISIONS.md`, `docs/PLAN_LIVING_HYBRID.md`, `docs/OPERATING_CONSTRAINTS.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`
 14. 2026-02-12: 운영 경계/알림 정책 정렬 문서화
    변경 파일: `docs/DECISIONS.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`
+15. 2026-02-12: A-015 완료
+   변경 파일: `utils/config.py`, `tests/test_config.py`, `docs/TASKS_MINIMUM_UNITS.md`
