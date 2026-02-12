@@ -144,3 +144,54 @@
 - Consequence:
   - 문서 비용을 통제하면서도 중요한 결정/리스크는 추적 가능하다.
   - 문서 누락으로 인한 재논의 비용을 줄일 수 있다.
+
+## D-2026-02-12-12
+- Date: 2026-02-12
+- Status: Accepted
+- Context:
+  - `admin/app.py`가 Streamlit 기반이라 제품 프론트엔드 경로와 혼동될 수 있음
+  - 실제 사용자 프론트엔드는 Vue/React 계열로 별도 구축할 계획임
+- Decision:
+  - 제품 사용자 경로의 프론트엔드는 Vue/React(또는 동급 SPA) 계열로 별도 운용한다.
+  - `admin/app.py`는 개발자 점검/테스트용 대시보드로 한정한다.
+- Consequence:
+  - 제품 프론트엔드 성능/캐시/인증 설계와 Streamlit 운영을 분리해서 의사결정한다.
+  - Streamlit 변경이 사용자 경로 SLA의 직접 기준이 되지 않는다.
+
+## D-2026-02-12-13
+- Date: 2026-02-12
+- Status: Accepted
+- Context:
+  - 현재 worker/export/API/monitor는 다중 timeframe 정합성이 완성되지 않았음
+  - `INGEST_TIMEFRAMES`를 성급히 확장하면 `missing` 노이즈와 파일 규칙 불일치 위험이 있음
+- Decision:
+  - Phase B(Timeframe Expansion) 완료 전까지 운영 설정은 `INGEST_TIMEFRAMES=1h`로 고정한다.
+  - 다중 timeframe 전환은 worker/API/monitor/export를 한 번에 확장하는 배치 변경으로만 수행한다.
+- Consequence:
+  - 운영 중 잘못된 알림 노이즈를 줄이고 장애 판단 기준을 단순화한다.
+  - 확장 시점에는 경계 조건 테스트와 파일 네이밍 정책을 함께 검증해야 한다.
+
+## D-2026-02-12-14
+- Date: 2026-02-12
+- Status: Accepted
+- Context:
+  - `/history`, `/predict` 엔드포인트는 초기 구조의 잔재지만 즉시 삭제는 아님
+  - Free Tier 제약에서 SSG 중심 전략이 비용 효율적이나, 운영/디버그 경로는 필요함
+- Decision:
+  - 사용자 제공의 기본 데이터 플레인은 SSG(static JSON)로 유지한다.
+  - `/history`, `/predict`는 당분간 운영/디버그 fallback 경로로 유지하고, sunset 조건이 확정되면 제거를 검토한다.
+- Consequence:
+  - 비용 효율성을 유지하면서도 운영 관측/디버깅 유연성을 확보한다.
+  - 사용자 경로와 운영 경로의 책임 경계를 문서/태스크로 지속 관리해야 한다.
+
+## D-2026-02-12-15
+- Date: 2026-02-12
+- Status: Accepted
+- Context:
+  - 현재 알림은 상태전이 기반이라, 최초 이벤트 알림을 놓치면 장기 장애 인지가 지연될 수 있음
+- Decision:
+  - unhealthy 상태(`hard_stale/corrupt/missing`)가 3사이클 이상 지속되면 재알림을 보낸다.
+  - 구현은 즉시 적용하지 않고 `A-011-7`(CI 테스트 게이트) 이후 작은 후속 태스크로 처리한다.
+- Consequence:
+  - 장기 장애의 탐지 안정성이 향상된다.
+  - 재알림 도입 시 알림 폭주를 막기 위한 간격/중복 억제 기준이 필요하다.
