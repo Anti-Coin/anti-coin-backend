@@ -13,6 +13,7 @@ from utils.logger import get_logger
 from utils.config import TARGET_SYMBOLS, PRIMARY_TIMEFRAME
 from utils.file_io import atomic_write_json
 from utils.time_alignment import (
+    detect_timeframe_gaps,
     last_closed_candle_open,
     next_timeframe_boundary,
     timeframe_to_pandas_freq,
@@ -194,6 +195,19 @@ def fetch_and_save(write_api, symbol, since_ts):
             df["timestamp"], unit="ms"
         ).dt.tz_localize("UTC")
         df.set_index("timestamp", inplace=True)
+
+        gaps = detect_timeframe_gaps(
+            candle_opens=df.index.to_pydatetime().tolist(),
+            timeframe=TIMEFRAME,
+        )
+        if gaps:
+            total_missing = sum(gap.missing_count for gap in gaps)
+            first_gap = gaps[0]
+            logger.warning(
+                f"[{symbol}] Gap 감지: windows={len(gaps)}, missing={total_missing}, "
+                f"first={first_gap.start_open.strftime('%Y-%m-%dT%H:%M:%SZ')}~"
+                f"{first_gap.end_open.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+            )
 
         # 태그 추가
         df["symbol"] = symbol

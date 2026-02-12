@@ -3,8 +3,10 @@ from datetime import datetime, timezone
 import pytest
 
 from utils.time_alignment import (
+    detect_timeframe_gaps,
     last_closed_candle_open,
     next_timeframe_boundary,
+    timeframe_to_timedelta,
     timeframe_to_pandas_freq,
 )
 
@@ -83,3 +85,46 @@ def test_last_closed_candle_open_for_1d_1w_1M():
     assert last_closed_candle_open(now, "1M") == datetime(
         2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc
     )
+
+
+def test_detect_timeframe_gaps_returns_empty_on_continuous_series():
+    opens = [
+        datetime(2026, 2, 10, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 2, 10, 1, 0, tzinfo=timezone.utc),
+        datetime(2026, 2, 10, 2, 0, tzinfo=timezone.utc),
+    ]
+    assert detect_timeframe_gaps(opens, "1h") == []
+
+
+def test_detect_timeframe_gaps_identifies_missing_windows():
+    opens = [
+        datetime(2026, 2, 10, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 2, 10, 1, 0, tzinfo=timezone.utc),
+        datetime(2026, 2, 10, 4, 0, tzinfo=timezone.utc),
+    ]
+    gaps = detect_timeframe_gaps(opens, "1h")
+
+    assert len(gaps) == 1
+    assert gaps[0].start_open == datetime(
+        2026, 2, 10, 2, 0, tzinfo=timezone.utc
+    )
+    assert gaps[0].end_open == datetime(
+        2026, 2, 10, 3, 0, tzinfo=timezone.utc
+    )
+    assert gaps[0].missing_count == 2
+
+
+def test_detect_timeframe_gaps_handles_unsorted_and_duplicate_timestamps():
+    opens = [
+        datetime(2026, 2, 10, 3, 0, tzinfo=timezone.utc),
+        datetime(2026, 2, 10, 1, 0, tzinfo=timezone.utc),
+        datetime(2026, 2, 10, 1, 0, tzinfo=timezone.utc),
+    ]
+    gaps = detect_timeframe_gaps(opens, "1h")
+    assert len(gaps) == 1
+    assert gaps[0].missing_count == 1
+
+
+def test_timeframe_to_timedelta_rejects_month_timeframe():
+    with pytest.raises(ValueError):
+        timeframe_to_timedelta("1M")

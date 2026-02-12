@@ -16,7 +16,7 @@
 | A-002 | P0 | ingest_state 스키마/저장소 도입 | state 저장 코드 + 기본 조회/갱신 함수 | `symbol+timeframe`별 커서 유지 확인 |
 | A-003 | P0 | ccxt 백필 pagination 루프 구현 ✅ | fetch 함수 리팩터링 | 완료 (2026-02-10): 단발 호출 제거 및 페이지 수집 루프 적용 |
 | A-004 | P0 | closed candle 경계 계산 유틸 추가 ✅ | 시간 경계 함수 + worker fetch 필터 | 완료 (2026-02-12): latest closed candle 경계 기반 미완료 캔들 저장 차단 + 단위 테스트 추가 |
-| A-005 | P0 | gap detector 구현 | 누락 구간 계산 로직 | 테스트 케이스에서 gap 식별 성공 |
+| A-005 | P0 | gap detector 구현 ✅ | 누락 구간 계산 로직 + worker 감지 로그 | 완료 (2026-02-12): 누락 구간 식별 유틸/테스트 추가, worker에 gap 감지 경고 연결 |
 | A-006 | P0 | gap refill 잡 추가 | 복구 실행 함수 | gap 발생 후 복구 확인 |
 | A-007 | P0 | 원자적 JSON 쓰기 도입 ✅ | 공통 writer 유틸 | 완료 (2026-02-10): static JSON 저장 경로에 atomic write 적용 |
 | A-008 | P0 | freshness 분류 유틸 (`fresh/stale/hard_stale/corrupt`) ✅ | 공통 판정 함수 | 완료 (2026-02-10): `utils/freshness.py` 도입 및 분류 테스트 통과 |
@@ -28,6 +28,7 @@
 | A-014 | P1 | Influx-JSON 일관성 점검 추가 | 불일치 감지 로직/알림 | Influx 최신 시각과 static JSON 시각 불일치 탐지 가능 |
 | A-015 | P1 | Phase B 이전 `INGEST_TIMEFRAMES=1h` 운영 가드 추가 ✅ | config/runtime 검증 로직 | 완료 (2026-02-12): `INGEST_TIMEFRAMES`가 `1h` 단일값이 아니면 fail-fast로 실행 차단 |
 | A-016 | P2 | API-SSG 경계 문서화 + endpoint sunset 기준 정의 | 운영 정책 문서/체크리스트 | 사용자 경로와 운영/디버그 경로 구분 기준이 명확함 |
+| A-017 | P1 | predict 실패 알림 + degraded 상태 노출 | 실패 알림 분기 + 상태 필드 | 마지막 정상 prediction 유지와 실패 사실 노출이 동시에 동작 |
 
 ## 2. Phase B (Timeframe Expansion) - A 완료 후
 | ID | Priority | Task | 산출물 | Done 조건 |
@@ -46,6 +47,7 @@
 | C-003 | P2 | 부하 테스트 시나리오 업데이트 | `tests/locustfile.py` 개선 | 정적/상태 경로 부하 테스트 가능 |
 | C-004 | P2 | 모델 학습 잡 분리 초안 | 학습 엔트리포인트 분리 | 수집/예측과 독립 실행 가능 |
 | C-005 | P1 | pipeline worker 역할 분리 (ingest/predict/export) | 분리된 워커 엔트리포인트 + compose 연결 | ingest 지연/장애가 predict/export 제공 경로에 즉시 전파되지 않음 |
+| C-006 | P1 | timeframe 경계/새 캔들 감지 기반 트리거 전환 | trigger 정책/실행 로직 | 고정 간격 poll 대비 불필요 cycle 감소 및 정합성 개선 |
 
 ## 4. Phase D (Model Evolution) - B 이후, C와 병행 가능
 | ID | Priority | Task | 산출물 | Done 조건 |
@@ -61,12 +63,13 @@
 | D-009 | P2 | Drift 알림 연동 | drift 감지 + alert 분기 | 임계 초과 시 경고 발송 |
 
 ## 5. 즉시 시작 권장 Task 묶음 (이번 사이클)
-1. A-005
-2. A-006
-3. A-011-6
-4. A-011-7
-5. A-010-7 (A-011-7 완료 후)
+1. A-006
+2. A-011-6
+3. A-011-7
+4. A-010-7 (A-011-7 완료 후)
+5. A-017
 6. C-005 (분리 기준/순서 설계 포함)
+7. C-006
 
 ## 6. 태스크 운용 규칙
 1. Task 시작 전 `Assignee`, `ETA`, `Risk`를 기록한다.
@@ -130,4 +133,6 @@
 15. 2026-02-12: A-015 완료
    변경 파일: `utils/config.py`, `tests/test_config.py`, `docs/TASKS_MINIMUM_UNITS.md`
 16. 2026-02-12: A-004 완료
+   변경 파일: `utils/time_alignment.py`, `scripts/pipeline_worker.py`, `tests/test_time_alignment.py`, `docs/TASKS_MINIMUM_UNITS.md`
+17. 2026-02-12: A-005 완료
    변경 파일: `utils/time_alignment.py`, `scripts/pipeline_worker.py`, `tests/test_time_alignment.py`, `docs/TASKS_MINIMUM_UNITS.md`

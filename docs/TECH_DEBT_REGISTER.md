@@ -12,7 +12,7 @@
 | ID | Category | Debt | Risk | Status | Linked Task | Next Action |
 |---|---|---|---|---|---|---|
 | TD-001 | Ingest | closed candle 경계 미구현 | 미완료 캔들 저장 가능성 | resolved | A-004 | latest closed candle 경계 필터 적용 완료, 회귀 테스트 유지 |
-| TD-002 | Ingest | gap detector 미구현 | 데이터 누락 장기화 가능 | open | A-005 | 누락 구간 계산 로직 추가 |
+| TD-002 | Ingest | gap detector 미구현 | 데이터 누락 장기화 가능 | resolved | A-005 | 누락 구간 식별 유틸/테스트 및 worker 경고 로그 적용 완료 |
 | TD-003 | Ingest | gap refill 잡 미구현 | 누락 자동 복구 불가 | open | A-006 | gap 기반 재수집 루틴 구현 |
 | TD-004 | Alerting | hard_stale/corrupt/missing/recovery 알림 미연동 | 운영자 탐지 지연 | mitigated | A-010 | 배포 환경에서 monitor 서비스 기동/알림 확인 후 `resolved` 전환 |
 | TD-005 | API | timeframe-aware 파일 네이밍 미완성 | 확장 시 라우팅 혼선 | open | B-002 | 파일명 규칙 통일 |
@@ -30,6 +30,8 @@
 | TD-017 | Runtime Guard | Phase B 이전 다중 timeframe 설정 방어 미구현 | `missing` 오탐 증가 및 운영 판단 혼선 | resolved | A-015 | `INGEST_TIMEFRAMES=1h` fail-fast 가드 적용 완료 |
 | TD-018 | Serving Policy | API-SSG 경계 및 endpoint sunset 기준 미정의 | 사용자/운영 경로 혼선, 불필요한 유지비 지속 | open | A-016 | 경계 정책/삭제 조건 문서화 후 점진 정리 |
 | TD-019 | Worker Architecture | ingest/predict/export 단일 worker 결합 구조 | 특정 단계 지연/장애가 전체 파이프라인 SLA를 악화 | open | C-005 | 단계별 worker 분리 순서/의존성 정의 후 점진 분리 |
+| TD-020 | Scheduling | 고정 간격 while-loop 중심 스케줄 | timeframe별 리소스 낭비/경계 불일치 가능 | open | C-006 | timeframe 경계/새 closed candle 감지 기반 트리거로 전환 |
+| TD-021 | Failure Signaling | predict 실패 시 degraded 상태/알림 표준 미구현 | 마지막 정상값 제공 중 실패 사실이 숨겨질 수 있음 | open | A-017 | 실패 알림 + 상태 메타(`degraded`,`last_success_at`) 노출 구현 |
 
 ## 3. 상태 정의
 1. `open`: 미해결

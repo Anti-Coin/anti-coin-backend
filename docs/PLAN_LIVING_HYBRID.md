@@ -46,6 +46,7 @@
 3. 모델 입력 전처리에서만 Forward Fill 허용 (원천 시계열 오염 방지)
 4. 신선도 상태를 `fresh/stale/hard_stale/corrupt`로 분리
 5. 사용자 제공용 예측 타임스탬프는 rolling now가 아닌 candle 경계 기준으로 정렬
+6. prediction은 InfluxDB에 보존하고, 실패 시 last-good 제공 + degraded 신호를 분리한다.
 
 ## 5. 단계별 로드맵
 ## Phase A: Reliability Baseline
@@ -83,11 +84,13 @@ Exit Criteria:
 2. 작업 시간/오버런/실패율 메트릭 수집
 3. 단계적 부하 테스트와 튜닝
 4. pipeline worker 역할 분리(ingest/predict/export)로 장애 전파 범위 축소
+5. timeframe 경계/새 closed candle 감지 기반 트리거 전환
 
 Exit Criteria:
 1. 목표 심볼 수에서 주기적 작업 안정 수행
 2. 오버런/실패율 추세 관측 가능
 3. ingest 지연/장애가 예측 산출물 갱신 경로를 즉시 중단시키지 않음
+4. 고정 간격 루프 대비 불필요 cycle 감소 및 캔들 경계 정합성 개선
 
 ## Phase D: Model Evolution (변경 가능 트랙)
 목표: 모델 실험/교체/자동화가 가능한 구조를 서비스 안정성 훼손 없이 도입
@@ -163,3 +166,5 @@ Exit Criteria:
 14. 2026-02-12: A-004 완료 (closed candle 경계 기반 미완료 캔들 저장 차단)
 15. 2026-02-12: A-015 완료 (Phase B 전 `INGEST_TIMEFRAMES=1h` 운영 가드 반영)
 16. 2026-02-12: worker 역할 분리 필요성 확인, Phase C 범위에 분리 트랙(C-005) 추가
+17. 2026-02-12: A-005 완료 (gap detector 도입, 누락 구간 감지/경고 기반 확보)
+18. 2026-02-12: prediction 보존/실패 신호/trigger 전환 정책 결정(D-2026-02-12-18)

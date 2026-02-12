@@ -221,3 +221,18 @@
 - Consequence:
   - 장애 격리와 운영 탄력성이 개선된다.
   - 서비스 수/배포 복잡도 증가를 감수해야 하며, 메트릭/알림 기준 동반 정리가 필요하다.
+
+## D-2026-02-12-18
+- Date: 2026-02-12
+- Status: Accepted
+- Context:
+  - prediction 데이터가 1회성처럼 보이더라도 운영 복구/비교 분석/last-good 서빙 관점에서 보존 필요성이 있음
+  - timeframe별로 주기 정책이 달라져야 하며, 고정 간격 루프만으로는 비용/정합성 최적화가 어려움
+  - predict 실패 시 서비스 연속성을 위해 마지막 정상 prediction을 유지하는 정책 합의가 필요함
+- Decision:
+  - prediction 결과는 InfluxDB에 저장을 유지한다. (향후 보존기간/retention은 별도 정책으로 관리)
+  - 스케줄 전략은 고정 분 주기보다 timeframe 경계/새 closed candle 감지 기반(event-like)으로 전환한다.
+  - predict 실패 시에는 마지막 정상 prediction을 계속 제공하되, 실패 사실은 알림/상태(degraded)로 명시한다.
+- Consequence:
+  - 서빙 연속성과 장애 분석 가능성이 향상된다.
+  - 저장/조회 비용 관리와 retention 정책, degraded 상태 전파 구현이 후속 작업으로 필요하다.
