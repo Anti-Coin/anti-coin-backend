@@ -28,6 +28,7 @@
 6. 데이터 권위(Source of Truth)는 InfluxDB로 고정한다.
 7. 예측 시작 시점은 timeframe별 다음 closed candle 경계(UTC)로 고정한다.
 8. Phase B 전까지 운영 타임프레임 설정은 `1h` 단일값으로 고정한다.
+9. `soft stale`(경고 노출)와 `degraded`(운영 실패 신호)는 분리해서 운용한다.
 
 ## 3. 목표와 비목표
 ### 목표
@@ -58,11 +59,17 @@
 3. gap detector + 재수집 잡
 4. 원자적 JSON 쓰기(임시 파일 + rename)
 5. Freshness 분류 유틸 도입
+6. API/monitor 상태 판정 경로 공통화
+7. predict 실패/부분 실패 신호를 `degraded`로 분리 노출
+8. Influx-JSON 정합성 점검과 `/predict` 미래값 운영 스모크체크를 완료
 
 Exit Criteria:
 1. 의도적 워커 중단 시 복구 후 데이터 연속성 보장
 2. 데이터 누락 시 자동 또는 수동 트리거로 재수집 가능
 3. 파손 파일/부분 파일 노출 없음
+4. API와 monitor가 동일 기준으로 상태를 판정
+5. `soft stale` 경고와 `degraded` 실패 신호가 혼선 없이 분리 노출
+6. Influx-JSON 정합성 점검 및 `/predict` 미래값 스모크체크 결과가 기록됨
 
 ## Phase B: Timeframe Expansion
 목표: 1h 중심 구조에서 다중 timeframe 구조로 전환
@@ -78,6 +85,10 @@ Exit Criteria:
 
 ## Phase C: Scale and Ops
 목표: 심볼 확장과 운영 관측성 강화
+
+진입 조건:
+1. `A-002`, `A-018`, `A-014`, `A-017`, `A-010-7` 완료
+2. 위 조건 충족 전에는 C 태스크를 설계/문서 작업으로만 진행
 
 범위:
 1. Top N 심볼 확장
@@ -130,6 +141,7 @@ Exit Criteria:
 2. 대량 백필 시간 증가: 단계별 백필 우선순위
 3. 데이터 품질 이슈: 원천 데이터와 보간 데이터 분리
 4. 단일 worker 결합 구조: ingest/predict/export 동시 실행으로 오버런/장애 전파 위험
+5. artifact freshness와 입력 데이터 freshness가 분리되지 않으면 상태 오판 가능
 
 ## 9. 테스트/에러처리 전략 (Incremental)
 원칙:
@@ -168,3 +180,6 @@ Exit Criteria:
 16. 2026-02-12: worker 역할 분리 필요성 확인, Phase C 범위에 분리 트랙(C-005) 추가
 17. 2026-02-12: A-005 완료 (gap detector 도입, 누락 구간 감지/경고 기반 확보)
 18. 2026-02-12: prediction 보존/실패 신호/trigger 전환 정책 결정(D-2026-02-12-18)
+19. 2026-02-12: Phase A 우선순위 재정렬 및 `soft stale`/`degraded` 분리 정책 확정(D-2026-02-12-19~22)
+20. 2026-02-12: A-018 완료 (API/monitor 상태 판정 경로 공통 evaluator로 통합)
+21. 2026-02-12: A-002 완료 (ingest_state 파일 저장소 도입, 커서 기반 재시작 복구 기준 고정)

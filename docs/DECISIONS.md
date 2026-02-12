@@ -236,3 +236,55 @@
 - Consequence:
   - 서빙 연속성과 장애 분석 가능성이 향상된다.
   - 저장/조회 비용 관리와 retention 정책, degraded 상태 전파 구현이 후속 작업으로 필요하다.
+
+## D-2026-02-12-19
+- Date: 2026-02-12
+- Status: Accepted
+- Context:
+  - `soft stale`와 `degraded`를 같은 신호로 취급하면 도메인 정책(soft stale은 경고 노출 허용)과 운영 신호가 충돌할 수 있음
+  - 프론트엔드 경고 정책과 운영 알림 정책의 의미를 분리할 필요가 있음
+- Decision:
+  - `soft stale`는 기존 정책대로 "서빙 허용 + 경고"로 유지한다.
+  - `degraded`는 `soft stale`와 분리된 운영 신호로 정의한다.
+  - `degraded`는 파이프라인/예측 실패 또는 unhealthy(`hard_stale/corrupt/missing`) 맥락에서만 활성화한다.
+- Consequence:
+  - 도메인 정책과 운영 신호의 의미 충돌을 줄인다.
+  - soft stale 경고 노출과 실패 사실 노출을 동시에 명확하게 운영할 수 있다.
+
+## D-2026-02-12-20
+- Date: 2026-02-12
+- Status: Accepted
+- Context:
+  - 미완료 Phase A 항목이 존재한 상태에서 Phase C 구현이 앞서는 흐름이 발생함
+  - 현재 우선순위(안정성 > 비용 > 성능) 기준에서 신뢰성 베이스라인 고정이 우선임
+- Decision:
+  - Phase C(`C-005`, `C-006`)는 당분간 설계/문서 작업만 허용한다.
+  - 코드 구현 착수는 `A-002`, `A-018`, `A-014`, `A-017`, `A-010-7` 완료 후로 제한한다.
+- Consequence:
+  - 구조 복잡도 증가보다 신뢰성 기준 고정이 먼저 진행된다.
+  - 단계 전환 기준이 명시되어 태스크 단위 작업의 방향성을 유지하기 쉽다.
+
+## D-2026-02-12-21
+- Date: 2026-02-12
+- Status: Accepted
+- Context:
+  - API와 monitor가 서로 다른 prediction 파일 선택/판정 경로를 사용하고 있어 상태 불일치 가능성이 있음
+  - 현재는 1h 운영이지만, 상태 판정 드리프트는 Phase B 확장 전에 줄여야 함
+- Decision:
+  - API와 monitor의 상태 판정 경로를 공통 evaluator로 통합하는 작업(`A-018`)을 Phase A 우선 태스크로 추가한다.
+  - 1h legacy 파일 fallback은 Phase B 전까지 유지하되, 공통 경로에서 동일하게 처리한다.
+- Consequence:
+  - 동일 시점에 API/monitor가 상반된 상태를 보고할 리스크가 감소한다.
+  - Timeframe 확장 전 상태 판정 계약을 고정할 수 있다.
+
+## D-2026-02-12-22
+- Date: 2026-02-12
+- Status: Accepted
+- Context:
+  - `api/main.py`의 Influx query `range(stop: 2d)` 동작은 현재 운영에서 문제없이 보이나, 의미를 테스트 문자열 검증만으로 확정하기 어려움
+- Decision:
+  - `stop: 2d`는 단위 테스트 문자열 검증 대신, 운영 스모크체크(미래 timestamp 반환 여부)로 검증한다.
+  - 관련 검증은 `A-014` 완료 조건에 포함한다.
+- Consequence:
+  - 낮은 비용으로 실제 동작을 확인할 수 있다.
+  - 쿼리 문자열 단위 테스트의 과신을 피하고 런타임 증거를 확보한다.
