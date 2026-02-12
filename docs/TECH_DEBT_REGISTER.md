@@ -11,7 +11,7 @@
 ## 2. Debt List
 | ID | Category | Debt | Risk | Status | Linked Task | Next Action |
 |---|---|---|---|---|---|---|
-| TD-001 | Ingest | closed candle 경계 미구현 | 미완료 캔들 저장 가능성 | open | A-004 | 경계 계산 유틸 추가 후 fetch 경로 적용 |
+| TD-001 | Ingest | closed candle 경계 미구현 | 미완료 캔들 저장 가능성 | resolved | A-004 | latest closed candle 경계 필터 적용 완료, 회귀 테스트 유지 |
 | TD-002 | Ingest | gap detector 미구현 | 데이터 누락 장기화 가능 | open | A-005 | 누락 구간 계산 로직 추가 |
 | TD-003 | Ingest | gap refill 잡 미구현 | 누락 자동 복구 불가 | open | A-006 | gap 기반 재수집 루틴 구현 |
 | TD-004 | Alerting | hard_stale/corrupt/missing/recovery 알림 미연동 | 운영자 탐지 지연 | mitigated | A-010 | 배포 환경에서 monitor 서비스 기동/알림 확인 후 `resolved` 전환 |
@@ -27,8 +27,9 @@
 | TD-014 | Deployment | worker 이미지 ENTRYPOINT 고정으로 monitor 커맨드 충돌 | monitor 오작동/중복 worker 실행 가능 | resolved | A-010-6 | 범용 ENTRYPOINT + worker 기본 CMD로 분리 적용 |
 | TD-015 | Data Consistency | Influx-JSON 최신 시각 불일치 자동 검증 미구현 | 운영자가 오래된 JSON을 정상으로 오해할 수 있음 | open | A-014 | Influx 최신 시각 vs static `updated_at` 비교 로직/알림 추가 |
 | TD-016 | Alerting | unhealthy 상태 장기 지속 시 재알림 미구현 | 최초 상태전이 알림 유실 시 장애 인지 지연 | open | A-010-7 | 3사이클 이상 지속 시 재알림 + 알림 폭주 억제 테스트 추가 |
-| TD-017 | Runtime Guard | Phase B 이전 다중 timeframe 설정 방어 미구현 | `missing` 오탐 증가 및 운영 판단 혼선 | open | A-015 | `INGEST_TIMEFRAMES=1h` 운영 가드(경고/차단) 추가 |
+| TD-017 | Runtime Guard | Phase B 이전 다중 timeframe 설정 방어 미구현 | `missing` 오탐 증가 및 운영 판단 혼선 | resolved | A-015 | `INGEST_TIMEFRAMES=1h` fail-fast 가드 적용 완료 |
 | TD-018 | Serving Policy | API-SSG 경계 및 endpoint sunset 기준 미정의 | 사용자/운영 경로 혼선, 불필요한 유지비 지속 | open | A-016 | 경계 정책/삭제 조건 문서화 후 점진 정리 |
+| TD-019 | Worker Architecture | ingest/predict/export 단일 worker 결합 구조 | 특정 단계 지연/장애가 전체 파이프라인 SLA를 악화 | open | C-005 | 단계별 worker 분리 순서/의존성 정의 후 점진 분리 |
 
 ## 3. 상태 정의
 1. `open`: 미해결

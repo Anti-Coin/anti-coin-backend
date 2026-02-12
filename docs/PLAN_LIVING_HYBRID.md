@@ -1,6 +1,6 @@
 # Coin Predict Living Plan (Hybrid + Soft Stale)
 
-- Last Updated: 2026-02-10
+- Last Updated: 2026-02-12
 - Owner: Backend/Platform
 - Status: Active
 
@@ -27,6 +27,7 @@
 5. 1분봉은 초기 단계에서 예측 제공 대상이 아니다.
 6. 데이터 권위(Source of Truth)는 InfluxDB로 고정한다.
 7. 예측 시작 시점은 timeframe별 다음 closed candle 경계(UTC)로 고정한다.
+8. Phase B 전까지 운영 타임프레임 설정은 `1h` 단일값으로 고정한다.
 
 ## 3. 목표와 비목표
 ### 목표
@@ -81,10 +82,12 @@ Exit Criteria:
 1. Top N 심볼 확장
 2. 작업 시간/오버런/실패율 메트릭 수집
 3. 단계적 부하 테스트와 튜닝
+4. pipeline worker 역할 분리(ingest/predict/export)로 장애 전파 범위 축소
 
 Exit Criteria:
 1. 목표 심볼 수에서 주기적 작업 안정 수행
 2. 오버런/실패율 추세 관측 가능
+3. ingest 지연/장애가 예측 산출물 갱신 경로를 즉시 중단시키지 않음
 
 ## Phase D: Model Evolution (변경 가능 트랙)
 목표: 모델 실험/교체/자동화가 가능한 구조를 서비스 안정성 훼손 없이 도입
@@ -123,6 +126,7 @@ Exit Criteria:
 1. Exchange API rate limit: pagination 속도 제한/재시도 백오프
 2. 대량 백필 시간 증가: 단계별 백필 우선순위
 3. 데이터 품질 이슈: 원천 데이터와 보간 데이터 분리
+4. 단일 worker 결합 구조: ingest/predict/export 동시 실행으로 오버런/장애 전파 위험
 
 ## 9. 테스트/에러처리 전략 (Incremental)
 원칙:
@@ -156,3 +160,6 @@ Exit Criteria:
 11. 2026-02-10: 이번 작업에서 Phase/우선순위 변경 없음
 12. 2026-02-10: 데이터 권위(Source of Truth)를 InfluxDB로 명시
 13. 2026-02-10: 예측 시작 시점을 candle 경계 기준으로 정렬
+14. 2026-02-12: A-004 완료 (closed candle 경계 기반 미완료 캔들 저장 차단)
+15. 2026-02-12: A-015 완료 (Phase B 전 `INGEST_TIMEFRAMES=1h` 운영 가드 반영)
+16. 2026-02-12: worker 역할 분리 필요성 확인, Phase C 범위에 분리 트랙(C-005) 추가
