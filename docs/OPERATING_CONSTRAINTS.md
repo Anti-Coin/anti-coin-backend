@@ -1,6 +1,6 @@
 # Coin Predict Operating Constraints
 
-- Last Updated: 2026-02-10
+- Last Updated: 2026-02-12
 - Purpose: 운영 현실/제약을 명시해 과설계를 방지
 
 ## 1. 인프라 현실
@@ -42,3 +42,19 @@
 3. 정책/아키텍처 판단 변경은 `DECISIONS`를 필수로 기록한다.
 4. 새 기술 부채가 생기면 `TECH_DEBT_REGISTER` 갱신은 필수다.
 5. 기존 계획대로 수행 불가 상태가 되면 같은 세션에서 `PLAN`과 `TASKS`를 함께 갱신한다.
+
+## 8. API-SSG 경계 정책 (A-016)
+1. 사용자 데이터 플레인은 SSG(static JSON)이다.
+2. 제품 프론트엔드는 `/history`, `/predict`를 호출하지 않는다.
+3. FastAPI의 `/status`는 운영 신호 확인 경로로 유지하며, 프론트엔드 경고 노출에 사용할 수 있다.
+4. `/history`, `/predict`는 운영/디버그 fallback 용도로만 유지한다.
+5. 추가 점검용 API가 필요하면 사용자 데이터 API와 분리된 운영 경로(`/ops/*`)로 추가한다.
+6. fallback endpoint는 사용자 경로 SLA 기준이 아니며, 장애 대응/검증 보조 경로로 취급한다.
+
+## 9. Endpoint Sunset 체크리스트 (A-016)
+`/history`, `/predict` 제거는 아래 조건을 모두 만족할 때만 진행한다.
+1. 프론트엔드 요구 필드가 SSG + `/status` 조합으로 100% 충족된다.
+2. 운영 알림/상태판정(모니터 + `/status`)이 fallback endpoint 없이도 장애를 식별한다.
+3. 운영 점검(runbook, smoke check)이 fallback endpoint 의존 없이 수행 가능하다.
+4. 제거 전 최소 1회 배포 사이클 동안 fallback 비의존 운영을 확인하는 것을 권장한다(필수 아님).
+5. 삭제 실행은 `B-005`에서 수행하고, 필요 시 즉시 복구할 롤백 절차를 문서화한다.

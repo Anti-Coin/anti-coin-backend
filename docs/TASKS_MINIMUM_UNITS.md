@@ -27,7 +27,7 @@
 | A-013 | P1 | 예측 시작 시점 경계 기준 정렬 ✅ | 경계 계산 유틸 + worker 예측 로직 | 완료 (2026-02-10): timeframe 경계(UTC) 기준으로 예측 시작점 고정 |
 | A-014 | P1 | Influx-JSON 일관성 점검 추가 ✅ | 불일치 감지 로직/알림 | 완료 (2026-02-12): Influx 최신 시각 vs static `updated_at` 불일치 감지/`hard_stale` 승격 구현 + `/predict` 미래값 운영 스모크체크(전체 심볼) 확인 |
 | A-015 | P1 | Phase B 이전 `INGEST_TIMEFRAMES=1h` 운영 가드 추가 ✅ | config/runtime 검증 로직 | 완료 (2026-02-12): `INGEST_TIMEFRAMES`가 `1h` 단일값이 아니면 fail-fast로 실행 차단 |
-| A-016 | P2 | API-SSG 경계 문서화 + endpoint sunset 기준 정의 | 운영 정책 문서/체크리스트 | 사용자 경로와 운영/디버그 경로 구분 기준이 명확함 |
+| A-016 | P2 | API-SSG 경계 문서화 + endpoint sunset 기준 정의 ✅ | 운영 정책 문서/체크리스트 | 완료 (2026-02-12): 1차 경계/체크리스트 문서화 완료, 잔여 리스크는 `TD-018(mitigated)`로 추적 |
 | A-017 | P1 | predict 실패 알림 + degraded 상태 노출 ✅ | 실패 알림 분기 + 상태 필드 | 완료 (2026-02-12): worker predict 실패/복구 상태전이 알림 + `/status`에 `degraded`, `degraded_reason`, last success/failure 노출 |
 | A-018 | P1 | API/Monitor 상태 판정 경로 공통화 ✅ | 공통 evaluator 유틸 + 호출 경로 정리 | 완료 (2026-02-12): 공통 evaluator 도입으로 API/monitor가 동일 파일 선택/동일 freshness 판정을 수행 |
 | A-019 | P2 | 주석/로그 가독성 보강 (핵심 경로 우선) 🔄 | 의도 주석 + 상태전이 로그 + 가이드 문서 반영 | 진행중 (2026-02-12): status/worker/api 핵심 경로 1차 보강 완료, 잔여 경로 점진 적용 |
@@ -65,10 +65,9 @@
 | D-009 | P2 | Drift 알림 연동 | drift 감지 + alert 분기 | 임계 초과 시 경고 발송 |
 
 ## 5. 즉시 시작 권장 Task 묶음 (이번 사이클)
-1. A-016
-2. A-019
-3. C-005
-4. C-006
+1. A-019
+2. C-005
+3. C-006
 
 ## 6. 태스크 운용 규칙
 1. Task 시작 전 `Assignee`, `ETA`, `Risk`를 기록한다.
@@ -156,3 +155,5 @@
    변경 파일: `scripts/status_monitor.py`, `scripts/pipeline_worker.py`, `api/main.py`, `docs/PROJECT_IDENTITY.md`, `docs/ENGINEERING_CONSTITUTION.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/DECISIONS.md`
 27. 2026-02-12: A-010-7 완료
    변경 파일: `scripts/status_monitor.py`, `tests/test_status_monitor.py`, `docker-compose.yml`, `.env.example`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/PLAN_LIVING_HYBRID.md`
+28. 2026-02-12: A-016 완료
+   변경 파일: `docs/OPERATING_CONSTRAINTS.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`
