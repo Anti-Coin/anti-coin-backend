@@ -13,6 +13,7 @@ from utils.logger import get_logger
 from utils.config import TARGET_SYMBOLS, PRIMARY_TIMEFRAME
 from utils.file_io import atomic_write_json
 from utils.time_alignment import (
+    last_closed_candle_open,
     next_timeframe_boundary,
     timeframe_to_pandas_freq,
 )
@@ -122,7 +123,10 @@ def fetch_and_save(write_api, symbol, since_ts):
     try:
         fetch_limit = 1000
         timeframe_ms = exchange.parse_timeframe(TIMEFRAME) * 1000
-        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        now = datetime.now(timezone.utc)
+        now_ms = int(now.timestamp() * 1000)
+        last_closed_open = last_closed_candle_open(now, TIMEFRAME)
+        last_closed_ms = int(last_closed_open.timestamp() * 1000)
 
         cursor = since_ms
         page_count = 0
@@ -171,6 +175,21 @@ def fetch_and_save(write_api, symbol, since_ts):
         df = pd.concat(chunks, ignore_index=True)
         df.drop_duplicates(subset=["timestamp"], keep="last", inplace=True)
         df.sort_values(by="timestamp", inplace=True)
+
+        # 미완료 캔들은 저장하지 않는다.
+        before_filter = len(df)
+        df = df[df["timestamp"] <= last_closed_ms]
+        dropped = before_filter - len(df)
+        if dropped > 0:
+            logger.info(
+                f"[{symbol}] 미완료 캔들 {dropped}개 제외 (last_closed_open={last_closed_open.strftime('%Y-%m-%dT%H:%M:%SZ')})"
+            )
+        if df.empty:
+            logger.info(
+                f"[{symbol}] 저장 가능한 closed candle 없음 (last_closed_open={last_closed_open.strftime('%Y-%m-%dT%H:%M:%SZ')})."
+            )
+            return
+
         df["timestamp"] = pd.to_datetime(
             df["timestamp"], unit="ms"
         ).dt.tz_localize("UTC")

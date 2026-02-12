@@ -15,7 +15,7 @@
 | A-001 | P0 | 설정 중앙화 (`symbols`, `timeframes`, freshness threshold) ✅ | `config` 모듈 | 완료 (2026-02-10): 공통 설정 모듈로 참조 경로 통합 |
 | A-002 | P0 | ingest_state 스키마/저장소 도입 | state 저장 코드 + 기본 조회/갱신 함수 | `symbol+timeframe`별 커서 유지 확인 |
 | A-003 | P0 | ccxt 백필 pagination 루프 구현 ✅ | fetch 함수 리팩터링 | 완료 (2026-02-10): 단발 호출 제거 및 페이지 수집 루프 적용 |
-| A-004 | P0 | closed candle 경계 계산 유틸 추가 | 시간 경계 함수 | 미완료 캔들 수집 없음 |
+| A-004 | P0 | closed candle 경계 계산 유틸 추가 ✅ | 시간 경계 함수 + worker fetch 필터 | 완료 (2026-02-12): latest closed candle 경계 기반 미완료 캔들 저장 차단 + 단위 테스트 추가 |
 | A-005 | P0 | gap detector 구현 | 누락 구간 계산 로직 | 테스트 케이스에서 gap 식별 성공 |
 | A-006 | P0 | gap refill 잡 추가 | 복구 실행 함수 | gap 발생 후 복구 확인 |
 | A-007 | P0 | 원자적 JSON 쓰기 도입 ✅ | 공통 writer 유틸 | 완료 (2026-02-10): static JSON 저장 경로에 atomic write 적용 |
@@ -45,6 +45,7 @@
 | C-002 | P1 | 잡 실행시간/실패율 메트릭 수집 | 로그/메트릭 필드 추가 | 주기별 성능 추세 확인 가능 |
 | C-003 | P2 | 부하 테스트 시나리오 업데이트 | `tests/locustfile.py` 개선 | 정적/상태 경로 부하 테스트 가능 |
 | C-004 | P2 | 모델 학습 잡 분리 초안 | 학습 엔트리포인트 분리 | 수집/예측과 독립 실행 가능 |
+| C-005 | P1 | pipeline worker 역할 분리 (ingest/predict/export) | 분리된 워커 엔트리포인트 + compose 연결 | ingest 지연/장애가 predict/export 제공 경로에 즉시 전파되지 않음 |
 
 ## 4. Phase D (Model Evolution) - B 이후, C와 병행 가능
 | ID | Priority | Task | 산출물 | Done 조건 |
@@ -60,12 +61,12 @@
 | D-009 | P2 | Drift 알림 연동 | drift 감지 + alert 분기 | 임계 초과 시 경고 발송 |
 
 ## 5. 즉시 시작 권장 Task 묶음 (이번 사이클)
-1. A-004
-2. A-005
-3. A-006
-4. A-011-6
-5. A-011-7
-6. A-010-7 (A-011-7 완료 후)
+1. A-005
+2. A-006
+3. A-011-6
+4. A-011-7
+5. A-010-7 (A-011-7 완료 후)
+6. C-005 (분리 기준/순서 설계 포함)
 
 ## 6. 태스크 운용 규칙
 1. Task 시작 전 `Assignee`, `ETA`, `Risk`를 기록한다.
@@ -73,6 +74,7 @@
 3. Task 실패/보류 시 원인과 다음 시도 조건을 한 줄로 기록한다.
 4. 모델 관련 Task(D-xxx)는 품질 지표와 롤백 경로가 없으면 `Done` 처리하지 않는다.
 5. 새 기술 부채 발견 시 `TECH_DEBT_REGISTER` 업데이트 없이는 완료 처리하지 않는다.
+6. 코드 변경 Task 완료 시 같은 세션에서 `TASKS`와 관련 문서(`PLAN`, `TECH_DEBT`, `DECISIONS`)를 동기화한다.
 
 ## 7. A-011 세부 태스크 (테스트 체계)
 | ID | Priority | Task | 산출물 | Done 조건 |
@@ -127,3 +129,5 @@
    변경 파일: `docs/DECISIONS.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`
 15. 2026-02-12: A-015 완료
    변경 파일: `utils/config.py`, `tests/test_config.py`, `docs/TASKS_MINIMUM_UNITS.md`
+16. 2026-02-12: A-004 완료
+   변경 파일: `utils/time_alignment.py`, `scripts/pipeline_worker.py`, `tests/test_time_alignment.py`, `docs/TASKS_MINIMUM_UNITS.md`

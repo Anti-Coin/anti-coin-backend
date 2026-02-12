@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from utils.time_alignment import (
+    last_closed_candle_open,
     next_timeframe_boundary,
     timeframe_to_pandas_freq,
 )
@@ -55,3 +56,30 @@ def test_timeframe_to_pandas_freq_mapping():
     assert timeframe_to_pandas_freq("1d") == "1D"
     assert timeframe_to_pandas_freq("1w") == "1W-MON"
     assert timeframe_to_pandas_freq("1M") == "1MS"
+
+
+def test_last_closed_candle_open_for_1h_inside_bucket():
+    now = datetime(2026, 2, 10, 10, 37, 12, tzinfo=timezone.utc)
+    assert last_closed_candle_open(now, "1h") == datetime(
+        2026, 2, 10, 9, 0, 0, tzinfo=timezone.utc
+    )
+
+
+def test_last_closed_candle_open_for_1h_exact_boundary():
+    now = datetime(2026, 2, 10, 11, 0, 0, tzinfo=timezone.utc)
+    assert last_closed_candle_open(now, "1h") == datetime(
+        2026, 2, 10, 10, 0, 0, tzinfo=timezone.utc
+    )
+
+
+def test_last_closed_candle_open_for_1d_1w_1M():
+    now = datetime(2026, 2, 10, 10, 37, 0, tzinfo=timezone.utc)  # Tuesday
+    assert last_closed_candle_open(now, "1d") == datetime(
+        2026, 2, 9, 0, 0, 0, tzinfo=timezone.utc
+    )
+    assert last_closed_candle_open(now, "1w") == datetime(
+        2026, 2, 2, 0, 0, 0, tzinfo=timezone.utc
+    )
+    assert last_closed_candle_open(now, "1M") == datetime(
+        2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc
+    )

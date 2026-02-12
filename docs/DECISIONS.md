@@ -195,3 +195,29 @@
 - Consequence:
   - 장기 장애의 탐지 안정성이 향상된다.
   - 재알림 도입 시 알림 폭주를 막기 위한 간격/중복 억제 기준이 필요하다.
+
+## D-2026-02-12-16
+- Date: 2026-02-12
+- Status: Accepted
+- Context:
+  - ingest pagination 수집 시점에는 아직 닫히지 않은(candle close 미완료) 봉이 포함될 수 있음
+  - 미완료 봉 저장은 다음 사이클에서 값 변경/덮어쓰기를 유발해 데이터 일관성 판단을 어렵게 만듦
+- Decision:
+  - ingest 저장 경로는 timeframe별 latest closed candle 경계(UTC)까지만 저장한다.
+  - latest closed candle 이후(진행 중) 봉은 해당 사이클에서 저장하지 않는다.
+- Consequence:
+  - 저장 데이터의 시간 정합성과 재현성이 개선된다.
+  - 실시간성은 최대 1캔들 구간 지연될 수 있으나, 안정성/무결성을 우선한다.
+
+## D-2026-02-12-17
+- Date: 2026-02-12
+- Status: Accepted
+- Context:
+  - 현재 `pipeline_worker`는 ingest/predict/export를 단일 루프에서 모두 수행하고 있음
+  - 특정 단계 지연/장애가 전체 파이프라인 오버런과 제공 지연으로 전파될 위험이 있음
+- Decision:
+  - worker 역할 분리(ingest/predict/export)를 Phase C의 공식 트랙(`C-005`)으로 채택한다.
+  - 분리는 일괄 재작성 대신 단계적 전환(엔트리포인트 분리 -> compose 배치 분리 -> 관측 기반 튜닝)으로 진행한다.
+- Consequence:
+  - 장애 격리와 운영 탄력성이 개선된다.
+  - 서비스 수/배포 복잡도 증가를 감수해야 하며, 메트릭/알림 기준 동반 정리가 필요하다.
