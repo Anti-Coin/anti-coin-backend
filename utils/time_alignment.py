@@ -68,6 +68,59 @@ def next_timeframe_boundary(now: datetime, timeframe: str) -> datetime:
     return datetime(year, month, 1, tzinfo=timezone.utc)
 
 
+def last_closed_candle_open(now: datetime, timeframe: str) -> datetime:
+    """
+    Return the open timestamp of the latest fully closed candle in UTC.
+    Example:
+      - now=10:37, timeframe=1h -> 09:00
+      - now=11:00, timeframe=1h -> 10:00
+    """
+    value, unit = _parse_timeframe(timeframe)
+    now_utc = _to_utc(now)
+
+    if unit in {"m", "h"}:
+        step_seconds = value * (60 if unit == "m" else 3600)
+        now_seconds = int(now_utc.timestamp())
+        current_open_seconds = (now_seconds // step_seconds) * step_seconds
+        last_closed_open_seconds = current_open_seconds - step_seconds
+        return datetime.fromtimestamp(
+            last_closed_open_seconds, tz=timezone.utc
+        )
+
+    if unit == "d":
+        anchor = datetime(1970, 1, 1, tzinfo=timezone.utc)
+        current_day_start = now_utc.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        elapsed_days = (current_day_start - anchor).days
+        current_bucket_start_days = (elapsed_days // value) * value
+        return anchor + timedelta(days=current_bucket_start_days - value)
+
+    if unit == "w":
+        anchor = datetime(1970, 1, 5, tzinfo=timezone.utc)  # Monday
+        current_week_start = (
+            now_utc - timedelta(days=now_utc.weekday())
+        ).replace(hour=0, minute=0, second=0, microsecond=0)
+        elapsed_weeks = (current_week_start - anchor).days // 7
+        current_bucket_start_weeks = (elapsed_weeks // value) * value
+        return anchor + timedelta(
+            weeks=current_bucket_start_weeks - value
+        )
+
+    # unit == "M"
+    current_month_start = now_utc.replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+    month_index = current_month_start.year * 12 + (
+        current_month_start.month - 1
+    )
+    current_bucket_start_month = (month_index // value) * value
+    last_closed_open_month = current_bucket_start_month - value
+    year = last_closed_open_month // 12
+    month = (last_closed_open_month % 12) + 1
+    return datetime(year, month, 1, tzinfo=timezone.utc)
+
+
 def timeframe_to_pandas_freq(timeframe: str) -> str:
     value, unit = _parse_timeframe(timeframe)
     if unit == "m":
