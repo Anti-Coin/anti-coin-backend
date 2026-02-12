@@ -38,6 +38,9 @@ def _parse_positive_int_env(name: str, default: int) -> int:
 
 
 MONITOR_POLL_SECONDS = _parse_positive_int_env("MONITOR_POLL_SECONDS", 60)
+MONITOR_RE_ALERT_CYCLES = _parse_positive_int_env(
+    "MONITOR_RE_ALERT_CYCLES", 3
+)
 
 HEALTHY_STATUSES = {"fresh", "stale"}
 ALERTABLE_UNHEALTHY_STATUSES = {"hard_stale", "corrupt", "missing"}
@@ -54,6 +57,7 @@ class MonitorAlertEvent:
     event: str
     previous_status: str | None
     current_snapshot: MonitorSnapshot
+    cycles_in_status: int | None = None
 
 
 def evaluate_symbol_timeframe(
@@ -91,6 +95,54 @@ def detect_alert_event(previous_status: str | None, current_status: str) -> str 
     ):
         return "recovery"
 
+    return None
+
+
+def update_status_cycle_counter(
+    counters: dict[str, dict[str, str | int]],
+    key: str,
+    current_status: str,
+) -> int:
+    """
+    key별로 동일 상태가 몇 사이클 연속됐는지 누적한다.
+
+    상태가 바뀌면 카운터를 1로 리셋하고,
+    동일 상태가 유지되면 카운터를 +1 한다.
+    """
+    previous = counters.get(key)
+    if (
+        isinstance(previous, dict)
+        and previous.get("status") == current_status
+    ):
+        raw_cycles = previous.get("cycles", 0)
+        try:
+            cycles = int(raw_cycles) + 1
+        except (TypeError, ValueError):
+            cycles = 1
+    else:
+        cycles = 1
+
+    counters[key] = {"status": current_status, "cycles": cycles}
+    return cycles
+
+
+def detect_realert_event(current_status: str, cycles_in_status: int) -> str | None:
+    """
+    상태가 바뀌지 않고 오래 지속될 때 주기적으로 재알림한다.
+
+    정책:
+    - hard_stale/corrupt/missing: 3사이클마다 재알림
+    - stale(soft): 즉시 알림은 없지만 3사이클 이상 지속 시 재알림
+    """
+    if cycles_in_status < MONITOR_RE_ALERT_CYCLES:
+        return None
+    if cycles_in_status % MONITOR_RE_ALERT_CYCLES != 0:
+        return None
+
+    if current_status in ALERTABLE_UNHEALTHY_STATUSES:
+        return f"{current_status}_repeat"
+    if current_status == "stale":
+        return "soft_stale_repeat"
     return None
 
 
@@ -196,6 +248,7 @@ def apply_influx_json_consistency(
 
 def run_monitor_cycle(
     state: dict[str, MonitorSnapshot],
+    status_counters: dict[str, dict[str, str | int]] | None = None,
     now: datetime | None = None,
     symbols: list[str] | None = None,
     timeframes: list[str] | None = None,
@@ -207,6 +260,9 @@ def run_monitor_cycle(
     resolved_now = now or datetime.now(timezone.utc)
     resolved_symbols = symbols or TARGET_SYMBOLS
     resolved_timeframes = timeframes or INGEST_TIMEFRAMES
+    resolved_status_counters = (
+        status_counters if status_counters is not None else {}
+    )
     events: list[MonitorAlertEvent] = []
 
     for symbol in resolved_symbols:
@@ -234,6 +290,14 @@ def run_monitor_cycle(
                 )
             previous_status = state.get(key).status if key in state else None
             event = detect_alert_event(previous_status, snapshot.status)
+            cycles_in_status = update_status_cycle_counter(
+                resolved_status_counters, key, snapshot.status
+            )
+            # 상태전이 알림이 없으면, 동일 상태의 장기 지속 여부를 확인해 재알림을 보낸다.
+            if event is None:
+                event = detect_realert_event(
+                    snapshot.status, cycles_in_status
+                )
             if event:
                 events.append(
                     MonitorAlertEvent(
@@ -243,24 +307,33 @@ def run_monitor_cycle(
                         event=event,
                         previous_status=previous_status,
                         current_snapshot=snapshot,
+                        cycles_in_status=cycles_in_status,
                     )
                 )
 
             state[key] = snapshot
             logger.info(
-                f"[Monitor] {symbol} {timeframe} status={snapshot.status} detail={snapshot.detail}"
+                f"[Monitor] {symbol} {timeframe} "
+                f"status={snapshot.status} cycles={cycles_in_status} "
+                f"detail={snapshot.detail}"
             )
 
     return events
 
 
 def send_discord_alert(event: MonitorAlertEvent) -> None:
+    cycles_line = (
+        f"\ncycles_in_status={event.cycles_in_status}"
+        if event.cycles_in_status is not None
+        else ""
+    )
     message = (
         f"[{event.event.upper()}] {event.symbol} {event.timeframe}\n"
         f"prev={event.previous_status} -> now={event.current_snapshot.status}\n"
         f"detail={event.current_snapshot.detail}\n"
         f"updated_at={event.current_snapshot.updated_at}\n"
         f"age_minutes={event.current_snapshot.age_minutes}"
+        f"{cycles_line}"
     )
 
     if not DISCORD_WEBHOOK_URL:
@@ -293,11 +366,16 @@ def run_monitor() -> None:
             logger.error(f"[Status Monitor] Failed to initialize Influx client: {e}")
 
     state: dict[str, MonitorSnapshot] = {}
+    status_counters: dict[str, dict[str, str | int]] = {}
     try:
         while True:
             cycle_start = time.time()
             try:
-                events = run_monitor_cycle(state, query_api=query_api)
+                events = run_monitor_cycle(
+                    state,
+                    status_counters=status_counters,
+                    query_api=query_api,
+                )
                 for event in events:
                     send_discord_alert(event)
             except Exception as e:
