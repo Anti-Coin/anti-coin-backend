@@ -22,7 +22,7 @@
 | A-008 | P0 | freshness 분류 유틸 (`fresh/stale/hard_stale/corrupt`) ✅ | 공통 판정 함수 | 완료 (2026-02-10): `utils/freshness.py` 도입 및 분류 테스트 통과 |
 | A-009 | P0 | status 엔드포인트에 상태 상세 반영 ✅ | API 응답 스키마 업데이트 | 완료 (2026-02-10): soft stale 경고, hard stale 차단, 예외 처리 보강 |
 | A-010 | P1 | alerting 규칙 확장 (hard_stale/corrupt/missing/recovery) ✅ | 모니터 + 알림 분기 로직 | 완료 (2026-02-10): 별도 모니터 스크립트 + 상태전이 알림/테스트 반영 |
-| A-011 | P1 | 기본 회귀 테스트 추가 🔄 | 단위/통합 테스트 | 진행중 (2026-02-10): 우선 단위 테스트부터 확대 |
+| A-011 | P1 | 기본 회귀 테스트 추가 ✅ | 단위/통합 테스트 | 완료 (2026-02-12): A-011-1~7 완료 + `pytest -q` 58 passed |
 | A-012 | P1 | 세션 정렬 문서 체계 구축 ✅ | identity/constraints/debt/handoff 문서 | 완료 (2026-02-10): 새 세션 bootstrap 가능한 문서 스택 구성 |
 | A-013 | P1 | 예측 시작 시점 경계 기준 정렬 ✅ | 경계 계산 유틸 + worker 예측 로직 | 완료 (2026-02-10): timeframe 경계(UTC) 기준으로 예측 시작점 고정 |
 | A-014 | P1 | Influx-JSON 일관성 점검 추가 ✅ | 불일치 감지 로직/알림 | 완료 (2026-02-12): Influx 최신 시각 vs static `updated_at` 불일치 감지/`hard_stale` 승격 구현 + `/predict` 미래값 운영 스모크체크(전체 심볼) 확인 |
@@ -30,7 +30,7 @@
 | A-016 | P2 | API-SSG 경계 문서화 + endpoint sunset 기준 정의 ✅ | 운영 정책 문서/체크리스트 | 완료 (2026-02-12): 1차 경계/체크리스트 문서화 완료, 잔여 리스크는 `TD-018(mitigated)`로 추적 |
 | A-017 | P1 | predict 실패 알림 + degraded 상태 노출 ✅ | 실패 알림 분기 + 상태 필드 | 완료 (2026-02-12): worker predict 실패/복구 상태전이 알림 + `/status`에 `degraded`, `degraded_reason`, last success/failure 노출 |
 | A-018 | P1 | API/Monitor 상태 판정 경로 공통화 ✅ | 공통 evaluator 유틸 + 호출 경로 정리 | 완료 (2026-02-12): 공통 evaluator 도입으로 API/monitor가 동일 파일 선택/동일 freshness 판정을 수행 |
-| A-019 | P2 | 주석/로그 가독성 보강 (핵심 경로 우선) 🔄 | 의도 주석 + 상태전이 로그 + 가이드 문서 반영 | 진행중 (2026-02-12): status/worker/api 핵심 경로 1차 보강 완료, 잔여 경로 점진 적용 |
+| A-019 | P2 | 주석/로그 가독성 보강 (핵심 경로 우선) ✅ | 의도 주석 + 상태전이 로그 + 가이드 문서 반영 | 완료 (2026-02-12): status/worker/api 핵심 경로 기준 반영 완료, 잔여는 지속 개선 항목(`TD-026`)으로 관리 |
 
 ## 2. Phase B (Timeframe Expansion) - A 완료 후
 | ID | Priority | Task | 산출물 | Done 조건 |
@@ -65,9 +65,9 @@
 | D-009 | P2 | Drift 알림 연동 | drift 감지 + alert 분기 | 임계 초과 시 경고 발송 |
 
 ## 5. 즉시 시작 권장 Task 묶음 (이번 사이클)
-1. A-019
-2. C-005
-3. C-006
+1. C-005
+2. C-006
+3. B-005
 
 ## 6. 태스크 운용 규칙
 1. Task 시작 전 `Assignee`, `ETA`, `Risk`를 기록한다.
@@ -157,3 +157,9 @@
    변경 파일: `scripts/status_monitor.py`, `tests/test_status_monitor.py`, `docker-compose.yml`, `.env.example`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/PLAN_LIVING_HYBRID.md`
 28. 2026-02-12: A-016 완료
    변경 파일: `docs/OPERATING_CONSTRAINTS.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`
+29. 2026-02-12: A-011 완료
+   변경 파일: `tests/test_file_io.py`, `tests/test_freshness.py`, `tests/test_api_status.py`, `tests/test_config.py`, `tests/test_pipeline_worker.py`, `tests/test_status_monitor.py`, `.github/workflows/deploy.yml`, `docs/TASKS_MINIMUM_UNITS.md`
+30. 2026-02-12: A-019 완료
+   변경 파일: `scripts/status_monitor.py`, `scripts/pipeline_worker.py`, `api/main.py`, `docs/PROJECT_IDENTITY.md`, `docs/ENGINEERING_CONSTITUTION.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/TECH_DEBT_REGISTER.md`, `docs/DECISIONS.md`
+31. 2026-02-12: Phase A 종료 선언
+   근거: Phase A Exit Criteria 충족 + A-001~A-019 완료 상태 동기화
