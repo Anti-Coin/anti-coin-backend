@@ -7,10 +7,12 @@ from scripts.pipeline_worker import (
     _detect_gaps_from_ms_timestamps,
     _fetch_ohlcv_paginated,
     _refill_detected_gaps,
+    build_runtime_manifest,
     prediction_enabled_for_timeframe,
     run_prediction_and_save,
     save_history_to_json,
     upsert_prediction_health,
+    write_runtime_manifest,
 )
 
 
@@ -189,3 +191,93 @@ def test_save_history_to_json_writes_timeframe_aware_files(tmp_path, monkeypatch
     assert payload["symbol"] == "BTC/USDT"
     assert payload["timeframe"] == "4h"
     assert payload["type"] == "history_4h"
+
+
+def test_build_runtime_manifest_merges_freshness_and_health(tmp_path):
+    symbol = "BTC/USDT"
+    timeframe = "1h"
+    safe_symbol = symbol.replace("/", "_")
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    history_path = tmp_path / f"history_{safe_symbol}_{timeframe}.json"
+    history_path.write_text(
+        json.dumps(
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "updated_at": "2026-02-13T11:15:00Z",
+                "data": [],
+            }
+        )
+    )
+    prediction_path = tmp_path / f"prediction_{safe_symbol}_{timeframe}.json"
+    prediction_path.write_text(
+        json.dumps(
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "updated_at": "2026-02-13T11:30:00Z",
+                "forecast": [],
+            }
+        )
+    )
+    health_path = tmp_path / "prediction_health.json"
+    health_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-02-13T11:31:00Z",
+                "entries": {
+                    "BTC/USDT|1h": {
+                        "degraded": True,
+                        "last_success_at": "2026-02-13T11:00:00Z",
+                        "last_failure_at": "2026-02-13T11:29:00Z",
+                        "consecutive_failures": 2,
+                    }
+                },
+            }
+        )
+    )
+
+    manifest = build_runtime_manifest(
+        [symbol],
+        [timeframe],
+        now=now,
+        static_dir=tmp_path,
+        prediction_health_path=health_path,
+    )
+
+    assert manifest["version"] == 1
+    assert manifest["summary"]["entry_count"] == 1
+    assert manifest["summary"]["status_counts"]["fresh"] == 1
+    assert manifest["summary"]["degraded_count"] == 1
+
+    entry = manifest["entries"][0]
+    assert entry["key"] == "BTC/USDT|1h"
+    assert entry["history"]["updated_at"] == "2026-02-13T11:15:00Z"
+    assert entry["prediction"]["status"] == "fresh"
+    assert entry["prediction"]["updated_at"] == "2026-02-13T11:30:00Z"
+    assert entry["degraded"] is True
+    assert entry["prediction_failure_count"] == 2
+    assert entry["serve_allowed"] is True
+
+
+def test_write_runtime_manifest_writes_manifest_file(tmp_path):
+    symbol = "BTC/USDT"
+    timeframe = "1h"
+    manifest_path = tmp_path / "manifest.json"
+
+    write_runtime_manifest(
+        [symbol],
+        [timeframe],
+        now=datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc),
+        static_dir=tmp_path,
+        prediction_health_path=tmp_path / "prediction_health.json",
+        path=manifest_path,
+    )
+
+    payload = json.loads(manifest_path.read_text())
+    assert payload["version"] == 1
+    assert payload["summary"]["entry_count"] == 1
+    assert payload["summary"]["status_counts"]["missing"] == 1
+    assert payload["entries"][0]["serve_allowed"] is False

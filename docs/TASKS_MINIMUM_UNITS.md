@@ -25,6 +25,7 @@
 13. `B-003` 완료 (2026-02-13): 다중 timeframe(`1h/1d/1w/1M`) + 5개 symbol 실운영 cycle 확인(약 30초), `1m` prediction 비생성 정책 반영, 회귀 `66 passed`
 14. `B-001` 진행 (2026-02-13): config gate를 env 기반으로 전환(`ENABLE_MULTI_TIMEFRAMES`), 기본값은 `1h` 고정 유지
 15. `D-2026-02-13-33` 채택: cycle cadence를 `boundary + detection gate` 하이브리드로 확정(`C-006 -> C-007`)
+16. `B-004` 완료 (2026-02-13): worker cycle마다 `manifest.json` 생성(심볼/타임프레임별 history/prediction 상태 + degraded 병합), 회귀 `68 passed`
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -42,7 +43,7 @@
 | B-001 | P1 | timeframe tier 정책 매트릭스 확정(수집/보존/서빙/예측) | in_progress | `docs/TIMEFRAME_POLICY_MATRIX.md` 정책 잠금 + `1m` 예측 비서빙, `1m` hybrid API=`latest closed 180 candles`, `1m` rolling=`default 14d / cap 30d`, `1h->1d/1w/1M` downsample 경로, Hard Gate+Accuracy 정책을 문서/설정으로 고정 |
 | B-002 | P1 | 파일 네이밍 규칙 통일 | done (2026-02-13) | canonical `{symbol}_{timeframe}` 파일 생성 + legacy fallback 호환 유지 + `tests/test_api_status.py`/`tests/test_status_monitor.py` 회귀 통과 |
 | B-003 | P1 | history/prediction export timeframe-aware 전환 | done (2026-02-13) | 다중 timeframe(`1h/1d/1w/1M`) 동시 export 동작 확인 + `1m` prediction 비생성 정책 코드/테스트 반영 + 회귀 `66 passed` |
-| B-004 | P1 | manifest 파일 생성 | open | 심볼/타임프레임별 최신 상태 요약 |
+| B-004 | P1 | manifest 파일 생성 | done (2026-02-13) | `static_data/manifest.json`에 심볼/타임프레임별 `history.updated_at`, `prediction.status/updated_at/age`, `degraded`, `serve_allowed`, `summary(status_counts)`가 주기적으로 갱신됨 |
 | B-007 | P2 | 운영 대시보드(admin) timeframe 확장 | open | `admin/app.py`에서 symbol/timeframe 필터, timeframe별 freshness/degraded 상태 매트릭스, 최근 갱신 시각/지연 표시를 지원하고 `B-004` manifest를 1차 데이터 소스로 사용 |
 | B-006 | P1 | 저장소 예산 가드(50GB) + retention/downsample 실행 | open | `1m` rolling(`14d default / 30d cap`) 적용 + 디스크 watermark 경보/차단 + downsample job의 lineage/검증 경로 확정 |
 | B-005 | P2 | `/history`/`/predict` fallback 정리(sunset) | open | Endpoint Sunset 체크리스트 조건 충족 + fallback 비의존 운영 1 cycle 검증 + rollback 절차 문서화 |
@@ -75,8 +76,8 @@
 
 ## 3. Immediate Bundle
 1. `B-001`
-2. `B-004`
-3. `B-006`
+2. `B-006`
+3. `C-002`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.

@@ -14,6 +14,7 @@ from utils.logger import get_logger
 from utils.config import INGEST_TIMEFRAMES, PRIMARY_TIMEFRAME, TARGET_SYMBOLS
 from utils.file_io import atomic_write_json
 from utils.ingest_state import IngestStateStore
+from utils.prediction_status import evaluate_prediction_status
 from utils.time_alignment import (
     detect_timeframe_gaps,
     last_closed_candle_open,
@@ -42,11 +43,13 @@ TIMEFRAMES = INGEST_TIMEFRAMES if INGEST_TIMEFRAMES else [PRIMARY_TIMEFRAME]
 LOOKBACK_DAYS = 30  # 과거 30일치 데이터 유지
 INGEST_STATE_FILE = STATIC_DIR / "ingest_state.json"
 PREDICTION_HEALTH_FILE = STATIC_DIR / "prediction_health.json"
+MANIFEST_FILE = STATIC_DIR / "manifest.json"
 PREDICTION_DISABLED_TIMEFRAMES = {
     value.strip()
     for value in os.getenv("PREDICTION_DISABLED_TIMEFRAMES", "1m").split(",")
     if value.strip()
 }
+SERVE_ALLOWED_STATUSES = {"fresh", "stale"}
 
 
 def send_alert(message):
@@ -67,15 +70,21 @@ def _prediction_health_key(symbol: str, timeframe: str) -> str:
     return f"{symbol}|{timeframe}"
 
 
-def _static_export_paths(kind: str, symbol: str, timeframe: str) -> tuple[Path, Path | None]:
+def _static_export_paths(
+    kind: str,
+    symbol: str,
+    timeframe: str,
+    static_dir: Path | None = None,
+) -> tuple[Path, Path | None]:
     """
     정적 산출물 파일 경로를 반환한다.
 
     Phase B 전환 기간에는 canonical(timeframe 포함) + legacy를 함께 유지한다.
     """
     safe_symbol = symbol.replace("/", "_")
-    canonical = STATIC_DIR / f"{kind}_{safe_symbol}_{timeframe}.json"
-    legacy = STATIC_DIR / f"{kind}_{safe_symbol}.json"
+    resolved_static_dir = static_dir or STATIC_DIR
+    canonical = resolved_static_dir / f"{kind}_{safe_symbol}_{timeframe}.json"
+    legacy = resolved_static_dir / f"{kind}_{safe_symbol}.json"
     if canonical == legacy:
         return canonical, None
     return canonical, legacy
@@ -176,6 +185,148 @@ def upsert_prediction_health(
     entries[key] = entry
     _save_prediction_health(entries, path=path)
     return entry, previous_degraded, bool(entry["degraded"])
+
+
+def _static_export_candidates(
+    kind: str,
+    symbol: str,
+    timeframe: str,
+    static_dir: Path | None = None,
+) -> list[Path]:
+    canonical, legacy = _static_export_paths(
+        kind, symbol, timeframe, static_dir=static_dir
+    )
+    candidates = [canonical]
+    if legacy is not None:
+        candidates.append(legacy)
+    return candidates
+
+
+def _extract_updated_at_from_files(candidates: list[Path]) -> tuple[str | None, str | None]:
+    for path in candidates:
+        if not path.exists():
+            continue
+
+        try:
+            with open(path, "r") as f:
+                payload = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            logger.error(f"Failed to read static export file {path.name}: {e}")
+            return None, path.name
+
+        updated_at = payload.get("updated_at")
+        if isinstance(updated_at, str) and updated_at:
+            return updated_at, path.name
+
+        logger.warning(f"Invalid updated_at in static export file: {path.name}")
+        return None, path.name
+
+    return None, None
+
+
+def build_runtime_manifest(
+    symbols: list[str],
+    timeframes: list[str],
+    *,
+    now: datetime | None = None,
+    static_dir: Path | None = None,
+    prediction_health_path: Path | None = None,
+) -> dict:
+    """
+    심볼/타임프레임별 정적 산출물 상태(manifest) 페이로드를 생성한다.
+    """
+    resolved_now = now or datetime.now(timezone.utc)
+    generated_at = resolved_now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    resolved_static_dir = static_dir or STATIC_DIR
+    resolved_prediction_health_path = prediction_health_path or PREDICTION_HEALTH_FILE
+    health_entries = _load_prediction_health(path=resolved_prediction_health_path)
+
+    entries: list[dict] = []
+    status_counts: dict[str, int] = {}
+    degraded_count = 0
+
+    for symbol in symbols:
+        for timeframe in timeframes:
+            history_updated_at, history_file = _extract_updated_at_from_files(
+                _static_export_candidates(
+                    "history", symbol, timeframe, static_dir=resolved_static_dir
+                )
+            )
+            snapshot = evaluate_prediction_status(
+                symbol=symbol,
+                timeframe=timeframe,
+                now=resolved_now,
+                static_dir=resolved_static_dir,
+            )
+            health = health_entries.get(_prediction_health_key(symbol, timeframe), {})
+            degraded = bool(health.get("degraded", False))
+            raw_failures = health.get("consecutive_failures", 0)
+            try:
+                failure_count = int(raw_failures)
+            except (TypeError, ValueError):
+                failure_count = 0
+            if degraded:
+                degraded_count += 1
+
+            status_counts[snapshot.status] = status_counts.get(snapshot.status, 0) + 1
+            entries.append(
+                {
+                    "key": _prediction_health_key(symbol, timeframe),
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "history": {
+                        "updated_at": history_updated_at,
+                        "source_file": history_file,
+                    },
+                    "prediction": {
+                        "status": snapshot.status,
+                        "updated_at": snapshot.updated_at,
+                        "age_minutes": snapshot.age_minutes,
+                        "threshold_minutes": {
+                            "soft": snapshot.soft_limit_minutes,
+                            "hard": snapshot.hard_limit_minutes,
+                        },
+                        "source_detail": snapshot.detail,
+                    },
+                    "degraded": degraded,
+                    "last_prediction_success_at": health.get("last_success_at"),
+                    "last_prediction_failure_at": health.get("last_failure_at"),
+                    "prediction_failure_count": failure_count,
+                    "serve_allowed": snapshot.status in SERVE_ALLOWED_STATUSES,
+                }
+            )
+
+    return {
+        "version": 1,
+        "generated_at": generated_at,
+        "entries": entries,
+        "summary": {
+            "entry_count": len(entries),
+            "status_counts": status_counts,
+            "degraded_count": degraded_count,
+        },
+    }
+
+
+def write_runtime_manifest(
+    symbols: list[str],
+    timeframes: list[str],
+    *,
+    now: datetime | None = None,
+    static_dir: Path | None = None,
+    prediction_health_path: Path | None = None,
+    path: Path | None = None,
+) -> None:
+    resolved_path = path or MANIFEST_FILE
+    payload = build_runtime_manifest(
+        symbols,
+        timeframes,
+        now=now,
+        static_dir=static_dir,
+        prediction_health_path=prediction_health_path,
+    )
+    atomic_write_json(resolved_path, payload, indent=2)
+    logger.info(f"Runtime manifest updated: {resolved_path}")
 
 
 def _query_last_timestamp(query_api, query: str) -> datetime | None:
@@ -688,6 +839,12 @@ def run_worker():
                             f"[{symbol} {timeframe}] prediction still degraded "
                             f"(consecutive_failures={health.get('consecutive_failures')})"
                         )
+
+            try:
+                write_runtime_manifest(TARGET_COINS, TIMEFRAMES)
+            except Exception as e:
+                logger.error(f"Runtime manifest update failed: {e}")
+                send_alert(f"[Manifest Error] {e}")
 
             # Cycle Overrun 감지 및 주기 보정
             elapsed = time.time() - start_time
