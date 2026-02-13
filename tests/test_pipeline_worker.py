@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -6,6 +7,9 @@ from scripts.pipeline_worker import (
     _detect_gaps_from_ms_timestamps,
     _fetch_ohlcv_paginated,
     _refill_detected_gaps,
+    prediction_enabled_for_timeframe,
+    run_prediction_and_save,
+    save_history_to_json,
     upsert_prediction_health,
 )
 
@@ -130,3 +134,58 @@ def test_upsert_prediction_health_tracks_failure_and_recovery(tmp_path):
     assert third["consecutive_failures"] == 0
     assert third["last_success_at"] is not None
     assert third["last_failure_at"] is not None
+
+
+def test_prediction_enabled_for_timeframe_respects_disabled_set(monkeypatch):
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.PREDICTION_DISABLED_TIMEFRAMES",
+        {"1m", "5m"},
+    )
+
+    assert prediction_enabled_for_timeframe("1m") is False
+    assert prediction_enabled_for_timeframe("1h") is True
+
+
+def test_run_prediction_and_save_skips_disabled_timeframe(monkeypatch):
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.PREDICTION_DISABLED_TIMEFRAMES",
+        {"1m"},
+    )
+
+    result, error = run_prediction_and_save(
+        write_api=None,
+        symbol="BTC/USDT",
+        timeframe="1m",
+    )
+    assert result == "skipped"
+    assert error is None
+
+
+def test_save_history_to_json_writes_timeframe_aware_files(tmp_path, monkeypatch):
+    monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
+
+    base = datetime(2026, 2, 12, 0, 0, tzinfo=timezone.utc)
+    df = pd.DataFrame(
+        [
+            {
+                "timestamp": base,
+                "open": 1.0,
+                "high": 2.0,
+                "low": 0.5,
+                "close": 1.5,
+                "volume": 10.0,
+            }
+        ]
+    ).set_index("timestamp")
+
+    save_history_to_json(df, "BTC/USDT", "4h")
+
+    canonical_path = tmp_path / "history_BTC_USDT_4h.json"
+    legacy_path = tmp_path / "history_BTC_USDT.json"
+    assert canonical_path.exists()
+    assert legacy_path.exists()
+
+    payload = json.loads(canonical_path.read_text())
+    assert payload["symbol"] == "BTC/USDT"
+    assert payload["timeframe"] == "4h"
+    assert payload["type"] == "history_4h"

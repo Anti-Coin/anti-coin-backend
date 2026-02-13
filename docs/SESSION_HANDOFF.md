@@ -10,6 +10,7 @@
 4. `R-001`~`R-004` 완료. `D-2026-02-13-29/30/32` 반영으로 Phase B/Phase D 기준선을 보정.
 5. `B-002` 완료: canonical `{symbol}_{timeframe}` 네이밍 적용 + legacy 호환(dual-write) 유지 + 회귀 테스트 `29 passed`.
 6. `B-005`는 P2 유지(조건 충족 기반 sunset, 비긴급 트랙).
+7. `B-003` 진행: worker export/predict 경로의 timeframe 인자화 + `1m` prediction 비생성 정책 반영. 단, 런타임 다중 timeframe 활성은 `B-001` config gate 해제 이후 검증 필요.
 
 ## 2. Next Priority Tasks
 1. `B-001`: timeframe tier 정책 매트릭스 잠금(1m 비대칭 + `latest closed 180` + `14d/30d` + Hard Gate+Accuracy)

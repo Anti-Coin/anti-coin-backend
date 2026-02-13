@@ -11,7 +11,7 @@ from pathlib import Path
 import requests
 import traceback
 from utils.logger import get_logger
-from utils.config import TARGET_SYMBOLS, PRIMARY_TIMEFRAME
+from utils.config import INGEST_TIMEFRAMES, PRIMARY_TIMEFRAME, TARGET_SYMBOLS
 from utils.file_io import atomic_write_json
 from utils.ingest_state import IngestStateStore
 from utils.time_alignment import (
@@ -38,10 +38,15 @@ os.makedirs(STATIC_DIR, exist_ok=True)
 
 # 수집 대상 및 설정
 TARGET_COINS = TARGET_SYMBOLS
-TIMEFRAME = PRIMARY_TIMEFRAME
+TIMEFRAMES = INGEST_TIMEFRAMES if INGEST_TIMEFRAMES else [PRIMARY_TIMEFRAME]
 LOOKBACK_DAYS = 30  # 과거 30일치 데이터 유지
 INGEST_STATE_FILE = STATIC_DIR / "ingest_state.json"
 PREDICTION_HEALTH_FILE = STATIC_DIR / "prediction_health.json"
+PREDICTION_DISABLED_TIMEFRAMES = {
+    value.strip()
+    for value in os.getenv("PREDICTION_DISABLED_TIMEFRAMES", "1m").split(",")
+    if value.strip()
+}
 
 
 def send_alert(message):
@@ -74,6 +79,11 @@ def _static_export_paths(kind: str, symbol: str, timeframe: str) -> tuple[Path, 
     if canonical == legacy:
         return canonical, None
     return canonical, legacy
+
+
+def prediction_enabled_for_timeframe(timeframe: str) -> bool:
+    """timeframe별 prediction 생성 허용 여부."""
+    return timeframe not in PREDICTION_DISABLED_TIMEFRAMES
 
 
 def _load_prediction_health(
@@ -168,34 +178,50 @@ def upsert_prediction_health(
     return entry, previous_degraded, bool(entry["degraded"])
 
 
-def get_last_timestamp(query_api, symbol):
+def _query_last_timestamp(query_api, query: str) -> datetime | None:
+    result = query_api.query(query=query)
+    if len(result) == 0 or len(result[0].records) == 0:
+        return None
+    return result[0].records[0].get_time()
+
+
+def get_last_timestamp(query_api, symbol, timeframe):
     """
-    InfluxDB에서 해당 코인의 가장 마지막 데이터 시간(Timestamp)을 조회
+    InfluxDB에서 해당 코인/타임프레임의 가장 마지막 데이터 시간(Timestamp)을 조회
     """
     query = f"""
     from(bucket: "{INFLUXDB_BUCKET}")
       |> range(start: -{LOOKBACK_DAYS}d)
       |> filter(fn: (r) => r["_measurement"] == "ohlcv")
       |> filter(fn: (r) => r["symbol"] == "{symbol}")
+      |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
       |> last(column: "_time")
     """
+    legacy_query = f"""
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -{LOOKBACK_DAYS}d)
+      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
+      |> filter(fn: (r) => r["symbol"] == "{symbol}")
+      |> last(column: "_time")
+    """
+
     try:
-        result = query_api.query(query=query)
-        if len(result) > 0 and len(result[0].records) > 0:
-            last_time = result[0].records[0].get_time()
+        last_time = _query_last_timestamp(query_api, query)
+        # B-003 전환 직후(legacy row만 존재)에도 과도한 초기 백필을 피하기 위한 fallback.
+        if last_time is None and timeframe == PRIMARY_TIMEFRAME:
+            last_time = _query_last_timestamp(query_api, legacy_query)
+        if last_time is not None:
             # InfluxDB 시간은 UTC timezone이 포함됨.
             return last_time
     except Exception as e:
-        logger.error(f"[{symbol}] DB 조회 중 에러 (아마 데이터 없음): {e}")
+        logger.error(f"[{symbol} {timeframe}] DB 조회 중 에러 (아마 데이터 없음): {e}")
 
     return None
 
 
-def save_history_to_json(df, symbol):
+def save_history_to_json(df, symbol, timeframe):
     """
-    과거 데이터(1h) 정적 파일 생성
-    TODO: 지금은 단순하게 1시간 봉에 대해서만 정적 파일을 생성하고 있는데, (predict도 마찬가지)
-    추후에 확장할 것.
+    과거 데이터 정적 파일 생성.
     """
     try:
         export_df = df.copy()
@@ -209,23 +235,24 @@ def save_history_to_json(df, symbol):
                 ["timestamp", "open", "high", "low", "close", "volume"]
             ].to_dict(orient="records"),
             "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "timeframe": TIMEFRAME,
-            "type": f"history_{TIMEFRAME}",
+            "timeframe": timeframe,
+            "type": f"history_{timeframe}",
         }
 
-        canonical_path, legacy_path = _static_export_paths("history", symbol, TIMEFRAME)
+        canonical_path, legacy_path = _static_export_paths("history", symbol, timeframe)
         atomic_write_json(canonical_path, json_output)
         if legacy_path is not None:
             atomic_write_json(legacy_path, json_output)
 
         logger.info(
-            f"[{symbol}] 정적 파일 생성 완료: canonical={canonical_path}, legacy={legacy_path}"
+            f"[{symbol} {timeframe}] 정적 파일 생성 완료: "
+            f"canonical={canonical_path}, legacy={legacy_path}"
         )
     except Exception as e:
-        logger.error(f"[{symbol}] 정적 파일 생성 실패: {e}")
+        logger.error(f"[{symbol} {timeframe}] 정적 파일 생성 실패: {e}")
 
 
-def fetch_and_save(write_api, symbol, since_ts) -> tuple[datetime | None, str]:
+def fetch_and_save(write_api, symbol, since_ts, timeframe) -> tuple[datetime | None, str]:
     """
     ccxt로 데이터 가져와서 InfluxDB에 저장
     """
@@ -241,18 +268,18 @@ def fetch_and_save(write_api, symbol, since_ts) -> tuple[datetime | None, str]:
     try:
         now = datetime.now(timezone.utc)
         now_ms = int(now.timestamp() * 1000)
-        last_closed_open = last_closed_candle_open(now, TIMEFRAME)
+        last_closed_open = last_closed_candle_open(now, timeframe)
         last_closed_ms = int(last_closed_open.timestamp() * 1000)
 
         df, page_count = _fetch_ohlcv_paginated(
             exchange=exchange,
             symbol=symbol,
-            timeframe=TIMEFRAME,
+            timeframe=timeframe,
             since_ms=since_ms,
             until_ms=now_ms,
         )
         if df.empty:
-            logger.info(f"[{symbol}] 새로운 데이터 없음.")
+            logger.info(f"[{symbol} {timeframe}] 새로운 데이터 없음.")
             return None, "no_data"
 
         # 미완료 캔들은 저장하지 않는다.
@@ -261,47 +288,51 @@ def fetch_and_save(write_api, symbol, since_ts) -> tuple[datetime | None, str]:
         dropped = before_filter - len(df)
         if dropped > 0:
             logger.info(
-                f"[{symbol}] 미완료 캔들 {dropped}개 제외 (last_closed_open={last_closed_open.strftime('%Y-%m-%dT%H:%M:%SZ')})"
+                f"[{symbol} {timeframe}] 미완료 캔들 {dropped}개 제외 "
+                f"(last_closed_open={last_closed_open.strftime('%Y-%m-%dT%H:%M:%SZ')})"
             )
         if df.empty:
             logger.info(
-                f"[{symbol}] 저장 가능한 closed candle 없음 (last_closed_open={last_closed_open.strftime('%Y-%m-%dT%H:%M:%SZ')})."
+                f"[{symbol} {timeframe}] 저장 가능한 closed candle 없음 "
+                f"(last_closed_open={last_closed_open.strftime('%Y-%m-%dT%H:%M:%SZ')})."
             )
             return None, "no_data"
 
         gaps = _detect_gaps_from_ms_timestamps(
-            timestamps_ms=df["timestamp"].tolist(), timeframe=TIMEFRAME
+            timestamps_ms=df["timestamp"].tolist(), timeframe=timeframe
         )
         if gaps:
             total_missing = sum(gap.missing_count for gap in gaps)
             first_gap = gaps[0]
             logger.warning(
-                f"[{symbol}] Gap 감지: windows={len(gaps)}, missing={total_missing}, "
+                f"[{symbol} {timeframe}] Gap 감지: windows={len(gaps)}, missing={total_missing}, "
                 f"first={first_gap.start_open.strftime('%Y-%m-%dT%H:%M:%SZ')}~"
                 f"{first_gap.end_open.strftime('%Y-%m-%dT%H:%M:%SZ')}"
             )
             df, refill_pages = _refill_detected_gaps(
                 exchange=exchange,
                 symbol=symbol,
-                timeframe=TIMEFRAME,
+                timeframe=timeframe,
                 source_df=df,
                 gaps=gaps,
                 last_closed_ms=last_closed_ms,
             )
             if refill_pages > 0:
-                logger.info(f"[{symbol}] Gap refill 시도 완료 (pages={refill_pages})")
+                logger.info(
+                    f"[{symbol} {timeframe}] Gap refill 시도 완료 (pages={refill_pages})"
+                )
 
             remaining_gaps = _detect_gaps_from_ms_timestamps(
                 timestamps_ms=df["timestamp"].tolist(),
-                timeframe=TIMEFRAME,
+                timeframe=timeframe,
             )
             if remaining_gaps:
                 remaining_missing = sum(gap.missing_count for gap in remaining_gaps)
                 logger.warning(
-                    f"[{symbol}] Gap 잔존: windows={len(remaining_gaps)}, missing={remaining_missing}"
+                    f"[{symbol} {timeframe}] Gap 잔존: windows={len(remaining_gaps)}, missing={remaining_missing}"
                 )
             else:
-                logger.info(f"[{symbol}] Gap refill 완료.")
+                logger.info(f"[{symbol} {timeframe}] Gap refill 완료.")
 
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms").dt.tz_localize(
             "UTC"
@@ -310,6 +341,7 @@ def fetch_and_save(write_api, symbol, since_ts) -> tuple[datetime | None, str]:
 
         # 태그 추가
         df["symbol"] = symbol
+        df["timeframe"] = timeframe
 
         # 저장
         write_api.write(
@@ -317,10 +349,10 @@ def fetch_and_save(write_api, symbol, since_ts) -> tuple[datetime | None, str]:
             org=INFLUXDB_ORG,
             record=df,
             data_frame_measurement_name="ohlcv",
-            data_frame_tag_columns=["symbol"],
+            data_frame_tag_columns=["symbol", "timeframe"],
         )
         logger.info(
-            f"[{symbol}] {len(df)}개 봉 저장 완료 (pages={page_count}, Last={df.index[-1]})"
+            f"[{symbol} {timeframe}] {len(df)}개 봉 저장 완료 (pages={page_count}, Last={df.index[-1]})"
         )
         latest_saved_at = df.index[-1].to_pydatetime().astimezone(timezone.utc)
 
@@ -328,7 +360,7 @@ def fetch_and_save(write_api, symbol, since_ts) -> tuple[datetime | None, str]:
         return latest_saved_at, "saved"
 
     except Exception as e:
-        logger.error(f"[{symbol}] 수집 실패: {e}")
+        logger.error(f"[{symbol} {timeframe}] 수집 실패: {e}")
         return None, "failed"
 
 
@@ -420,13 +452,27 @@ def _refill_detected_gaps(
     return merged, refill_pages
 
 
-def run_prediction_and_save(write_api, symbol) -> tuple[bool, str | None]:
+def run_prediction_and_save(write_api, symbol, timeframe) -> tuple[str, str | None]:
     """모델 로드 -> 예측 -> 저장"""
-    # 모델 로드
-    model_file = MODELS_DIR / f"model_{symbol.replace('/', '_')}.json"
-    if not model_file.exists():
-        logger.warning(f"[{symbol}] 모델 없음")
-        return False, "model_missing"
+    if not prediction_enabled_for_timeframe(timeframe):
+        logger.info(
+            f"[{symbol} {timeframe}] prediction disabled by policy. "
+            "Skipping prediction artifact generation."
+        )
+        return "skipped", None
+
+    safe_symbol = symbol.replace("/", "_")
+    model_candidates = [
+        MODELS_DIR / f"model_{safe_symbol}_{timeframe}.json",
+        MODELS_DIR / f"model_{safe_symbol}.json",
+    ]
+    model_file = next(
+        (candidate for candidate in model_candidates if candidate.exists()),
+        None,
+    )
+    if model_file is None:
+        logger.warning(f"[{symbol} {timeframe}] 모델 없음")
+        return "failed", "model_missing"
 
     try:
         with open(model_file, "r") as fin:
@@ -435,8 +481,8 @@ def run_prediction_and_save(write_api, symbol) -> tuple[bool, str | None]:
         # 예측 시작 시점을 "다음 캔들 경계"로 정렬한다.
         # 예: 10:37 + 1h -> 11:00 시작
         now = datetime.now(timezone.utc)
-        prediction_start = next_timeframe_boundary(now, TIMEFRAME)
-        prediction_freq = timeframe_to_pandas_freq(TIMEFRAME)
+        prediction_start = next_timeframe_boundary(now, timeframe)
+        prediction_freq = timeframe_to_pandas_freq(timeframe)
         future = pd.DataFrame(
             {
                 "ds": pd.date_range(
@@ -454,8 +500,8 @@ def run_prediction_and_save(write_api, symbol) -> tuple[bool, str | None]:
         next_forecast = forecast.head(24).copy()
 
         if next_forecast.empty:
-            logger.warning(f"[{symbol}] 예측 범위 생성 실패.")
-            return False, "empty_forecast"
+            logger.warning(f"[{symbol} {timeframe}] 예측 범위 생성 실패.")
+            return "failed", "empty_forecast"
 
         # 저장 (SSG)
         export_data = next_forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]]
@@ -475,22 +521,22 @@ def run_prediction_and_save(write_api, symbol) -> tuple[bool, str | None]:
 
         json_output = {
             "symbol": symbol,
-            "timeframe": TIMEFRAME,
+            "timeframe": timeframe,
             "updated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),  # 생성 시점 기록
             "forecast": export_data.to_dict(orient="records"),
         }
 
         # 파일 저장 (전환 기간: canonical + legacy 동시 유지)
         canonical_path, legacy_path = _static_export_paths(
-            "prediction", symbol, TIMEFRAME
+            "prediction", symbol, timeframe
         )
         atomic_write_json(canonical_path, json_output, indent=2)
         if legacy_path is not None:
             atomic_write_json(legacy_path, json_output, indent=2)
 
         logger.info(
-            f"[{symbol}] SSG 파일 생성 완료: canonical={canonical_path}, legacy={legacy_path} "
-            f"(start={prediction_start.strftime('%Y-%m-%dT%H:%M:%SZ')}, freq={TIMEFRAME})"
+            f"[{symbol} {timeframe}] SSG 파일 생성 완료: canonical={canonical_path}, legacy={legacy_path} "
+            f"(start={prediction_start.strftime('%Y-%m-%dT%H:%M:%SZ')}, freq={timeframe})"
         )
 
         # 저장(DB)
@@ -503,29 +549,31 @@ def run_prediction_and_save(write_api, symbol) -> tuple[bool, str | None]:
             "timestamp", inplace=True
         )  # InfluxDB는 index가 timestamp
         next_forecast["symbol"] = symbol
+        next_forecast["timeframe"] = timeframe
 
         write_api.write(
             bucket=INFLUXDB_BUCKET,
             org=INFLUXDB_ORG,
             record=next_forecast,
             data_frame_measurement_name="prediction",
-            data_frame_tag_columns=["symbol"],
+            data_frame_tag_columns=["symbol", "timeframe"],
         )
-        logger.info(f"[{symbol}] {len(next_forecast)}개 예측 저장 완료")
-        return True, None
+        logger.info(f"[{symbol} {timeframe}] {len(next_forecast)}개 예측 저장 완료")
+        return "ok", None
 
     except Exception as e:
-        logger.error(f"[{symbol}] 예측 에러: {e}")
-        return False, f"prediction_error: {e}"
+        logger.error(f"[{symbol} {timeframe}] 예측 에러: {e}")
+        return "failed", f"prediction_error: {e}"
 
 
-def update_full_history_file(query_api, symbol):
+def update_full_history_file(query_api, symbol, timeframe):
     """DB에서 최근 30일치 데이터를 긁어와서 history json 파일 갱신"""
     query = f"""
     from(bucket: "{INFLUXDB_BUCKET}")
       |> range(start: -30d)
       |> filter(fn: (r) => r["_measurement"] == "ohlcv")
       |> filter(fn: (r) => r["symbol"] == "{symbol}")
+      |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
       |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
       |> sort(columns: ["_time"], desc: false)
     """
@@ -534,14 +582,14 @@ def update_full_history_file(query_api, symbol):
         if not df.empty:
             df.rename(columns={"_time": "timestamp"}, inplace=True)  # UTC Aware
             df.set_index("timestamp", inplace=True)
-            save_history_to_json(df, symbol)
+            save_history_to_json(df, symbol, timeframe)
     except Exception as e:
-        logger.error(f"[{symbol}] History 갱신 중 에러: {e}")
+        logger.error(f"[{symbol} {timeframe}] History 갱신 중 에러: {e}")
 
 
 def run_worker():
     logger.info(
-        f"[Pipeline Worker] Started. Target: {TARGET_COINS}, Timeframe: {TIMEFRAME}"
+        f"[Pipeline Worker] Started. Target: {TARGET_COINS}, Timeframes: {TIMEFRAMES}"
     )
 
     client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
@@ -559,79 +607,87 @@ def run_worker():
             )
 
             for symbol in TARGET_COINS:
-                state_since = ingest_state_store.get_last_closed(symbol, TIMEFRAME)
-                if state_since:
-                    since = state_since
-                else:
-                    # DB에서 마지막 데이터 시간 확인
-                    last_time = get_last_timestamp(query_api, symbol)
-
-                    # 시작 시간 결정 (Since)
-                    if last_time:
-                        # 마지막 데이터가 있으면, 그 시간부터 다시 가져옴 (덮어쓰기 업데이트)
-                        since = last_time
+                for timeframe in TIMEFRAMES:
+                    state_since = ingest_state_store.get_last_closed(symbol, timeframe)
+                    if state_since:
+                        since = state_since
                     else:
-                        # 데이터가 아예 없으면 30일 전부터
-                        since = datetime.now(timezone.utc) - timedelta(
-                            days=LOOKBACK_DAYS
+                        # DB에서 마지막 데이터 시간 확인
+                        last_time = get_last_timestamp(query_api, symbol, timeframe)
+
+                        # 시작 시간 결정 (Since)
+                        if last_time:
+                            # 마지막 데이터가 있으면, 그 시간부터 다시 가져옴 (덮어쓰기 업데이트)
+                            since = last_time
+                        else:
+                            # 데이터가 아예 없으면 30일 전부터
+                            since = datetime.now(timezone.utc) - timedelta(
+                                days=LOOKBACK_DAYS
+                            )
+                            logger.info(
+                                f"[{symbol} {timeframe}] 초기 데이터 수집 시작 (30일 전부터)"
+                            )
+
+                    # 수집
+                    latest_saved_at, ingest_result = fetch_and_save(
+                        write_api, symbol, since, timeframe
+                    )
+                    if ingest_result == "saved":
+                        ingest_state_store.upsert(
+                            symbol,
+                            timeframe,
+                            last_closed_ts=latest_saved_at,
+                            status="ok",
                         )
-                        logger.info(f"[{symbol}] 초기 데이터 수집 시작 (30일 전부터)")
+                    elif ingest_result == "failed":
+                        ingest_state_store.upsert(
+                            symbol,
+                            timeframe,
+                            last_closed_ts=state_since,
+                            status="failed",
+                        )
 
-                # 수집
-                latest_saved_at, ingest_result = fetch_and_save(
-                    write_api, symbol, since
-                )
-                if ingest_result == "saved":
-                    ingest_state_store.upsert(
+                    # History 파일 갱신
+                    update_full_history_file(query_api, symbol, timeframe)
+
+                    # 예측
+                    prediction_result, prediction_error = run_prediction_and_save(
+                        write_api, symbol, timeframe
+                    )
+                    if prediction_result == "skipped":
+                        continue
+
+                    prediction_ok = prediction_result == "ok"
+                    health, was_degraded, is_degraded = upsert_prediction_health(
                         symbol,
-                        TIMEFRAME,
-                        last_closed_ts=latest_saved_at,
-                        status="ok",
+                        timeframe,
+                        prediction_ok=prediction_ok,
+                        error=prediction_error,
                     )
-                elif ingest_result == "failed":
-                    ingest_state_store.upsert(
-                        symbol,
-                        TIMEFRAME,
-                        last_closed_ts=state_since,
-                        status="failed",
-                    )
-
-                # History 파일 갱신
-                update_full_history_file(query_api, symbol)
-
-                # 예측
-                prediction_ok, prediction_error = run_prediction_and_save(
-                    write_api, symbol
-                )
-                health, was_degraded, is_degraded = upsert_prediction_health(
-                    symbol,
-                    TIMEFRAME,
-                    prediction_ok=prediction_ok,
-                    error=prediction_error,
-                )
-                if is_degraded and not was_degraded:
-                    logger.warning(
-                        f"[{symbol}] prediction degraded: reason={health.get('last_error')}"
-                    )
-                    send_alert(
-                        "[Predict Degraded] "
-                        f"{symbol} {TIMEFRAME}\n"
-                        f"reason={health.get('last_error')}\n"
-                        f"last_success_at={health.get('last_success_at')}"
-                    )
-                elif prediction_ok and was_degraded:
-                    logger.info(f"[{symbol}] prediction recovered.")
-                    send_alert(
-                        "[Predict Recovery] "
-                        f"{symbol} {TIMEFRAME}\n"
-                        f"last_success_at={health.get('last_success_at')}"
-                    )
-                elif is_degraded:
-                    # degraded 유지 중에는 재알림 대신 누적 실패 횟수만 로그로 남긴다.
-                    logger.info(
-                        f"[{symbol}] prediction still degraded "
-                        f"(consecutive_failures={health.get('consecutive_failures')})"
-                    )
+                    if is_degraded and not was_degraded:
+                        logger.warning(
+                            f"[{symbol} {timeframe}] prediction degraded: "
+                            f"reason={health.get('last_error')}"
+                        )
+                        send_alert(
+                            "[Predict Degraded] "
+                            f"{symbol} {timeframe}\n"
+                            f"reason={health.get('last_error')}\n"
+                            f"last_success_at={health.get('last_success_at')}"
+                        )
+                    elif prediction_ok and was_degraded:
+                        logger.info(f"[{symbol} {timeframe}] prediction recovered.")
+                        send_alert(
+                            "[Predict Recovery] "
+                            f"{symbol} {timeframe}\n"
+                            f"last_success_at={health.get('last_success_at')}"
+                        )
+                    elif is_degraded:
+                        # degraded 유지 중에는 재알림 대신 누적 실패 횟수만 로그로 남긴다.
+                        logger.info(
+                            f"[{symbol} {timeframe}] prediction still degraded "
+                            f"(consecutive_failures={health.get('consecutive_failures')})"
+                        )
 
             # Cycle Overrun 감지 및 주기 보정
             elapsed = time.time() - start_time
