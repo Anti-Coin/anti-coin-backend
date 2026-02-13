@@ -5,9 +5,9 @@
 
 ## 1. Snapshot
 1. Phase A(Reliability Baseline)는 2026-02-12에 완료했다.
-2. 현재 우선 작업은 `B-001`(timeframe 정책 잠금), `B-002`(파일 네이밍), `B-003`(timeframe-aware export)다.
-3. `B-006`(저장소 예산 가드 + retention/downsample)은 B 선행 트랙으로 추가됐다.
-4. `C-005`, `C-006`는 `B-003` 검증 증거 확보 전까지 gated 상태다.
+2. 현재 우선 작업은 `B-001`(timeframe 정책 잠금), `C-002`(운영 메트릭 수집), `C-006`(경계 기반 scheduler)다.
+3. `B-006`(저장소 예산 가드 + retention/downsample)은 완료되었다.
+4. `1d/1w/1M`은 `1h` downsample 파생 경로로 고정되며 direct ingest는 정책상 금지다.
 5. `B-005`(endpoint sunset)는 P2 트랙으로 유지한다.
 6. 운영 현실은 Oracle Free Tier ARM + 단일 운영자다.
 
@@ -33,11 +33,15 @@
 8. `D-2026-02-12-28`: `R-004` kickoff 계약(`B-002 -> B-003` + 검증/롤백 경계) 고정
 9. `D-2026-02-13-29`: `1m` 비대칭 정책 + 저장소 가드 + `B-001` 선행 잠금 기준 채택
 10. `D-2026-02-13-30`: 서빙 정책은 Hard Gate + Accuracy Signal 2층 구조 채택
+11. `D-2026-02-13-31`: evaluation window/min sample/reconciliation 기준 잠금
+12. `D-2026-02-13-33`: cycle cadence는 `boundary + detection gate` 하이브리드
+13. `D-2026-02-13-34`: mismatch taxonomy 분리 + derived TF direct ingest 금지 경계 확정
 
 ## 5. Current Risk Focus
-1. `TD-027`: `1m` 예측/서빙 경계 불명확으로 인한 오버런/계약 혼선 리스크
-2. `TD-028`: Free Tier 50GB 제약에서 `1m` 장기 보관 시 디스크 고갈 리스크
-3. `TD-029`: downsample lineage/검증 기준 미정으로 인한 정합성 리스크
+1. `TD-018`: API-SSG 운영 계약(필드/경로) 최종 확정 미완료
+2. `TD-019`: ingest/predict/export 단일 worker 결합으로 장애 전파 리스크
+3. `TD-020`: 고정 poll loop 기반 스케줄링으로 비용/정합성 리스크
+4. `TD-027`: `1m` hybrid API 경계 미준수 시 오버런/계약 혼선 리스크
 
 ## 6. Deep References
 1. 현재 운영 결정: `docs/DECISIONS.md`

@@ -12,9 +12,15 @@ def test_ingest_state_persists_cursor_per_symbol_and_timeframe(tmp_path):
     state_path = tmp_path / "ingest_state.json"
     store = IngestStateStore(state_path)
 
-    store.upsert("BTC/USDT", "1h", last_closed_ts=_utc(2026, 2, 12, 10), status="ok")
-    store.upsert("BTC/USDT", "4h", last_closed_ts=_utc(2026, 2, 12, 8), status="ok")
-    store.upsert("ETH/USDT", "1h", last_closed_ts=_utc(2026, 2, 12, 9), status="ok")
+    store.upsert(
+        "BTC/USDT", "1h", last_closed_ts=_utc(2026, 2, 12, 10), status="ok"
+    )
+    store.upsert(
+        "BTC/USDT", "4h", last_closed_ts=_utc(2026, 2, 12, 8), status="ok"
+    )
+    store.upsert(
+        "ETH/USDT", "1h", last_closed_ts=_utc(2026, 2, 12, 9), status="ok"
+    )
 
     reloaded = IngestStateStore(state_path)
     assert reloaded.get_last_closed("BTC/USDT", "1h") == _utc(2026, 2, 12, 10)
@@ -25,7 +31,9 @@ def test_ingest_state_persists_cursor_per_symbol_and_timeframe(tmp_path):
 def test_ingest_state_keeps_previous_cursor_when_last_closed_is_none(tmp_path):
     state_path = tmp_path / "ingest_state.json"
     store = IngestStateStore(state_path)
-    store.upsert("BTC/USDT", "1h", last_closed_ts=_utc(2026, 2, 12, 10), status="ok")
+    store.upsert(
+        "BTC/USDT", "1h", last_closed_ts=_utc(2026, 2, 12, 10), status="ok"
+    )
     store.upsert("BTC/USDT", "1h", last_closed_ts=None, status="failed")
 
     reloaded = IngestStateStore(state_path)
@@ -42,7 +50,12 @@ def test_ingest_state_recovers_from_corrupted_file(tmp_path):
     store = IngestStateStore(state_path)
     assert store.get_last_closed("BTC/USDT", "1h") is None
 
-    store.upsert("BTC/USDT", "1h", last_closed_ts=_utc(2026, 2, 12, 10), status="ok")
+    store.upsert(
+        "BTC/USDT", "1h", last_closed_ts=_utc(2026, 2, 12, 10), status="ok"
+    )
 
     payload = json.loads(state_path.read_text())
-    assert payload["entries"]["BTC/USDT|1h"]["last_closed_ts"] == "2026-02-12T10:00:00Z"
+    assert (
+        payload["entries"]["BTC/USDT|1h"]["last_closed_ts"]
+        == "2026-02-12T10:00:00Z"
+    )

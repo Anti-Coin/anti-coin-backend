@@ -1,9 +1,9 @@
 # Coin Predict Timeframe Policy Matrix (B-001)
 
 - Last Updated: 2026-02-13
-- Status: Draft v2 (Open Questions Locked, Implementation Pending)
+- Status: Draft v3 (Semantics Clarified)
 - Owners: Backend/Platform
-- Source Decisions: `D-2026-02-13-29`, `D-2026-02-13-30`
+- Source Decisions: `D-2026-02-13-29`, `D-2026-02-13-30`, `D-2026-02-13-31`, `D-2026-02-13-34`
 
 ## 1. Purpose
 1. Phase B에서 timeframe별 수집/보존/서빙/예측 경계를 명확히 고정한다.
@@ -22,9 +22,15 @@
 |---|---|---|---|---|---|
 | `1m` | Exchange closed candles | `14d` default, `30d` cap | SSG + Hybrid API(latest window only) | Disabled(default) | 고빈도 특성상 지연/비용 리스크 우선 차단 |
 | `1h` | Exchange closed candles (canonical base) | `365d` default, `730d` cap | SSG primary | Enabled | `1d/1w/1M` downsample의 기준 소스 |
-| `1d` | Derived from `1h` downsample | Derived retention | SSG primary | Enabled(샘플 gate 통과 시) | 원본 거래소 대사 가능한 형태 유지 |
-| `1w` | Derived from `1h` downsample | Derived retention | SSG primary | Enabled(샘플 gate 통과 시) | 샘플 수 부족 구간 주의 |
-| `1M` | Derived from `1h` downsample | Derived retention | SSG primary | Enabled(샘플 gate 통과 시) | 최소 샘플 미달 시 `insufficient_data` |
+| `1d` | Derived from `1h` downsample | Derived retention | SSG primary | Enabled(샘플 gate 통과 시) | direct exchange ingest 금지(파생 전용) |
+| `1w` | Derived from `1h` downsample | Derived retention | SSG primary | Enabled(샘플 gate 통과 시) | direct exchange ingest 금지(파생 전용) |
+| `1M` | Derived from `1h` downsample | Derived retention | SSG primary | Enabled(샘플 gate 통과 시) | direct exchange ingest 금지(파생 전용) |
+
+## 3.1 Ingest Routing Guard
+1. Exchange fetch는 base timeframe(`1m`, `1h`)에만 허용한다.
+2. `1d/1w/1M`은 `1h` downsample materialization으로만 생성한다(직접 수집 금지).
+3. 현재 worker의 공용 fetch 함수는 base timeframe 재사용 경로이며, 파생 timeframe 경로는 정책상 호출하지 않는다.
+4. 파생 timeframe direct ingest 정리/하드 가드는 `C-005` 구현 범위에서 확정한다.
 
 ## 4. 1m Hybrid API Boundary
 1. `1m` Hybrid API는 `latest closed 180 candles`만 제공한다(약 3시간).
@@ -128,11 +134,11 @@
 1. Reconciliation은 동일 거래소/동일 심볼 기준으로 수행한다.
 2. 내부 downsample 무결성 검증(필수):
 1. deterministic OHLCV 규칙 검증은 `0 tolerance`다.
-2. mismatch 발생 시 즉시 `critical`.
+2. `internal_deterministic_mismatch` 발생 시 즉시 `critical`.
 3. 외부 대사(동일 소스) 운영 주기:
 1. `daily quick`: 최근 24h bucket 비교.
 2. `weekly deep`: 최근 90d bucket 비교.
 4. 경보 규칙:
 1. `incomplete_bucket` 또는 missing bucket 발생 시 즉시 `critical`.
-2. 동일 bucket mismatch가 연속 3회 반복되면 `critical`.
-3. 단발 mismatch는 `warning`으로 기록하고 추적한다.
+2. 단발 `external_reconciliation_mismatch`는 `warning`으로 기록하고 추적한다.
+3. 동일 bucket `external_reconciliation_mismatch`가 연속 3회 반복되면 `critical`.

@@ -76,7 +76,9 @@ def evaluate_symbol_timeframe(
     )
 
 
-def detect_alert_event(previous_status: str | None, current_status: str) -> str | None:
+def detect_alert_event(
+    previous_status: str | None, current_status: str
+) -> str | None:
     """
     fresh, stale -> hard_stale, corrupt, missing => alert
     hard_stale, corrupt, missing -> fresh, stale => recovery
@@ -121,7 +123,9 @@ def update_status_cycle_counter(
     return cycles
 
 
-def detect_realert_event(current_status: str, cycles_in_status: int) -> str | None:
+def detect_realert_event(
+    current_status: str, cycles_in_status: int
+) -> str | None:
     """
     상태가 바뀌지 않고 오래 지속될 때 주기적으로 재알림한다.
 
@@ -180,7 +184,9 @@ def get_latest_ohlcv_timestamp(query_api, symbol: str) -> datetime | None:
                     latest_ts = ts
         return latest_ts
     except Exception as e:
-        logger.error(f"[Monitor] Influx latest ohlcv query failed for {symbol}: {e}")
+        logger.error(
+            f"[Monitor] Influx latest ohlcv query failed for {symbol}: {e}"
+        )
 
     return None
 
@@ -255,7 +261,9 @@ def run_monitor_cycle(
     resolved_now = now or datetime.now(timezone.utc)
     resolved_symbols = symbols or TARGET_SYMBOLS
     resolved_timeframes = timeframes or INGEST_TIMEFRAMES
-    resolved_status_counters = status_counters if status_counters is not None else {}
+    resolved_status_counters = (
+        status_counters if status_counters is not None else {}
+    )
     events: list[MonitorAlertEvent] = []
 
     for symbol in resolved_symbols:
@@ -271,7 +279,9 @@ def run_monitor_cycle(
                 soft_thresholds=soft_thresholds,
                 hard_thresholds=hard_thresholds,
             )
-            snapshot = apply_influx_json_consistency(base_snapshot, latest_ohlcv_ts)
+            snapshot = apply_influx_json_consistency(
+                base_snapshot, latest_ohlcv_ts
+            )
             # JSON 단독 판정과 최종 판정이 달라졌다면, 운영자 추적을 위해 명시 로그를 남긴다.
             if snapshot.status != base_snapshot.status:
                 logger.warning(
@@ -330,7 +340,9 @@ def send_discord_alert(event: MonitorAlertEvent) -> None:
         return
 
     try:
-        payload = {"content": f"**Coin Predict Monitor Alert**\n```{message}```"}
+        payload = {
+            "content": f"**Coin Predict Monitor Alert**\n```{message}```"
+        }
         response = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=5)
         response.raise_for_status()
     except Exception as e:
@@ -352,7 +364,9 @@ def run_monitor() -> None:
             query_api = influx_client.query_api()
             logger.info("[Status Monitor] Influx consistency check enabled.")
         except Exception as e:
-            logger.error(f"[Status Monitor] Failed to initialize Influx client: {e}")
+            logger.error(
+                f"[Status Monitor] Failed to initialize Influx client: {e}"
+            )
 
     state: dict[str, MonitorSnapshot] = {}
     status_counters: dict[str, dict[str, str | int]] = {}

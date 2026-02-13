@@ -185,6 +185,26 @@
   - `overrun_rate`가 7일 기준 1%를 초과하거나, `missed_boundary`가 관측될 때
   - 거래소 지연/스키마 변경으로 gate 오탐이 반복될 때
 
+### D-2026-02-13-34
+- Date: 2026-02-13
+- Status: Accepted
+- Topic: Reconciliation Mismatch Semantics + Derived Timeframe Ingest Guard
+- Context:
+  - `TIMEFRAME_POLICY_MATRIX`에 `mismatch 즉시 critical`과 `3회 연속 critical` 문구가 공존해 내부/외부 불일치 규칙이 혼동될 여지가 있었다.
+  - 구현 코드에는 공용 fetch 경로가 남아 있어, `1d/1w/1M`이 정책상 파생 전용인지 운영자가 문서만 보고 즉시 판단하기 어려웠다.
+- Decision:
+  - `mismatch` 용어를 아래 2개로 분리 고정한다.
+    - `internal_deterministic_mismatch`: 내부 downsample 규칙 불일치. 단 1회 발생도 즉시 `critical`.
+    - `external_reconciliation_mismatch`: 외부 대사 불일치. 단발은 `warning`, 동일 bucket 3회 연속 시 `critical`.
+  - `1d/1w/1M`은 `1h` downsample materialization 전용으로 고정하며, direct exchange ingest는 정책상 금지한다.
+  - worker 내 공용 fetch 함수는 base timeframe(`1m`, `1h`) 재사용 경로로 한정하며, 파생 timeframe direct ingest 하드 가드/정리는 `C-005` 범위에서 확정한다.
+- Consequence:
+  - 데이터 신뢰도 요구를 유지하면서도 외부 대사 단발 노이즈로 인한 과잉 `critical`를 줄일 수 있다.
+  - 내부 무결성 오류와 외부 소스 차이를 구분해 운영 판단/사후 분석이 명확해진다.
+- Revisit Trigger:
+  - 외부 대사 warning이 운영 허용치를 초과하거나, 단발 mismatch가 실질 장애를 반복 유발할 때
+  - 파생 timeframe direct ingest 우회가 운영 중 필요해지는 긴급 사건이 발생할 때
+
 ## 3. Decision Operation Policy
 1. Archive로 이동된 결정은 `Section 1`에 요약 형태로만 유지한다.
 2. 아직 archive로 이동하지 않은 결정은 `Section 2`에 상세 형태로 유지한다.

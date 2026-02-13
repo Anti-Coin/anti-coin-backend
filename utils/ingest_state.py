@@ -72,7 +72,11 @@ class IngestStateStore:
         updated_at = parse_utc_timestamp(raw.get("updated_at")) or datetime.now(
             timezone.utc
         )
-        status = raw.get("status") if isinstance(raw.get("status"), str) else "unknown"
+        status = (
+            raw.get("status")
+            if isinstance(raw.get("status"), str)
+            else "unknown"
+        )
         return IngestStateEntry(
             symbol=raw.get("symbol", symbol),
             timeframe=raw.get("timeframe", timeframe),

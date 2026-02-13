@@ -5,6 +5,7 @@ from influxdb_client.client.write_api import SYNCHRONOUS
 from prophet.serialize import model_from_json
 import json
 import os
+import shutil
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -44,12 +45,23 @@ LOOKBACK_DAYS = 30  # 과거 30일치 데이터 유지
 INGEST_STATE_FILE = STATIC_DIR / "ingest_state.json"
 PREDICTION_HEALTH_FILE = STATIC_DIR / "prediction_health.json"
 MANIFEST_FILE = STATIC_DIR / "manifest.json"
+DOWNSAMPLE_LINEAGE_FILE = STATIC_DIR / "downsample_lineage.json"
 PREDICTION_DISABLED_TIMEFRAMES = {
     value.strip()
     for value in os.getenv("PREDICTION_DISABLED_TIMEFRAMES", "1m").split(",")
     if value.strip()
 }
 SERVE_ALLOWED_STATUSES = {"fresh", "stale"}
+RETENTION_1M_DEFAULT_DAYS = 14
+RETENTION_1M_MAX_DAYS = 30
+DISK_WATERMARK_WARN_PERCENT = 70
+DISK_WATERMARK_CRITICAL_PERCENT = 85
+DISK_WATERMARK_BLOCK_PERCENT = 90
+DISK_USAGE_PATH = Path(os.getenv("DISK_USAGE_PATH", "/"))
+RETENTION_ENFORCE_INTERVAL_SECONDS = 60 * 60
+DOWNSAMPLE_TARGET_TIMEFRAMES = {"1d", "1w", "1M"}
+DOWNSAMPLE_SOURCE_TIMEFRAME = "1h"
+DOWNSAMPLE_SOURCE_LOOKBACK_DAYS = 120
 
 
 def send_alert(message):
@@ -187,6 +199,361 @@ def upsert_prediction_health(
     return entry, previous_degraded, bool(entry["degraded"])
 
 
+def _lookback_days_for_timeframe(timeframe: str) -> int:
+    """
+    timeframe별 기본 조회/초기 백필 범위를 반환한다.
+    - 1m: retention 기본값(14d)
+    - 기타: 기존 LOOKBACK_DAYS(30d)
+    """
+    if timeframe == "1m":
+        return RETENTION_1M_DEFAULT_DAYS
+    return LOOKBACK_DAYS
+
+
+def get_disk_usage_percent(path: Path = DISK_USAGE_PATH) -> float:
+    usage = shutil.disk_usage(path)
+    if usage.total <= 0:
+        return 0.0
+    return round((usage.used / usage.total) * 100, 2)
+
+
+def resolve_disk_watermark_level(
+    usage_percent: float,
+    *,
+    warn_percent: int = DISK_WATERMARK_WARN_PERCENT,
+    critical_percent: int = DISK_WATERMARK_CRITICAL_PERCENT,
+    block_percent: int = DISK_WATERMARK_BLOCK_PERCENT,
+) -> str:
+    if usage_percent >= block_percent:
+        return "block"
+    if usage_percent >= critical_percent:
+        return "critical"
+    if usage_percent >= warn_percent:
+        return "warn"
+    return "normal"
+
+
+def should_enforce_1m_retention(
+    last_enforced_at: datetime | None,
+    now: datetime,
+    *,
+    interval_seconds: int = RETENTION_ENFORCE_INTERVAL_SECONDS,
+) -> bool:
+    if last_enforced_at is None:
+        return True
+    return (now - last_enforced_at).total_seconds() >= interval_seconds
+
+
+def should_block_initial_backfill(
+    *,
+    disk_level: str,
+    timeframe: str,
+    state_since: datetime | None,
+    last_time: datetime | None,
+) -> bool:
+    return (
+        disk_level == "block"
+        and timeframe == "1m"
+        and state_since is None
+        and last_time is None
+    )
+
+
+def enforce_1m_retention(
+    delete_api,
+    symbols: list[str],
+    *,
+    now: datetime | None = None,
+    retention_days: int = RETENTION_1M_DEFAULT_DAYS,
+) -> None:
+    """
+    1m 원본 데이터의 보존 범위를 강제한다.
+    - 정책 범위 밖 값은 [14, 30]으로 clamp.
+    - measurement=ohlcv, timeframe=1m만 대상으로 삭제한다.
+    """
+    resolved_now = now or datetime.now(timezone.utc)
+    effective_days = max(
+        RETENTION_1M_DEFAULT_DAYS,
+        min(retention_days, RETENTION_1M_MAX_DAYS),
+    )
+    cutoff = (resolved_now - timedelta(days=effective_days)).replace(microsecond=0)
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    for symbol in symbols:
+        predicate = (
+            f'_measurement="ohlcv" AND symbol="{symbol}" AND timeframe="1m"'
+        )
+        delete_api.delete(
+            start=epoch,
+            stop=cutoff,
+            predicate=predicate,
+            bucket=INFLUXDB_BUCKET,
+            org=INFLUXDB_ORG,
+        )
+
+    logger.info(
+        f"[Retention] 1m retention enforced: days={effective_days}, "
+        f"cutoff={cutoff.strftime('%Y-%m-%dT%H:%M:%SZ')}, symbols={len(symbols)}"
+    )
+
+
+def _load_downsample_lineage(
+    path: Path | None = None,
+) -> dict[str, dict]:
+    resolved_path = path or DOWNSAMPLE_LINEAGE_FILE
+    if not resolved_path.exists():
+        return {}
+
+    try:
+        with open(resolved_path, "r") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.error(f"Failed to load downsample lineage file: {e}")
+        return {}
+
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        logger.error("Invalid downsample lineage format: entries is not a dict.")
+        return {}
+    return entries
+
+
+def _save_downsample_lineage(
+    entries: dict[str, dict],
+    path: Path | None = None,
+) -> None:
+    resolved_path = path or DOWNSAMPLE_LINEAGE_FILE
+    payload = {
+        "version": 1,
+        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "entries": entries,
+    }
+    atomic_write_json(resolved_path, payload, indent=2)
+
+
+def upsert_downsample_lineage(
+    *,
+    symbol: str,
+    target_timeframe: str,
+    source_timeframe: str,
+    source_rows: int,
+    total_buckets: int,
+    complete_buckets: int,
+    incomplete_buckets: int,
+    last_bucket_open: datetime | None,
+    status: str,
+    path: Path | None = None,
+) -> None:
+    entries = _load_downsample_lineage(path=path)
+    key = _prediction_health_key(symbol, target_timeframe)
+    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    entries[key] = {
+        "symbol": symbol,
+        "timeframe": target_timeframe,
+        "source_timeframe": source_timeframe,
+        "source_rows": source_rows,
+        "total_buckets": total_buckets,
+        "complete_buckets": complete_buckets,
+        "incomplete_buckets": incomplete_buckets,
+        "last_bucket_open": (
+            last_bucket_open.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if last_bucket_open is not None
+            else None
+        ),
+        "status": status,
+        "updated_at": now_utc,
+    }
+    _save_downsample_lineage(entries, path=path)
+
+
+def _query_ohlcv_frame(
+    query_api,
+    *,
+    symbol: str,
+    timeframe: str,
+    lookback_days: int,
+) -> pd.DataFrame:
+    query = f"""
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -{lookback_days}d)
+      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
+      |> filter(fn: (r) => r["symbol"] == "{symbol}")
+      |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
+      |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
+      |> sort(columns: ["_time"], desc: false)
+    """
+    result = query_api.query_data_frame(query)
+    if isinstance(result, list):
+        frames = [frame for frame in result if isinstance(frame, pd.DataFrame) and not frame.empty]
+        if not frames:
+            return pd.DataFrame()
+        df = pd.concat(frames, ignore_index=True)
+    else:
+        df = result
+
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame()
+
+    required = {"_time", "open", "high", "low", "close", "volume"}
+    if not required.issubset(df.columns):
+        missing = sorted(required - set(df.columns))
+        logger.error(
+            f"[{symbol} {timeframe}] Downsample source columns missing: {missing}"
+        )
+        return pd.DataFrame()
+
+    source = df[list(required)].copy()
+    source.rename(columns={"_time": "timestamp"}, inplace=True)
+    source["timestamp"] = pd.to_datetime(source["timestamp"], utc=True)
+    source.drop_duplicates(subset=["timestamp"], keep="last", inplace=True)
+    source.sort_values(by="timestamp", inplace=True)
+    source.set_index("timestamp", inplace=True)
+    return source[["open", "high", "low", "close", "volume"]]
+
+
+def _downsample_rule(timeframe: str) -> str:
+    if timeframe == "1d":
+        return "1D"
+    if timeframe == "1w":
+        return "1W-MON"
+    if timeframe == "1M":
+        return "1MS"
+    raise ValueError(f"Unsupported downsample target timeframe: {timeframe}")
+
+
+def _expected_source_count(bucket_open: datetime, target_timeframe: str) -> int:
+    next_boundary = next_timeframe_boundary(bucket_open, target_timeframe)
+    step_seconds = int((next_boundary - bucket_open).total_seconds())
+    if step_seconds <= 0:
+        return 0
+    return step_seconds // 3600
+
+
+def downsample_ohlcv_frame(
+    source_df: pd.DataFrame,
+    *,
+    target_timeframe: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if source_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    grouped = source_df.resample(
+        _downsample_rule(target_timeframe), label="left", closed="left"
+    )
+    aggregated = grouped.agg(
+        {
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+        }
+    )
+    counts = grouped["open"].count().rename("source_count")
+    aggregated = aggregated.join(counts)
+    aggregated.dropna(subset=["open", "high", "low", "close"], inplace=True)
+    if aggregated.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    expected = [
+        _expected_source_count(
+            bucket_open.to_pydatetime().astimezone(timezone.utc),
+            target_timeframe,
+        )
+        for bucket_open in aggregated.index
+    ]
+    aggregated["expected_count"] = expected
+    complete = aggregated[
+        aggregated["source_count"] == aggregated["expected_count"]
+    ].copy()
+    incomplete = aggregated[
+        aggregated["source_count"] != aggregated["expected_count"]
+    ].copy()
+
+    return (
+        complete[["open", "high", "low", "close", "volume"]],
+        incomplete[
+            ["open", "high", "low", "close", "volume", "source_count", "expected_count"]
+        ],
+    )
+
+
+def run_downsample_and_save(
+    write_api,
+    query_api,
+    *,
+    symbol: str,
+    target_timeframe: str,
+) -> tuple[datetime | None, str]:
+    if target_timeframe not in DOWNSAMPLE_TARGET_TIMEFRAMES:
+        return None, "unsupported"
+
+    source_df = _query_ohlcv_frame(
+        query_api,
+        symbol=symbol,
+        timeframe=DOWNSAMPLE_SOURCE_TIMEFRAME,
+        lookback_days=DOWNSAMPLE_SOURCE_LOOKBACK_DAYS,
+    )
+    if source_df.empty:
+        upsert_downsample_lineage(
+            symbol=symbol,
+            target_timeframe=target_timeframe,
+            source_timeframe=DOWNSAMPLE_SOURCE_TIMEFRAME,
+            source_rows=0,
+            total_buckets=0,
+            complete_buckets=0,
+            incomplete_buckets=0,
+            last_bucket_open=None,
+            status="no_source_data",
+        )
+        return None, "no_data"
+
+    complete_df, incomplete_df = downsample_ohlcv_frame(
+        source_df, target_timeframe=target_timeframe
+    )
+    last_bucket_open = (
+        complete_df.index[-1].to_pydatetime().astimezone(timezone.utc)
+        if not complete_df.empty
+        else None
+    )
+
+    upsert_downsample_lineage(
+        symbol=symbol,
+        target_timeframe=target_timeframe,
+        source_timeframe=DOWNSAMPLE_SOURCE_TIMEFRAME,
+        source_rows=len(source_df),
+        total_buckets=len(complete_df) + len(incomplete_df),
+        complete_buckets=len(complete_df),
+        incomplete_buckets=len(incomplete_df),
+        last_bucket_open=last_bucket_open,
+        status="ok" if not complete_df.empty else "incomplete_only",
+    )
+
+    if not incomplete_df.empty:
+        logger.warning(
+            f"[{symbol} {target_timeframe}] Downsample incomplete buckets: {len(incomplete_df)}"
+        )
+
+    if complete_df.empty:
+        return None, "no_data"
+
+    export_df = complete_df.copy()
+    export_df["symbol"] = symbol
+    export_df["timeframe"] = target_timeframe
+    write_api.write(
+        bucket=INFLUXDB_BUCKET,
+        org=INFLUXDB_ORG,
+        record=export_df,
+        data_frame_measurement_name="ohlcv",
+        data_frame_tag_columns=["symbol", "timeframe"],
+    )
+    logger.info(
+        f"[{symbol} {target_timeframe}] Downsample saved "
+        f"(source_rows={len(source_df)}, complete={len(complete_df)}, incomplete={len(incomplete_df)})"
+    )
+    return last_bucket_open, "saved"
+
+
 def _static_export_candidates(
     kind: str,
     symbol: str,
@@ -202,7 +569,9 @@ def _static_export_candidates(
     return candidates
 
 
-def _extract_updated_at_from_files(candidates: list[Path]) -> tuple[str | None, str | None]:
+def _extract_updated_at_from_files(
+    candidates: list[Path],
+) -> tuple[str | None, str | None]:
     for path in candidates:
         if not path.exists():
             continue
@@ -238,8 +607,12 @@ def build_runtime_manifest(
     resolved_now = now or datetime.now(timezone.utc)
     generated_at = resolved_now.strftime("%Y-%m-%dT%H:%M:%SZ")
     resolved_static_dir = static_dir or STATIC_DIR
-    resolved_prediction_health_path = prediction_health_path or PREDICTION_HEALTH_FILE
-    health_entries = _load_prediction_health(path=resolved_prediction_health_path)
+    resolved_prediction_health_path = (
+        prediction_health_path or PREDICTION_HEALTH_FILE
+    )
+    health_entries = _load_prediction_health(
+        path=resolved_prediction_health_path
+    )
 
     entries: list[dict] = []
     status_counts: dict[str, int] = {}
@@ -258,7 +631,9 @@ def build_runtime_manifest(
                 now=resolved_now,
                 static_dir=resolved_static_dir,
             )
-            health = health_entries.get(_prediction_health_key(symbol, timeframe), {})
+            health = health_entries.get(
+                _prediction_health_key(symbol, timeframe), {}
+            )
             degraded = bool(health.get("degraded", False))
             raw_failures = health.get("consecutive_failures", 0)
             try:
@@ -268,7 +643,9 @@ def build_runtime_manifest(
             if degraded:
                 degraded_count += 1
 
-            status_counts[snapshot.status] = status_counts.get(snapshot.status, 0) + 1
+            status_counts[snapshot.status] = (
+                status_counts.get(snapshot.status, 0) + 1
+            )
             entries.append(
                 {
                     "key": _prediction_health_key(symbol, timeframe),
@@ -340,9 +717,10 @@ def get_last_timestamp(query_api, symbol, timeframe):
     """
     InfluxDB에서 해당 코인/타임프레임의 가장 마지막 데이터 시간(Timestamp)을 조회
     """
+    lookback_days = _lookback_days_for_timeframe(timeframe)
     query = f"""
     from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -{LOOKBACK_DAYS}d)
+      |> range(start: -{lookback_days}d)
       |> filter(fn: (r) => r["_measurement"] == "ohlcv")
       |> filter(fn: (r) => r["symbol"] == "{symbol}")
       |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
@@ -350,7 +728,7 @@ def get_last_timestamp(query_api, symbol, timeframe):
     """
     legacy_query = f"""
     from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -{LOOKBACK_DAYS}d)
+      |> range(start: -{lookback_days}d)
       |> filter(fn: (r) => r["_measurement"] == "ohlcv")
       |> filter(fn: (r) => r["symbol"] == "{symbol}")
       |> last(column: "_time")
@@ -365,7 +743,9 @@ def get_last_timestamp(query_api, symbol, timeframe):
             # InfluxDB 시간은 UTC timezone이 포함됨.
             return last_time
     except Exception as e:
-        logger.error(f"[{symbol} {timeframe}] DB 조회 중 에러 (아마 데이터 없음): {e}")
+        logger.error(
+            f"[{symbol} {timeframe}] DB 조회 중 에러 (아마 데이터 없음): {e}"
+        )
 
     return None
 
@@ -385,12 +765,16 @@ def save_history_to_json(df, symbol, timeframe):
             "data": export_df[
                 ["timestamp", "open", "high", "low", "close", "volume"]
             ].to_dict(orient="records"),
-            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "updated_at": datetime.now(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            ),
             "timeframe": timeframe,
             "type": f"history_{timeframe}",
         }
 
-        canonical_path, legacy_path = _static_export_paths("history", symbol, timeframe)
+        canonical_path, legacy_path = _static_export_paths(
+            "history", symbol, timeframe
+        )
         atomic_write_json(canonical_path, json_output)
         if legacy_path is not None:
             atomic_write_json(legacy_path, json_output)
@@ -403,7 +787,9 @@ def save_history_to_json(df, symbol, timeframe):
         logger.error(f"[{symbol} {timeframe}] 정적 파일 생성 실패: {e}")
 
 
-def fetch_and_save(write_api, symbol, since_ts, timeframe) -> tuple[datetime | None, str]:
+def fetch_and_save(
+    write_api, symbol, since_ts, timeframe
+) -> tuple[datetime | None, str]:
     """
     ccxt로 데이터 가져와서 InfluxDB에 저장
     """
@@ -478,16 +864,18 @@ def fetch_and_save(write_api, symbol, since_ts, timeframe) -> tuple[datetime | N
                 timeframe=timeframe,
             )
             if remaining_gaps:
-                remaining_missing = sum(gap.missing_count for gap in remaining_gaps)
+                remaining_missing = sum(
+                    gap.missing_count for gap in remaining_gaps
+                )
                 logger.warning(
                     f"[{symbol} {timeframe}] Gap 잔존: windows={len(remaining_gaps)}, missing={remaining_missing}"
                 )
             else:
                 logger.info(f"[{symbol} {timeframe}] Gap refill 완료.")
 
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms").dt.tz_localize(
-            "UTC"
-        )
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"], unit="ms"
+        ).dt.tz_localize("UTC")
         df.set_index("timestamp", inplace=True)
 
         # 태그 추가
@@ -525,7 +913,9 @@ def _fetch_ohlcv_paginated(
     chunks: list[pd.DataFrame] = []
 
     while cursor <= until_ms:
-        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=cursor, limit=fetch_limit)
+        ohlcv = exchange.fetch_ohlcv(
+            symbol, timeframe, since=cursor, limit=fetch_limit
+        )
         if not ohlcv:
             break
 
@@ -570,7 +960,8 @@ def _fetch_ohlcv_paginated(
 
 def _detect_gaps_from_ms_timestamps(timestamps_ms: list[int], timeframe: str):
     candle_opens = [
-        datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc) for ts in timestamps_ms
+        datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc)
+        for ts in timestamps_ms
     ]
     return detect_timeframe_gaps(candle_opens, timeframe)
 
@@ -603,7 +994,9 @@ def _refill_detected_gaps(
     return merged, refill_pages
 
 
-def run_prediction_and_save(write_api, symbol, timeframe) -> tuple[str, str | None]:
+def run_prediction_and_save(
+    write_api, symbol, timeframe
+) -> tuple[str, str | None]:
     """모델 로드 -> 예측 -> 저장"""
     if not prediction_enabled_for_timeframe(timeframe):
         logger.info(
@@ -691,10 +1084,14 @@ def run_prediction_and_save(write_api, symbol, timeframe) -> tuple[str, str | No
         )
 
         # 저장(DB)
-        next_forecast["ds"] = pd.to_datetime(next_forecast["ds"]).dt.tz_localize(
+        next_forecast["ds"] = pd.to_datetime(
+            next_forecast["ds"]
+        ).dt.tz_localize(
             "UTC"
         )  # 불필요한 연산 같기는 한데,,, 방어용???
-        next_forecast = next_forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]]
+        next_forecast = next_forecast[
+            ["ds", "yhat", "yhat_lower", "yhat_upper"]
+        ]
         next_forecast.rename(columns={"ds": "timestamp"}, inplace=True)
         next_forecast.set_index(
             "timestamp", inplace=True
@@ -709,7 +1106,9 @@ def run_prediction_and_save(write_api, symbol, timeframe) -> tuple[str, str | No
             data_frame_measurement_name="prediction",
             data_frame_tag_columns=["symbol", "timeframe"],
         )
-        logger.info(f"[{symbol} {timeframe}] {len(next_forecast)}개 예측 저장 완료")
+        logger.info(
+            f"[{symbol} {timeframe}] {len(next_forecast)}개 예측 저장 완료"
+        )
         return "ok", None
 
     except Exception as e:
@@ -719,9 +1118,10 @@ def run_prediction_and_save(write_api, symbol, timeframe) -> tuple[str, str | No
 
 def update_full_history_file(query_api, symbol, timeframe):
     """DB에서 최근 30일치 데이터를 긁어와서 history json 파일 갱신"""
+    lookback_days = _lookback_days_for_timeframe(timeframe)
     query = f"""
     from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -30d)
+      |> range(start: -{lookback_days}d)
       |> filter(fn: (r) => r["_measurement"] == "ohlcv")
       |> filter(fn: (r) => r["symbol"] == "{symbol}")
       |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
@@ -743,10 +1143,15 @@ def run_worker():
         f"[Pipeline Worker] Started. Target: {TARGET_COINS}, Timeframes: {TIMEFRAMES}"
     )
 
-    client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
+    client = InfluxDBClient(
+        url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG
+    )
     write_api = client.write_api(write_options=SYNCHRONOUS)
     query_api = client.query_api()
+    delete_api = client.delete_api()
     ingest_state_store = IngestStateStore(INGEST_STATE_FILE)
+    previous_disk_level: str | None = None
+    last_retention_enforced_at: datetime | None = None
 
     send_alert("Worker Started.")
 
@@ -756,33 +1161,103 @@ def run_worker():
             logger.info(
                 f"\n[Cycle] 작업 시작: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
+            cycle_now = datetime.now(timezone.utc)
+            disk_level = "normal"
+            disk_usage_percent: float | None = None
+
+            try:
+                disk_usage_percent = get_disk_usage_percent()
+                disk_level = resolve_disk_watermark_level(disk_usage_percent)
+                if previous_disk_level != disk_level:
+                    msg = (
+                        "[Storage Guard] "
+                        f"usage={disk_usage_percent:.2f}% level={disk_level} "
+                        f"(warn={DISK_WATERMARK_WARN_PERCENT}%, "
+                        f"critical={DISK_WATERMARK_CRITICAL_PERCENT}%, "
+                        f"block={DISK_WATERMARK_BLOCK_PERCENT}%)"
+                    )
+                    if disk_level == "normal":
+                        logger.info(msg)
+                    else:
+                        logger.warning(msg)
+                        send_alert(msg)
+                previous_disk_level = disk_level
+            except OSError as e:
+                logger.error(f"[Storage Guard] disk usage check failed: {e}")
+
+            if "1m" in TIMEFRAMES and should_enforce_1m_retention(
+                last_retention_enforced_at, cycle_now
+            ):
+                try:
+                    enforce_1m_retention(
+                        delete_api,
+                        TARGET_COINS,
+                        now=cycle_now,
+                    )
+                    last_retention_enforced_at = cycle_now
+                except Exception as e:
+                    logger.error(f"[Retention] enforcement failed: {e}")
+                    send_alert(f"[Retention Error] {e}")
 
             for symbol in TARGET_COINS:
                 for timeframe in TIMEFRAMES:
-                    state_since = ingest_state_store.get_last_closed(symbol, timeframe)
+                    last_time = None
+                    state_since = ingest_state_store.get_last_closed(
+                        symbol, timeframe
+                    )
                     if state_since:
                         since = state_since
                     else:
                         # DB에서 마지막 데이터 시간 확인
-                        last_time = get_last_timestamp(query_api, symbol, timeframe)
+                        last_time = get_last_timestamp(
+                            query_api, symbol, timeframe
+                        )
 
                         # 시작 시간 결정 (Since)
                         if last_time:
                             # 마지막 데이터가 있으면, 그 시간부터 다시 가져옴 (덮어쓰기 업데이트)
                             since = last_time
                         else:
-                            # 데이터가 아예 없으면 30일 전부터
+                            if should_block_initial_backfill(
+                                disk_level=disk_level,
+                                timeframe=timeframe,
+                                state_since=state_since,
+                                last_time=last_time,
+                            ):
+                                logger.warning(
+                                    f"[{symbol} {timeframe}] initial backfill blocked "
+                                    f"by storage guard (usage={disk_usage_percent}%)."
+                                )
+                                ingest_state_store.upsert(
+                                    symbol,
+                                    timeframe,
+                                    last_closed_ts=state_since,
+                                    status="blocked_storage_guard",
+                                )
+                                continue
+
+                            lookback_days = _lookback_days_for_timeframe(timeframe)
+                            # 데이터가 아예 없으면 timeframe 정책 기준 lookback부터
                             since = datetime.now(timezone.utc) - timedelta(
-                                days=LOOKBACK_DAYS
+                                days=lookback_days
                             )
                             logger.info(
-                                f"[{symbol} {timeframe}] 초기 데이터 수집 시작 (30일 전부터)"
+                                f"[{symbol} {timeframe}] 초기 데이터 수집 시작 "
+                                f"({lookback_days}일 전부터)"
                             )
 
                     # 수집
-                    latest_saved_at, ingest_result = fetch_and_save(
-                        write_api, symbol, since, timeframe
-                    )
+                    if timeframe in DOWNSAMPLE_TARGET_TIMEFRAMES:
+                        latest_saved_at, ingest_result = run_downsample_and_save(
+                            write_api,
+                            query_api,
+                            symbol=symbol,
+                            target_timeframe=timeframe,
+                        )
+                    else:
+                        latest_saved_at, ingest_result = fetch_and_save(
+                            write_api, symbol, since, timeframe
+                        )
                     if ingest_result == "saved":
                         ingest_state_store.upsert(
                             symbol,
@@ -802,18 +1277,20 @@ def run_worker():
                     update_full_history_file(query_api, symbol, timeframe)
 
                     # 예측
-                    prediction_result, prediction_error = run_prediction_and_save(
-                        write_api, symbol, timeframe
+                    prediction_result, prediction_error = (
+                        run_prediction_and_save(write_api, symbol, timeframe)
                     )
                     if prediction_result == "skipped":
                         continue
 
                     prediction_ok = prediction_result == "ok"
-                    health, was_degraded, is_degraded = upsert_prediction_health(
-                        symbol,
-                        timeframe,
-                        prediction_ok=prediction_ok,
-                        error=prediction_error,
+                    health, was_degraded, is_degraded = (
+                        upsert_prediction_health(
+                            symbol,
+                            timeframe,
+                            prediction_ok=prediction_ok,
+                            error=prediction_error,
+                        )
                     )
                     if is_degraded and not was_degraded:
                         logger.warning(
@@ -827,7 +1304,9 @@ def run_worker():
                             f"last_success_at={health.get('last_success_at')}"
                         )
                     elif prediction_ok and was_degraded:
-                        logger.info(f"[{symbol} {timeframe}] prediction recovered.")
+                        logger.info(
+                            f"[{symbol} {timeframe}] prediction recovered."
+                        )
                         send_alert(
                             "[Predict Recovery] "
                             f"{symbol} {timeframe}\n"

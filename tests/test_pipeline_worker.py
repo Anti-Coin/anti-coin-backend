@@ -1,16 +1,25 @@
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pandas as pd
 
 from scripts.pipeline_worker import (
     _detect_gaps_from_ms_timestamps,
     _fetch_ohlcv_paginated,
+    _lookback_days_for_timeframe,
     _refill_detected_gaps,
     build_runtime_manifest,
+    downsample_ohlcv_frame,
+    enforce_1m_retention,
+    get_disk_usage_percent,
     prediction_enabled_for_timeframe,
+    resolve_disk_watermark_level,
+    run_downsample_and_save,
     run_prediction_and_save,
     save_history_to_json,
+    should_block_initial_backfill,
+    should_enforce_1m_retention,
     upsert_prediction_health,
     write_runtime_manifest,
 )
@@ -34,6 +43,30 @@ class FakeExchange:
     ) -> list[list[float]]:
         candidates = [row for row in self._candles if row[0] >= since]
         return candidates[:limit]
+
+
+class FakeDeleteAPI:
+    def __init__(self):
+        self.calls = []
+
+    def delete(self, **kwargs):
+        self.calls.append(kwargs)
+
+
+class FakeQueryAPI:
+    def __init__(self, dataframe):
+        self._dataframe = dataframe
+
+    def query_data_frame(self, query: str):
+        return self._dataframe
+
+
+class FakeWriteAPI:
+    def __init__(self):
+        self.calls = []
+
+    def write(self, **kwargs):
+        self.calls.append(kwargs)
 
 
 def test_fetch_ohlcv_paginated_respects_until_ms():
@@ -163,7 +196,9 @@ def test_run_prediction_and_save_skips_disabled_timeframe(monkeypatch):
     assert error is None
 
 
-def test_save_history_to_json_writes_timeframe_aware_files(tmp_path, monkeypatch):
+def test_save_history_to_json_writes_timeframe_aware_files(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
 
     base = datetime(2026, 2, 12, 0, 0, tzinfo=timezone.utc)
@@ -281,3 +316,173 @@ def test_write_runtime_manifest_writes_manifest_file(tmp_path):
     assert payload["summary"]["entry_count"] == 1
     assert payload["summary"]["status_counts"]["missing"] == 1
     assert payload["entries"][0]["serve_allowed"] is False
+
+
+def test_lookback_days_for_timeframe_uses_1m_policy():
+    assert _lookback_days_for_timeframe("1m") == 14
+    assert _lookback_days_for_timeframe("1h") == 30
+
+
+def test_resolve_disk_watermark_level():
+    assert resolve_disk_watermark_level(60.0) == "normal"
+    assert resolve_disk_watermark_level(70.0) == "warn"
+    assert resolve_disk_watermark_level(85.0) == "critical"
+    assert resolve_disk_watermark_level(90.0) == "block"
+
+
+def test_get_disk_usage_percent_uses_shutil_result(monkeypatch):
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.shutil.disk_usage",
+        lambda _: SimpleNamespace(total=100, used=50, free=50),
+    )
+    assert get_disk_usage_percent() == 50.0
+
+
+def test_should_enforce_1m_retention_interval():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    assert should_enforce_1m_retention(None, now) is True
+    assert (
+        should_enforce_1m_retention(
+            now - timedelta(minutes=59), now
+        )
+        is False
+    )
+    assert (
+        should_enforce_1m_retention(now - timedelta(hours=1), now)
+        is True
+    )
+
+
+def test_should_block_initial_backfill_only_for_1m_block_mode():
+    assert (
+        should_block_initial_backfill(
+            disk_level="block",
+            timeframe="1m",
+            state_since=None,
+            last_time=None,
+        )
+        is True
+    )
+    assert (
+        should_block_initial_backfill(
+            disk_level="critical",
+            timeframe="1m",
+            state_since=None,
+            last_time=None,
+        )
+        is False
+    )
+    assert (
+        should_block_initial_backfill(
+            disk_level="block",
+            timeframe="1h",
+            state_since=None,
+            last_time=None,
+        )
+        is False
+    )
+
+
+def test_enforce_1m_retention_calls_delete_api(monkeypatch):
+    fake_delete_api = FakeDeleteAPI()
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data")
+    monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_ORG", "coin")
+
+    enforce_1m_retention(
+        fake_delete_api,
+        ["BTC/USDT", "ETH/USDT"],
+        now=now,
+        retention_days=40,  # clamp to 30
+    )
+
+    assert len(fake_delete_api.calls) == 2
+    first_call = fake_delete_api.calls[0]
+    assert first_call["bucket"] == "market_data"
+    assert first_call["org"] == "coin"
+    assert first_call["predicate"].endswith('timeframe="1m"')
+    assert first_call["stop"] == datetime(2026, 1, 14, 12, 0, tzinfo=timezone.utc)
+
+
+def test_downsample_ohlcv_frame_filters_incomplete_bucket():
+    base = datetime(2026, 2, 10, 0, 0, tzinfo=timezone.utc)
+    rows = []
+    for hour in range(24 + 12):
+        ts = base + timedelta(hours=hour)
+        rows.append(
+            {
+                "timestamp": ts,
+                "open": float(hour + 1),
+                "high": float(hour + 2),
+                "low": float(hour),
+                "close": float(hour + 1.5),
+                "volume": 10.0,
+            }
+        )
+    source_df = pd.DataFrame(rows).set_index("timestamp")
+
+    complete_df, incomplete_df = downsample_ohlcv_frame(
+        source_df, target_timeframe="1d"
+    )
+
+    assert len(complete_df) == 1
+    assert len(incomplete_df) == 1
+    first_bucket = complete_df.iloc[0]
+    assert first_bucket["open"] == 1.0
+    assert first_bucket["close"] == 24.5
+    assert first_bucket["high"] == 25.0
+    assert first_bucket["low"] == 0.0
+    assert first_bucket["volume"] == 240.0
+    assert incomplete_df.iloc[0]["source_count"] == 12
+    assert incomplete_df.iloc[0]["expected_count"] == 24
+
+
+def test_run_downsample_and_save_writes_ohlcv_and_lineage(tmp_path, monkeypatch):
+    base = datetime(2026, 2, 10, 0, 0, tzinfo=timezone.utc)
+    rows = []
+    for hour in range(48):
+        ts = base + timedelta(hours=hour)
+        rows.append(
+            {
+                "_time": ts,
+                "open": float(hour + 1),
+                "high": float(hour + 2),
+                "low": float(hour),
+                "close": float(hour + 1.5),
+                "volume": 10.0,
+            }
+        )
+    query_df = pd.DataFrame(rows)
+    query_api = FakeQueryAPI(query_df)
+    write_api = FakeWriteAPI()
+
+    lineage_path = tmp_path / "downsample_lineage.json"
+    monkeypatch.setattr("scripts.pipeline_worker.DOWNSAMPLE_LINEAGE_FILE", lineage_path)
+    monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data")
+    monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_ORG", "coin")
+
+    latest_saved_at, result = run_downsample_and_save(
+        write_api,
+        query_api,
+        symbol="BTC/USDT",
+        target_timeframe="1d",
+    )
+
+    assert result == "saved"
+    assert latest_saved_at == datetime(2026, 2, 11, 0, 0, tzinfo=timezone.utc)
+    assert len(write_api.calls) == 1
+    write_call = write_api.calls[0]
+    assert write_call["bucket"] == "market_data"
+    assert write_call["org"] == "coin"
+    saved_df = write_call["record"]
+    assert len(saved_df) == 2
+    assert list(saved_df["timeframe"].unique()) == ["1d"]
+    assert list(saved_df["symbol"].unique()) == ["BTC/USDT"]
+
+    lineage_payload = json.loads(lineage_path.read_text())
+    entry = lineage_payload["entries"]["BTC/USDT|1d"]
+    assert entry["source_timeframe"] == "1h"
+    assert entry["source_rows"] == 48
+    assert entry["complete_buckets"] == 2
+    assert entry["incomplete_buckets"] == 0
+    assert entry["status"] == "ok"

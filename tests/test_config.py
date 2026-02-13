@@ -68,7 +68,9 @@ def test_enforce_ingest_timeframe_guard_rejects_multiple_in_default_mode():
 
 
 def test_enforce_ingest_timeframe_guard_accepts_multiple_when_enabled():
-    assert _enforce_ingest_timeframe_guard(["1m", "1h", "1d"], allow_multi=True) == [
+    assert _enforce_ingest_timeframe_guard(
+        ["1m", "1h", "1d"], allow_multi=True
+    ) == [
         "1m",
         "1h",
         "1d",

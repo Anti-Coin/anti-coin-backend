@@ -29,7 +29,9 @@ def _write_prediction_health_file(tmp_path, entries: dict) -> None:
         json.dumps(
             {
                 "version": 1,
-                "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "updated_at": datetime.now(timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
                 "entries": entries,
             }
         )
@@ -58,7 +60,9 @@ def test_check_status_returns_503_on_corrupted_json(tmp_path, monkeypatch):
     assert exc.value.detail == "Data corruption detected"
 
 
-def test_check_status_returns_503_for_invalid_updated_at_format(tmp_path, monkeypatch):
+def test_check_status_returns_503_for_invalid_updated_at_format(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(api_main, "STATIC_DIR", tmp_path)
     _write_prediction_file(tmp_path, "BTC/USDT", {"updated_at": "bad-format"})
 
@@ -74,7 +78,9 @@ def test_check_status_returns_fresh_state(tmp_path, monkeypatch):
     monkeypatch.setattr(
         api_main, "PREDICTION_HEALTH_FILE", tmp_path / "prediction_health.json"
     )
-    monkeypatch.setattr(api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=10)})
+    monkeypatch.setattr(
+        api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=10)}
+    )
     monkeypatch.setattr(
         api_main, "FRESHNESS_HARD_THRESHOLDS", {"1h": timedelta(minutes=20)}
     )
@@ -92,19 +98,25 @@ def test_check_status_returns_fresh_state(tmp_path, monkeypatch):
     assert "warning" not in response
 
 
-def test_check_status_returns_stale_with_warning_in_soft_window(tmp_path, monkeypatch):
+def test_check_status_returns_stale_with_warning_in_soft_window(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(api_main, "STATIC_DIR", tmp_path)
     monkeypatch.setattr(
         api_main, "PREDICTION_HEALTH_FILE", tmp_path / "prediction_health.json"
     )
-    monkeypatch.setattr(api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=1)})
+    monkeypatch.setattr(
+        api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=1)}
+    )
     monkeypatch.setattr(
         api_main, "FRESHNESS_HARD_THRESHOLDS", {"1h": timedelta(minutes=3)}
     )
 
     updated_at = datetime.now(timezone.utc) - timedelta(minutes=2)
     _write_prediction_file(
-        tmp_path, "BTC/USDT", {"updated_at": updated_at.strftime("%Y-%m-%dT%H:%M:%SZ")}
+        tmp_path,
+        "BTC/USDT",
+        {"updated_at": updated_at.strftime("%Y-%m-%dT%H:%M:%SZ")},
     )
     response = api_main.check_status("BTC/USDT")
 
@@ -115,14 +127,18 @@ def test_check_status_returns_stale_with_warning_in_soft_window(tmp_path, monkey
 
 def test_check_status_returns_503_beyond_hard_limit(tmp_path, monkeypatch):
     monkeypatch.setattr(api_main, "STATIC_DIR", tmp_path)
-    monkeypatch.setattr(api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=1)})
+    monkeypatch.setattr(
+        api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=1)}
+    )
     monkeypatch.setattr(
         api_main, "FRESHNESS_HARD_THRESHOLDS", {"1h": timedelta(minutes=2)}
     )
 
     updated_at = datetime.now(timezone.utc) - timedelta(minutes=3)
     _write_prediction_file(
-        tmp_path, "BTC/USDT", {"updated_at": updated_at.strftime("%Y-%m-%dT%H:%M:%SZ")}
+        tmp_path,
+        "BTC/USDT",
+        {"updated_at": updated_at.strftime("%Y-%m-%dT%H:%M:%SZ")},
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -134,7 +150,9 @@ def test_check_status_returns_503_beyond_hard_limit(tmp_path, monkeypatch):
 
 def test_check_status_uses_1h_threshold_as_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr(api_main, "STATIC_DIR", tmp_path)
-    monkeypatch.setattr(api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=1)})
+    monkeypatch.setattr(
+        api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=1)}
+    )
     monkeypatch.setattr(
         api_main, "FRESHNESS_HARD_THRESHOLDS", {"1h": timedelta(minutes=3)}
     )
@@ -151,9 +169,13 @@ def test_check_status_uses_1h_threshold_as_fallback(tmp_path, monkeypatch):
     assert response["status"] == "stale"
 
 
-def test_check_status_reads_legacy_prediction_file_as_fallback(tmp_path, monkeypatch):
+def test_check_status_reads_legacy_prediction_file_as_fallback(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(api_main, "STATIC_DIR", tmp_path)
-    monkeypatch.setattr(api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=10)})
+    monkeypatch.setattr(
+        api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=10)}
+    )
     monkeypatch.setattr(
         api_main, "FRESHNESS_HARD_THRESHOLDS", {"1h": timedelta(minutes=20)}
     )
@@ -177,7 +199,9 @@ def test_check_status_exposes_degraded_state_from_prediction_health(
     monkeypatch.setattr(
         api_main, "PREDICTION_HEALTH_FILE", tmp_path / "prediction_health.json"
     )
-    monkeypatch.setattr(api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=10)})
+    monkeypatch.setattr(
+        api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=10)}
+    )
     monkeypatch.setattr(
         api_main, "FRESHNESS_HARD_THRESHOLDS", {"1h": timedelta(minutes=20)}
     )
@@ -217,7 +241,9 @@ def test_check_status_marks_degraded_when_prediction_health_file_is_corrupted(
     monkeypatch.setattr(
         api_main, "PREDICTION_HEALTH_FILE", tmp_path / "prediction_health.json"
     )
-    monkeypatch.setattr(api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=10)})
+    monkeypatch.setattr(
+        api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=10)}
+    )
     monkeypatch.setattr(
         api_main, "FRESHNESS_HARD_THRESHOLDS", {"1h": timedelta(minutes=20)}
     )
