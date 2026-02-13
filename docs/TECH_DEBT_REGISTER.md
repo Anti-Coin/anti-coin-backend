@@ -1,6 +1,6 @@
 # Coin Predict Technical Debt Register
 
-- Last Updated: 2026-02-12
+- Last Updated: 2026-02-13
 - Purpose: 기술 부채를 세션 간 누락 없이 추적
 
 ## 1. 운용 규칙
@@ -37,6 +37,10 @@
 | TD-024 | Alerting | worker 단계별 부분 실패가 운영 알림으로 충분히 승격되지 않음 | 프로세스 생존 상태에서 기능 실패 장기 미탐지 가능 | mitigated | A-017,A-010-7 | predict 상태전이/지속재알림은 반영됨. ingest/export 단계 세분화 알림은 C-005 분리 이후 재평가 |
 | TD-025 | Ingest Recovery | DB last + 30일 룩백 기반 since 결정 | 장기 중단 후 복구 지점 부정확/과다 백필 가능 | resolved | A-002 | `utils/ingest_state.py` 도입으로 `symbol+timeframe` 커서 저장/재시작 복구 기준 고정 완료 |
 | TD-026 | Maintainability | 주석/로그 밀도가 경로별로 불균등함 | 신규 세션/회귀 분석 시 의도 파악 지연 | mitigated | A-019,C-005 | 핵심 경로 1차 보강은 완료. 신규 복잡 분기 추가 시 동일 기준(의도 주석 + 상태전이 로그) 즉시 적용 |
+| TD-027 | Serving Policy | `1m` 예측/서빙 경계가 불명확함(예측 비서빙 vs 제공 경로) | candle 경계 내 오버런, 의미 낮은 예측 노출, FE 계약 혼선 | open | B-001,B-003 | `1m`은 prediction 비서빙 + hybrid API(`latest closed 180`) 경계를 정책/테스트로 고정 |
+| TD-028 | Storage Budget | 다중 심볼 `1m` 원본 장기 보관 전략 부재 | Free Tier 50GB 초과로 쓰기 실패/운영 중단 가능 | open | B-006 | rolling retention(`14d default / 30d cap`) + disk watermark 경보/차단 + 용량 추세 검증 |
+| TD-029 | Data Lineage | `1h->1d/1w/1M` downsample 경로/검증 기준 미정 | timeframe 간 정합성 불일치, 재현성 저하 | open | B-001,B-006 | downsample 소스/주기/검증식을 명시하고 회귀 테스트 추가 |
+| TD-030 | Modeling Guard | 장기 timeframe 최소 샘플 부족 시 예측 차단/품질표시 정책 미구현 | 통계적 신뢰도 부족한 예측이 정상처럼 노출될 수 있음 | open | D-010 | Hard Gate(`insufficient_data`) + Accuracy Signal(`mae/smape/directional/sample_count`) 표준화 |
 
 ## 3. 상태 정의
 1. `open`: 미해결

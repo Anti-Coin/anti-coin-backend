@@ -1,6 +1,6 @@
 # Coin Predict Living Plan (Hybrid)
 
-- Last Updated: 2026-02-12
+- Last Updated: 2026-02-13
 - Owner: Backend/Platform
 - Status: Active
 - Full Phase A History: `docs/archive/phase_a/PLAN_LIVING_HYBRID_PHASE_A_FULL_2026-02-12.md`
@@ -28,7 +28,7 @@
 | Phase | Status | Objective | Exit Condition |
 |---|---|---|---|
 | A | completed | 수집/복구/상태판정 신뢰성 확보 | A-001~A-019 완료 + Exit Criteria 충족 |
-| B | ready | 다중 timeframe 전환 시 정합성(파일 규칙/상태 판정/운영 경계) 유지 | B-001~B-004 완료 + API/monitor 상태 계약 유지 + `B-005` sunset 조건 충족 여부 확정 |
+| B | ready | 다중 timeframe 전환 + 1m 비대칭 서빙 + 저장소 제약 내 운영 정합성 확보 | B-001~B-004, B-006 완료 + `1m` 예측 비서빙/ hybrid(`latest closed 180`) 경계 확정 + `1m` rolling(`14d default / 30d cap`) 적용 + Hard Gate+Accuracy 정책 확정 + API/monitor 상태 계약 유지 + `B-005` sunset 조건 충족 여부 확정 |
 | C | ready | 장애 전파 범위 축소와 운영 관측성 강화 | `C-002` 관측 증거 확보 + `R-004` kickoff 확정 + (`C-005` 또는 대안) 구현으로 장애 격리 효과 검증 |
 | D | backlog | 모델 진화의 "운영 안전성" 확보(자동화 자체가 목적 아님) | D-001~D-005 핵심 게이트(인터페이스/메타데이터/shadow 비교/승격 차단) 확립 + 롤백 경로 검증 |
 
@@ -41,7 +41,7 @@
    - 각 Task는 지금 아는 리스크를 반영해 충분히 세분화되었는가?
    - 우선순위는 실제 리스크/의존성/운영비 기준으로 재정렬되었는가?
    - Phase B kickoff에 필요한 최소 묶음(실행+검증+롤백)이 확정되었는가?
-5. `R-001`~`R-004`는 완료됐으며, 현재는 kickoff 기준선에 따라 `B-002 -> B-003` 구현에 착수하는 단계다.
+5. `R-001`~`R-004`는 완료됐으나, 신규 리스크(`D-2026-02-13-29`) 반영으로 `B-001` 정책 잠금 후 `B-002 -> B-003` 착수로 기준선을 보정한다.
 
 ## 6. Rebaseline Protocol (Execution)
 1. 목적 재검증(`R-001`, 완료): B/C/D의 Objective/Exit Condition을 다시 정의한다.
@@ -50,11 +50,11 @@
 4. 착수 게이트 확정(`R-004`, 완료): kickoff 구현 묶음을 `B-002 -> B-003`으로 고정하고, 검증/롤백 경계를 확정한다.
 
 ## 7. Next Cycle (Recommended)
-1. `B-002`: 파일 네이밍 규칙 통일
-2. `B-003`: timeframe-aware export 전환
-3. `B-004`: manifest 파일 생성
-4. `C-002`: 실행시간/실패율 메트릭 수집(Phase C 착수 근거)
-5. `R-005`: SLA-lite 지표 정의(포트폴리오 운영 증거)
+1. `B-001`: timeframe tier 정책 매트릭스 잠금(1m 비대칭 + `latest closed 180` + `14d/30d` + Hard Gate+Accuracy)
+2. `B-002`: 파일 네이밍 규칙 통일
+3. `B-003`: timeframe-aware export 전환(`1m` prediction 비생성 포함)
+4. `B-006`: 저장소 예산 가드 + retention/downsample 실행
+5. `C-002`: 실행시간/실패율 메트릭 수집(Phase C 착수 근거)
 
 ## 8. Portfolio Capability Matrix (Current vs Next)
 | Capability | Current Evidence | Next Strengthening |
@@ -70,7 +70,9 @@
 2. `TD-019`: 단일 worker 결합으로 장애 전파 가능
 3. `TD-020`: 고정 poll loop로 비용/정합성 리스크
 4. `TD-024`: 단계별 부분 실패 알림 세분화 미완료
-5. 초기 B/C/D 태스크 기준선과 현재 리스크 현실의 드리프트 가능성
+5. `1m` 예측 경로를 그대로 확장할 경우 candle 경계 내 완료 실패(오버런) 리스크
+6. Free Tier 50GB 제약에서 다중 심볼 `1m` 장기 보관 시 디스크 고갈 리스크
+7. `1M` 등 장기 TF에서 샘플 부족 상태로 모델 판단/서빙이 왜곡될 리스크
 
 ## 10. Change Rules
 1. 정책 변경은 `docs/DECISIONS.md`를 먼저 갱신한다.

@@ -1,6 +1,6 @@
 # Coin Predict Task Board (Active)
 
-- Last Updated: 2026-02-12
+- Last Updated: 2026-02-13
 - Rule: 활성 태스크만 유지하고, 완료 상세 이력은 Archive로 분리
 - Full Phase A History: `docs/archive/phase_a/TASKS_MINIMUM_UNITS_PHASE_A_FULL_2026-02-12.md`
 
@@ -17,6 +17,8 @@
 5. `R-002` 완료 (2026-02-12): B/C/D 활성 태스크에 `why/failure/verify/rollback` 설계 카드 반영
 6. `R-003` 완료 (2026-02-12): 교차 Phase 우선순위 2안 비교 후 Option A(phase-ordered stability) 기준선 채택
 7. `R-004` 완료 (2026-02-12): Phase B kickoff 구현 묶음(`B-002 -> B-003`)과 검증/롤백 경계 확정
+8. `D-2026-02-13-29` 채택: 1m 비대칭 정책(예측 비서빙 + hybrid 서빙 후보)과 저장소 가드가 Phase B 선행 조건임을 확정
+9. `D-2026-02-13-30` 채택: 서빙 정책을 Hard Gate + Accuracy Signal 2층 구조로 고정
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -31,10 +33,11 @@
 ### Phase B (Timeframe Expansion)
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
-| B-001 | P1 | timeframe별 수집 정책 테이블 추가 | open | 1m/1h/1d/1w/1M 정책 분리 |
+| B-001 | P1 | timeframe tier 정책 매트릭스 확정(수집/보존/서빙/예측) | open (gated-first) | `1m` 예측 비서빙, `1m` hybrid API=`latest closed 180 candles`, `1m` rolling=`default 14d / cap 30d`, `1h->1d/1w/1M` downsample 경로, Hard Gate+Accuracy 정책을 문서/설정으로 고정 |
 | B-002 | P1 | 파일 네이밍 규칙 통일 | open | `{symbol}_{timeframe}` 규칙 적용 |
-| B-003 | P1 | history/prediction export timeframe-aware 전환 | open | 다중 timeframe 파일 동시 생성 |
+| B-003 | P1 | history/prediction export timeframe-aware 전환 | open | 다중 timeframe 파일 동시 생성 + `1m` prediction 산출물 비생성 정책 준수 |
 | B-004 | P1 | manifest 파일 생성 | open | 심볼/타임프레임별 최신 상태 요약 |
+| B-006 | P1 | 저장소 예산 가드(50GB) + retention/downsample 실행 | open | `1m` rolling(`14d default / 30d cap`) 적용 + 디스크 watermark 경보/차단 + downsample job의 lineage/검증 경로 확정 |
 | B-005 | P2 | `/history`/`/predict` fallback 정리(sunset) | open | Endpoint Sunset 체크리스트 조건 충족 + fallback 비의존 운영 1 cycle 검증 + rollback 절차 문서화 |
 
 ### Phase C (Scale and Ops)
@@ -59,11 +62,12 @@
 | D-007 | P2 | 자동 재학습 스케줄링 | open | 설정 기반 주기 재학습 가능 |
 | D-008 | P2 | 모델 롤백 절차/코드 추가 | open | 이전 champion 복귀 가능 |
 | D-009 | P2 | Drift 알림 연동 | open | 임계 초과 시 경고 발송 |
+| D-010 | P1 | 장기 timeframe 최소 샘플 gate 구현 | open | 최소 샘플 미달 TF는 `insufficient_data`로 표시하고 예측 서빙 차단 |
 
 ## 3. Immediate Bundle
-1. `B-002`
-2. `B-003`
-3. `B-004`
+1. `B-001`
+2. `B-002`
+3. `B-003`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
@@ -80,10 +84,11 @@
 ### Phase B
 | ID | Why Now | Failure Mode | Verification | Rollback |
 |---|---|---|---|---|
-| B-001 | timeframe 확장 전 수집 정책 분리가 없으면 운영 판정 혼선이 생김 | 정책 매핑 오류로 누락/중복 수집 발생 | timeframe별 정책 단위 테스트 + 샘플 dry-run 검증 | `1h` 단일 정책으로 즉시 회귀 |
+| B-001 | 1m/장기 TF를 동일 규칙으로 처리하면 지연/저표본/저장소 리스크를 동시에 키움 | 1m 예측 오버런, 장기 TF 저품질 예측, 보존 정책 충돌 | 정책 매트릭스 리뷰 + 설정 스키마 테스트 + `latest=180`/`14d+30d`/Hard Gate 규칙 dry-run | Phase A `1h` 단일 모드로 회귀 |
 | B-002 | 파일 네이밍 불일치가 API/monitor 오탐(`missing`)을 유발함 | 잘못된 파일 탐색으로 상태 오판 및 경보 노이즈 | 파일명 규칙 테스트 + legacy fallback 동작 확인 | dual-read(신규+legacy) 유지 후 단계적 전환 |
-| B-003 | export가 timeframe-aware가 아니면 산출물이 덮어써져 데이터 무결성 손상 | 타임프레임 간 파일 충돌/유실 | 다중 timeframe 동시 export 테스트(파일 수/필드/타임스탬프) | `1h` export 경로로 임시 복귀 |
+| B-003 | export가 timeframe-aware가 아니면 산출물이 덮어써지고, 1m 예측 비서빙 정책 위반 위험이 생김 | 타임프레임 간 파일 충돌/유실 + 1m prediction 파일 노출 | 다중 timeframe 동시 export 테스트 + `1m` prediction 미생성 검증 | `1h` export 경로로 임시 복귀 |
 | B-004 | manifest 부재 시 운영자가 전체 상태를 빠르게 파악하기 어려움 | manifest stale/오류로 잘못된 운영 판단 | manifest와 원본 파일 간 일관성 검사 + updated_at 검증 | manifest 소비 중지, 개별 파일 점검으로 회귀 |
+| B-006 | Free Tier 50GB 제약에서 다중 심볼 1m 원본 장기 보관은 운영 중단 리스크를 만든다 | 디스크 고갈로 쓰기 실패, DB 성능 저하, 복구 지연 | 디스크 사용량 추세 검증 + `14d default / 30d cap` enforcement 테스트 + downsample 결과 무결성 검증 | retention/downsample 중지 후 기존 수집 정책으로 회귀 |
 | B-005 | fallback endpoint를 무기한 유지하면 경계 혼선/숨은 의존이 누적됨 | 제거 시 숨어있던 호출 경로 장애 발생 | sunset 체크리스트 + fallback 비의존 운영 1 cycle 검증 | endpoint 복구 절차 즉시 실행(runbook) |
 
 ### Phase C
@@ -108,24 +113,26 @@
 | D-007 | 스케줄 재학습은 수동 운영 한계를 줄이지만 겹침 위험이 큼 | 스케줄 중첩으로 운영 경로 성능 저하 | no-overlap 보장 검증 + 실행 시간 모니터링 | 스케줄 중지 후 D-006 수동 모드 회귀 |
 | D-008 | 롤백 절차 없이는 모델 배포 실패 시 MTTR이 급증 | 잘못된 버전 복귀로 상태 악화 | 버전 pin 기반 롤백 리허설 + post-rollback smoke | 이전 champion 고정 포인터로 즉시 복귀 |
 | D-009 | drift 탐지 없이는 성능 저하를 늦게 인지함 | 과도한 false alert로 운영 피로 증가 | 임계값 backtest + 경보 빈도 검증 | 경고 채널 격하 또는 알림 비활성화 |
+| D-010 | 장기 TF에서 샘플 수가 부족하면 모델 비교/승격 판단이 왜곡된다 | 통계적으로 무의미한 지표로 잘못된 모델 선택 | timeframe별 최소 샘플 회귀 테스트 + 미달 시 `insufficient_data` 노출 테스트 | 장기 TF 예측 기능 비활성화 후 baseline 모델만 유지 |
 
 ## 7. R-003 Priority Reorder (Options + Adopted Baseline)
 | Option | Intent | Ordered Sequence | 장점 | 리스크 |
 |---|---|---|---|---|
-| Option A (Adopted) | Stability-first, phase boundary 보호 | `R-004 -> B-002 -> B-003 -> B-004 -> C-002 -> C-005 -> C-006 -> R-005 -> B-005(P2) -> D-001+` | B 경계를 먼저 고정해 C/D 재작업 가능성을 줄임 | 비용 최적화(C-006) 체감이 늦어질 수 있음 |
-| Option B | Cost-first, C 조기 최적화 | `R-004 -> C-002 -> C-006 -> C-005 -> B-002 -> B-003 -> B-004 -> R-005 -> B-005(P2) -> D-001+` | 루프 비용 절감 효과를 빠르게 확인 가능 | B 경계 미고정 상태에서 C 변경이 들어가 계약 드리프트/재작업 위험 증가 |
+| Option A (Adopted) | Stability-first, phase boundary 보호 | `R-004 -> B-001 -> B-002 -> B-003 -> B-004 -> B-006 -> C-002 -> C-005 -> C-006 -> R-005 -> B-005(P2) -> D-001+` | 정책/저장소/서빙 경계를 먼저 고정해 C/D 재작업 가능성을 줄임 | 비용 최적화(C-006) 체감이 늦어질 수 있음 |
+| Option B | Cost-first, C 조기 최적화 | `R-004 -> C-002 -> C-006 -> C-005 -> B-001 -> B-002 -> B-003 -> B-004 -> B-006 -> R-005 -> B-005(P2) -> D-001+` | 루프 비용 절감 효과를 빠르게 확인 가능 | B 경계 미고정 상태에서 C 변경이 들어가 계약 드리프트/재작업 위험 증가 |
 
 채택 기준선:
 1. 현재 우선순위(`Stability > Cost > Performance`)에 따라 Option A를 기준선으로 채택한다.
 2. `B-005`는 사용자 의견에 따라 P2를 유지한다.
 3. Option B는 `C-002`에서 비용 압력이 즉시 심각하다는 증거가 나올 때 fallback 후보로만 유지한다.
-4. `R-004` 완료 이후의 활성 실행 순서는 `B-002 -> B-003 -> B-004 -> C-002 -> C-005 -> C-006 -> R-005 -> B-005(P2)`다.
+4. `D-2026-02-13-29` 반영 후 활성 실행 순서는 `B-001 -> B-002 -> B-003 -> B-004 -> B-006 -> C-002 -> C-005 -> C-006 -> R-005 -> B-005(P2)`다.
 
 ## 8. R-004 Kickoff Contract (Accepted)
 1. Kickoff 구현 묶음은 `B-002`, `B-003` 2개로 고정한다.
-2. 실행 순서는 `B-002` 선행, `B-003` 후행으로 고정한다.
-3. `B-002` 검증 경계는 파일명 규칙 단위 테스트(`{symbol}_{timeframe}`) 통과와 legacy fallback 유지 시 상태 오판(`missing`) 비증가다.
-4. `B-002` 롤백 경계는 신규 파일명 읽기를 비활성화하고 legacy 파일명 읽기만 강제하는 것이다(dual-read에서 legacy 우선으로 회귀).
-5. `B-003` 검증 경계는 다중 timeframe 동시 export 시 파일 충돌/덮어쓰기 부재와 산출물 필수 필드/`updated_at`/timeframe 구분 값 일관성이다.
-6. `B-003` 롤백 경계는 timeframe-aware export를 중지하고 `1h` 단일 export 경로로 즉시 복귀하는 것이다.
-7. `C-005`, `C-006`는 `B-003` 검증 증거 확보 전에는 구현 착수를 보류한다.
+2. 단, `B-001` 정책 매트릭스 잠금이 선행되지 않으면 `B-002`/`B-003` 구현 착수는 보류한다.
+3. 실행 순서는 `B-001` 선행 잠금 이후 `B-002` 선행, `B-003` 후행으로 고정한다.
+4. `B-002` 검증 경계는 파일명 규칙 단위 테스트(`{symbol}_{timeframe}`) 통과와 legacy fallback 유지 시 상태 오판(`missing`) 비증가다.
+5. `B-002` 롤백 경계는 신규 파일명 읽기를 비활성화하고 legacy 파일명 읽기만 강제하는 것이다(dual-read에서 legacy 우선으로 회귀).
+6. `B-003` 검증 경계는 다중 timeframe 동시 export 시 파일 충돌/덮어쓰기 부재와 산출물 필수 필드/`updated_at`/timeframe 구분 값 일관성, 그리고 `1m` prediction 비생성 정책 준수다.
+7. `B-003` 롤백 경계는 timeframe-aware export를 중지하고 `1h` 단일 export 경로로 즉시 복귀하는 것이다.
+8. `C-005`, `C-006`는 `B-003` 검증 증거 확보 전에는 구현 착수를 보류한다.

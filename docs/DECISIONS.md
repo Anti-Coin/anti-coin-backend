@@ -1,6 +1,6 @@
 # Coin Predict Decision Register (Active)
 
-- Last Updated: 2026-02-12
+- Last Updated: 2026-02-13
 - Scope: archive 연동형 의사결정 레지스터 (요약/상세 분리)
 - Full History: `docs/archive/phase_a/DECISIONS_PHASE_A_FULL_2026-02-12.md`
 
@@ -77,6 +77,44 @@
   - `C-005`, `C-006` 착수는 `B-003` 검증 증거 확보 이후로 지연되어 단기 비용 최적화 체감은 늦어질 수 있다.
 - Revisit Trigger:
   - `B-002` 또는 `B-003`에서 rollback이 2회 이상 반복되거나, 예상보다 큰 API/monitor 계약 충돌이 확인될 때
+
+### D-2026-02-13-29
+- Date: 2026-02-13
+- Status: Accepted
+- Topic: Phase B Timeframe Asymmetry + Storage Guard Baseline
+- Context:
+  - Rebaseline 이후 재검토에서 Phase B 기준선에 `1m` 특수성(짧은 캔들 주기 대비 예측 실행시간)과 저장소 제약(Oracle Free Tier 50GB) 정책이 충분히 명시되지 않았음이 확인됐다.
+  - 이 상태로 `B-002`/`B-003`을 먼저 진행하면, 구현은 빨라도 서빙/보존/예측 경계가 다시 뒤집혀 재작업 가능성이 높다.
+- Decision:
+  - `1m`은 Phase B 기준에서 prediction 비서빙을 기본값으로 한다(향후 명시 승인 시에만 확장).
+  - `1m` 사용자 노출은 hybrid(SSG + API latest window)로 설계하며, API 범위는 `최신 closed 180캔들(약 3시간)` 고정으로 시작한다(임의 range 조회 미허용).
+  - `1m` 보존은 rolling 정책을 필수로 하며, `기본 14일`과 `상한 30일`을 고정하고 `B-006`에서 실행한다.
+  - `1d/1w/1M`은 `1h` 기준 downsample 경로를 기본 후보로 하며, source/검증식을 `B-001`에서 고정한다.
+  - 장기 timeframe은 최소 샘플 미달 시 prediction을 차단하고 `insufficient_data` 신호를 노출한다(`D-010`).
+  - 실행 순서는 `B-001 -> B-002 -> B-003`로 보정하며, `B-001` 잠금 전 `B-002`/`B-003` 착수는 보류한다.
+- Consequence:
+  - 단기 구현 속도는 늦어지지만, 잘못된 전제 위 구현으로 인한 재작업/운영사고 리스크를 줄인다.
+  - `R-004`는 폐기되지 않으며, 신규 선행조건(`B-001`)이 추가된 형태로 해석된다.
+- Revisit Trigger:
+  - `1m` prediction 필요성이 제품 요구로 명시되거나, 실제 디스크/실행시간 관측이 가정과 크게 다를 때
+
+### D-2026-02-13-30
+- Date: 2026-02-13
+- Status: Accepted
+- Topic: Serving Policy - Hard Gate + Accuracy Signal
+- Context:
+  - 사용자 요청에 따라 서빙 정책은 "차단 기준(안전)"과 "품질 신호(설명)"를 분리할 필요가 있다.
+  - 정확도 신호만으로 차단을 결정하면 regime 변화/표본 부족 구간에서 오판 가능성이 크다.
+- Decision:
+  - 서빙 정책은 `Hard Gate + Accuracy Signal` 2층 구조로 운용한다.
+  - Hard Gate 조건(`serve 금지`): `corrupt`, `hard_stale`, `insufficient_data`, `incomplete_bucket`.
+  - Accuracy Signal(`serve 가능 + 경고/표시`): `mae`, `smape`, `directional_accuracy`, `sample_count`, `evaluation_window`.
+  - 정확도는 Hard Gate를 우회하지 못한다(정확도가 높아도 hard 상태면 차단).
+- Consequence:
+  - 데이터 무결성/신뢰성 기준을 유지하면서, 사용자에게 예측 품질 정보를 투명하게 제공할 수 있다.
+  - 지표 계산/표시 비용이 추가되며, 표준 스키마가 필요하다.
+- Revisit Trigger:
+  - FE 계약 변경, 지표 산식 변경, 또는 정확도 지표 노이즈가 과도할 때
 
 ## 3. Decision Operation Policy
 1. Archive로 이동된 결정은 `Section 1`에 요약 형태로만 유지한다.
