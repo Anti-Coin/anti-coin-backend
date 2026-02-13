@@ -164,6 +164,27 @@
 - Revisit Trigger:
   - 심볼 수/트래픽이 예상보다 빠르게 증가하거나, shared 모델의 장기 품질 저하가 반복될 때
 
+### D-2026-02-13-33
+- Date: 2026-02-13
+- Status: Accepted
+- Topic: Multi-Timeframe Cycle Cadence - Boundary + Detection Gate Hybrid
+- Context:
+  - 다중 timeframe(`1h/1d/1w/1M`)과 다중 symbol 조합에서는 고정 poll while-loop가 cycle overrun을 유발하기 쉽다.
+  - 단순 boundary-only는 불필요 실행을 줄이지 못하고, detection-only는 경계 누락/중복 실행 리스크가 있다.
+- Decision:
+  - 실행 주기는 `timeframe boundary`를 기준으로 고정한다(UTC, closed-candle 기준).
+  - 실행 직전 `data detection gate`를 적용한다.
+    - 해당 `symbol+timeframe`의 최신 closed candle이 이전 실행과 동일하면 ingest/predict/export를 skip.
+    - 신규 closed candle이 확인될 때만 cycle을 수행한다.
+  - 단계적 구현 순서는 `C-006(boundary scheduler) -> C-007(detection gate)`로 고정한다.
+  - 장애 시 rollback은 기존 고정 poll 루프로 즉시 회귀한다.
+- Consequence:
+  - 경계 정합성을 유지하면서 불필요 cycle을 줄여 overrun/비용 리스크를 동시에 완화한다.
+  - gate 판정 오류가 있으면 누락/지연이 발생할 수 있으므로 계측(`C-002`)이 필수다.
+- Revisit Trigger:
+  - `overrun_rate`가 7일 기준 1%를 초과하거나, `missed_boundary`가 관측될 때
+  - 거래소 지연/스키마 변경으로 gate 오탐이 반복될 때
+
 ## 3. Decision Operation Policy
 1. Archive로 이동된 결정은 `Section 1`에 요약 형태로만 유지한다.
 2. 아직 archive로 이동하지 않은 결정은 `Section 2`에 상세 형태로 유지한다.
