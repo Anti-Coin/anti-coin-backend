@@ -7,9 +7,19 @@ from fastapi import HTTPException
 import api.main as api_main
 
 
-def _write_prediction_file(tmp_path, symbol: str, payload: dict) -> None:
+def _write_prediction_file(
+    tmp_path,
+    symbol: str,
+    payload: dict,
+    timeframe: str = "1h",
+    *,
+    legacy: bool = False,
+) -> None:
     safe_symbol = symbol.replace("/", "_")
-    path = tmp_path / f"prediction_{safe_symbol}.json"
+    if legacy:
+        path = tmp_path / f"prediction_{safe_symbol}.json"
+    else:
+        path = tmp_path / f"prediction_{safe_symbol}_{timeframe}.json"
     path.write_text(json.dumps(payload))
 
 
@@ -131,11 +141,33 @@ def test_check_status_uses_1h_threshold_as_fallback(tmp_path, monkeypatch):
 
     updated_at = datetime.now(timezone.utc) - timedelta(minutes=2)
     _write_prediction_file(
-        tmp_path, "BTC/USDT", {"updated_at": updated_at.strftime("%Y-%m-%dT%H:%M:%SZ")}
+        tmp_path,
+        "BTC/USDT",
+        {"updated_at": updated_at.strftime("%Y-%m-%dT%H:%M:%SZ")},
+        legacy=True,
     )
     response = api_main.check_status("BTC/USDT", timeframe="unknown")
 
     assert response["status"] == "stale"
+
+
+def test_check_status_reads_legacy_prediction_file_as_fallback(tmp_path, monkeypatch):
+    monkeypatch.setattr(api_main, "STATIC_DIR", tmp_path)
+    monkeypatch.setattr(api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=10)})
+    monkeypatch.setattr(
+        api_main, "FRESHNESS_HARD_THRESHOLDS", {"1h": timedelta(minutes=20)}
+    )
+
+    now = datetime.now(timezone.utc)
+    _write_prediction_file(
+        tmp_path,
+        "BTC/USDT",
+        {"updated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ")},
+        legacy=True,
+    )
+
+    response = api_main.check_status("BTC/USDT", timeframe="1h")
+    assert response["status"] == "fresh"
 
 
 def test_check_status_exposes_degraded_state_from_prediction_health(
