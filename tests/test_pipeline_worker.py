@@ -8,6 +8,7 @@ from scripts.pipeline_worker import (
     _detect_gaps_from_ms_timestamps,
     _fetch_ohlcv_paginated,
     _lookback_days_for_timeframe,
+    _minimum_required_lookback_rows,
     _refill_detected_gaps,
     append_runtime_cycle_metrics,
     build_runtime_manifest,
@@ -507,6 +508,30 @@ def test_resolve_ingest_since_blocks_1m_drift_backfill_on_block_level():
 
     assert since is None
     assert source == "blocked_storage_guard"
+
+
+def test_resolve_ingest_since_rebootstraps_when_underfilled_even_with_db_last():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+    db_last = datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        state_since=state_since,
+        last_time=db_last,
+        disk_level="normal",
+        force_rebootstrap=True,
+        now=now,
+    )
+
+    assert source == "underfilled_rebootstrap"
+    assert since == datetime(2026, 1, 14, 12, 0, tzinfo=timezone.utc)
+
+
+def test_minimum_required_lookback_rows_for_1h_only():
+    assert _minimum_required_lookback_rows("1h", 30) == 576
+    assert _minimum_required_lookback_rows("1d", 30) is None
 
 
 def test_enforce_1m_retention_calls_delete_api(monkeypatch):

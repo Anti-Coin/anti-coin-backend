@@ -15,6 +15,7 @@
 9. `B-004` 완료: worker cycle마다 `manifest.json` 생성(심볼/타임프레임 상태 요약 + degraded/freshness 병합).
 10. `B-006` 완료: `1m` retention(`14d default / 30d cap`) + disk watermark(70/85/90) + `1h->1d/1w/1M` downsample/lineage(`downsample_lineage.json`) 경로 반영, 회귀 `76 passed`.
 11. `D-2026-02-13-34` 반영: reconciliation mismatch semantics를 `internal_deterministic_mismatch`/`external_reconciliation_mismatch`로 분리하고, `1d/1w/1M` direct ingest 금지 경계를 정책으로 고정.
+12. `I-2026-02-13-01` 반영: `1h` canonical underfill 탐지 시 lookback 재부트스트랩 강제(`state/db cursor drift` 복구), 회귀 `83 passed`.
 
 ## 2. Next Priority Tasks
 1. `B-001`: timeframe tier 정책 매트릭스 잠금(1m 비대칭 + `latest closed 180` + `14d/30d` + Hard Gate+Accuracy + mismatch taxonomy + derived TF direct ingest 금지 경계)
@@ -22,6 +23,9 @@
 3. `C-006 -> C-007`: boundary scheduler + detection gate 하이브리드 전환
 4. `B-007`: admin/app.py timeframe 운영 대시보드 확장
 5. `B-005`: `/history`/`/predict` sunset 조건 충족 여부 재검증
+
+## 2.1 Runtime Note
+1. 로컬 `.env`는 참고용이며, 실제 서버 런타임 환경 변수는 `.env.prod` 기준으로 주입된다.
 
 ## 3. Current Risks
 1. `TD-018`: API-SSG 운영 계약(필드/경로) 최종 확정 미완료

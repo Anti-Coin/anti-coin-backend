@@ -29,6 +29,7 @@
 17. `B-006` 완료 (2026-02-13): `1m` retention(기본 14d, 상한 30d clamp) + 디스크 워터마크(70/85/90) 가드 + `block` 레벨에서 `1m` 초기 백필 차단 반영 + `1h->1d/1w/1M` downsample + `downsample_lineage.json` 경로 및 검증 테스트 반영, 회귀 `76 passed`
 18. `D-2026-02-13-34` 채택: reconciliation mismatch를 내부/외부로 분리(`internal_deterministic_mismatch` vs `external_reconciliation_mismatch`)하고, `1d/1w/1M` direct ingest 금지 경계를 정책으로 고정
 19. `C-002` 진행 (2026-02-13): `runtime_metrics.json` baseline 추가(실행시간/실패율/overrun 추세, poll-loop 모드에서 `missed_boundary`는 미지원으로 명시)
+20. `I-2026-02-13-01` 반영: `1h` canonical underfill(예: 30d 대비 소량 row) 시 DB last가 있어도 lookback 재부트스트랩을 강제해 bootstrap drift를 복구
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -134,14 +135,14 @@
 ## 7. R-003 Priority Reorder (Options + Adopted Baseline)
 | Option | Intent | Ordered Sequence | 장점 | 리스크 |
 |---|---|---|---|---|
-| Option A (Adopted) | Stability-first, phase boundary 보호 | `R-004 -> B-001 -> B-002 -> B-003 -> B-004 -> B-006 -> C-002 -> C-005 -> C-006 -> C-007 -> R-005 -> B-007(P2) -> B-005(P2) -> D-001+` | 정책/저장소/서빙 경계를 먼저 고정해 C/D 재작업 가능성을 줄임 | 비용 최적화(C-006/C-007) 체감이 늦어질 수 있음 |
+| Option A (Adopted) | Stability-first, phase boundary 보호 | `R-004 -> B-001 -> B-002 -> B-003 -> B-004 -> B-006 -> C-002 -> C-006 -> C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2) -> D-001+` | 정책/저장소/서빙 경계를 먼저 고정해 C/D 재작업 가능성을 줄임 | 비용 최적화(C-006/C-007) 체감이 늦어질 수 있음 |
 | Option B | Cost-first, C 조기 최적화 | `R-004 -> C-002 -> C-006 -> C-007 -> C-005 -> B-001 -> B-002 -> B-003 -> B-004 -> B-006 -> R-005 -> B-007(P2) -> B-005(P2) -> D-001+` | 루프 비용 절감 효과를 빠르게 확인 가능 | B 경계 미고정 상태에서 C 변경이 들어가 계약 드리프트/재작업 위험 증가 |
 
 채택 기준선:
 1. 현재 우선순위(`Stability > Cost > Performance`)에 따라 Option A를 기준선으로 채택한다.
 2. `B-005`는 사용자 의견에 따라 P2를 유지한다.
 3. Option B는 `C-002`에서 비용 압력이 즉시 심각하다는 증거가 나올 때 fallback 후보로만 유지한다.
-4. `D-2026-02-13-33` 반영 후 활성 실행 순서는 `B-001 -> B-004 -> B-006 -> C-002 -> C-005 -> C-006 -> C-007 -> R-005 -> B-007(P2) -> B-005(P2)`다.
+4. `D-2026-02-13-33` 반영 후 활성 실행 순서는 `B-001 -> B-004 -> B-006 -> C-002 -> C-006 -> C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2)`다.
 
 ## 8. R-004 Kickoff Contract (Accepted)
 1. Kickoff 구현 묶음은 `B-002`, `B-003` 2개로 고정한다.

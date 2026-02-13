@@ -68,6 +68,7 @@ CYCLE_TARGET_SECONDS = int(os.getenv("WORKER_CYCLE_SECONDS", "60"))
 RUNTIME_METRICS_WINDOW_SIZE = int(
     os.getenv("RUNTIME_METRICS_WINDOW_SIZE", "240")
 )
+LOOKBACK_MIN_ROWS_RATIO = float(os.getenv("LOOKBACK_MIN_ROWS_RATIO", "0.8"))
 
 
 def send_alert(message):
@@ -386,6 +387,7 @@ def resolve_ingest_since(
     state_since: datetime | None,
     last_time: datetime | None,
     disk_level: str,
+    force_rebootstrap: bool = False,
     now: datetime | None = None,
 ) -> tuple[datetime | None, str]:
     """
@@ -399,6 +401,21 @@ def resolve_ingest_since(
     lookback bootstrap을 다시 수행한다.
     """
     resolved_now = now or datetime.now(timezone.utc)
+    if force_rebootstrap:
+        if should_block_initial_backfill(
+            disk_level=disk_level,
+            timeframe=timeframe,
+            state_since=None,
+            last_time=None,
+        ):
+            return None, "blocked_storage_guard"
+
+        lookback_days = _lookback_days_for_timeframe(timeframe)
+        return (
+            resolved_now - timedelta(days=lookback_days),
+            "underfilled_rebootstrap",
+        )
+
     if last_time is not None:
         if state_since is not None and state_since > last_time:
             logger.warning(
@@ -431,6 +448,50 @@ def resolve_ingest_since(
 
     lookback_days = _lookback_days_for_timeframe(timeframe)
     return resolved_now - timedelta(days=lookback_days), source
+
+
+def _minimum_required_lookback_rows(
+    timeframe: str, lookback_days: int
+) -> int | None:
+    # 현재 운영 기준에서 coverage 보정은 1h canonical에만 적용한다.
+    if timeframe != "1h":
+        return None
+    expected = lookback_days * 24
+    if expected <= 0:
+        return None
+    return max(1, int(expected * LOOKBACK_MIN_ROWS_RATIO))
+
+
+def get_lookback_close_count(
+    query_api, symbol: str, timeframe: str, lookback_days: int
+) -> int | None:
+    query = f"""
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -{lookback_days}d)
+      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
+      |> filter(fn: (r) => r["symbol"] == "{symbol}")
+      |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
+      |> filter(fn: (r) => r["_field"] == "close")
+      |> count(column: "_value")
+    """
+    try:
+        result = query_api.query(query=query)
+    except Exception as e:
+        logger.error(f"[{symbol} {timeframe}] lookback count query failed: {e}")
+        return None
+
+    if not result:
+        return 0
+
+    for table in result:
+        if not table.records:
+            continue
+        value = table.records[0].get_value()
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    return 0
 
 
 def enforce_1m_retention(
@@ -1396,12 +1457,32 @@ def run_worker():
                         symbol, timeframe
                     )
                     last_time = get_last_timestamp(query_api, symbol, timeframe)
+                    lookback_days = _lookback_days_for_timeframe(timeframe)
+                    force_rebootstrap = False
+                    min_required_rows = _minimum_required_lookback_rows(
+                        timeframe, lookback_days
+                    )
+                    if min_required_rows is not None:
+                        close_count = get_lookback_close_count(
+                            query_api, symbol, timeframe, lookback_days
+                        )
+                        if (
+                            close_count is not None
+                            and close_count < min_required_rows
+                        ):
+                            force_rebootstrap = True
+                            logger.warning(
+                                f"[{symbol} {timeframe}] canonical coverage underfilled: "
+                                f"close_count={close_count} < min_required={min_required_rows}. "
+                                "Rebootstrapping from lookback."
+                            )
                     since, since_source = resolve_ingest_since(
                         symbol=symbol,
                         timeframe=timeframe,
                         state_since=state_since,
                         last_time=last_time,
                         disk_level=disk_level,
+                        force_rebootstrap=force_rebootstrap,
                         now=cycle_now,
                     )
 
