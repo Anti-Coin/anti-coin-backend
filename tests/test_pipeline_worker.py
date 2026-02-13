@@ -342,15 +342,9 @@ def test_should_enforce_1m_retention_interval():
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
     assert should_enforce_1m_retention(None, now) is True
     assert (
-        should_enforce_1m_retention(
-            now - timedelta(minutes=59), now
-        )
-        is False
+        should_enforce_1m_retention(now - timedelta(minutes=59), now) is False
     )
-    assert (
-        should_enforce_1m_retention(now - timedelta(hours=1), now)
-        is True
-    )
+    assert should_enforce_1m_retention(now - timedelta(hours=1), now) is True
 
 
 def test_should_block_initial_backfill_only_for_1m_block_mode():
@@ -386,7 +380,9 @@ def test_should_block_initial_backfill_only_for_1m_block_mode():
 def test_enforce_1m_retention_calls_delete_api(monkeypatch):
     fake_delete_api = FakeDeleteAPI()
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
-    monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data")
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data"
+    )
     monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_ORG", "coin")
 
     enforce_1m_retention(
@@ -401,7 +397,9 @@ def test_enforce_1m_retention_calls_delete_api(monkeypatch):
     assert first_call["bucket"] == "market_data"
     assert first_call["org"] == "coin"
     assert first_call["predicate"].endswith('timeframe="1m"')
-    assert first_call["stop"] == datetime(2026, 1, 14, 12, 0, tzinfo=timezone.utc)
+    assert first_call["stop"] == datetime(
+        2026, 1, 14, 12, 0, tzinfo=timezone.utc
+    )
 
 
 def test_downsample_ohlcv_frame_filters_incomplete_bucket():
@@ -437,7 +435,9 @@ def test_downsample_ohlcv_frame_filters_incomplete_bucket():
     assert incomplete_df.iloc[0]["expected_count"] == 24
 
 
-def test_run_downsample_and_save_writes_ohlcv_and_lineage(tmp_path, monkeypatch):
+def test_run_downsample_and_save_writes_ohlcv_and_lineage(
+    tmp_path, monkeypatch
+):
     base = datetime(2026, 2, 10, 0, 0, tzinfo=timezone.utc)
     rows = []
     for hour in range(48):
@@ -457,8 +457,12 @@ def test_run_downsample_and_save_writes_ohlcv_and_lineage(tmp_path, monkeypatch)
     write_api = FakeWriteAPI()
 
     lineage_path = tmp_path / "downsample_lineage.json"
-    monkeypatch.setattr("scripts.pipeline_worker.DOWNSAMPLE_LINEAGE_FILE", lineage_path)
-    monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data")
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.DOWNSAMPLE_LINEAGE_FILE", lineage_path
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data"
+    )
     monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_ORG", "coin")
 
     latest_saved_at, result = run_downsample_and_save(

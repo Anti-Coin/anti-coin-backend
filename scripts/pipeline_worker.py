@@ -276,7 +276,9 @@ def enforce_1m_retention(
         RETENTION_1M_DEFAULT_DAYS,
         min(retention_days, RETENTION_1M_MAX_DAYS),
     )
-    cutoff = (resolved_now - timedelta(days=effective_days)).replace(microsecond=0)
+    cutoff = (resolved_now - timedelta(days=effective_days)).replace(
+        microsecond=0
+    )
     epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
     for symbol in symbols:
@@ -313,7 +315,9 @@ def _load_downsample_lineage(
 
     entries = payload.get("entries")
     if not isinstance(entries, dict):
-        logger.error("Invalid downsample lineage format: entries is not a dict.")
+        logger.error(
+            "Invalid downsample lineage format: entries is not a dict."
+        )
         return {}
     return entries
 
@@ -384,7 +388,11 @@ def _query_ohlcv_frame(
     """
     result = query_api.query_data_frame(query)
     if isinstance(result, list):
-        frames = [frame for frame in result if isinstance(frame, pd.DataFrame) and not frame.empty]
+        frames = [
+            frame
+            for frame in result
+            if isinstance(frame, pd.DataFrame) and not frame.empty
+        ]
         if not frames:
             return pd.DataFrame()
         df = pd.concat(frames, ignore_index=True)
@@ -473,7 +481,15 @@ def downsample_ohlcv_frame(
     return (
         complete[["open", "high", "low", "close", "volume"]],
         incomplete[
-            ["open", "high", "low", "close", "volume", "source_count", "expected_count"]
+            [
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "source_count",
+                "expected_count",
+            ]
         ],
     )
 
@@ -1236,7 +1252,9 @@ def run_worker():
                                 )
                                 continue
 
-                            lookback_days = _lookback_days_for_timeframe(timeframe)
+                            lookback_days = _lookback_days_for_timeframe(
+                                timeframe
+                            )
                             # 데이터가 아예 없으면 timeframe 정책 기준 lookback부터
                             since = datetime.now(timezone.utc) - timedelta(
                                 days=lookback_days
@@ -1248,11 +1266,13 @@ def run_worker():
 
                     # 수집
                     if timeframe in DOWNSAMPLE_TARGET_TIMEFRAMES:
-                        latest_saved_at, ingest_result = run_downsample_and_save(
-                            write_api,
-                            query_api,
-                            symbol=symbol,
-                            target_timeframe=timeframe,
+                        latest_saved_at, ingest_result = (
+                            run_downsample_and_save(
+                                write_api,
+                                query_api,
+                                symbol=symbol,
+                                target_timeframe=timeframe,
+                            )
                         )
                     else:
                         latest_saved_at, ingest_result = fetch_and_save(
