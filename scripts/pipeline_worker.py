@@ -379,6 +379,60 @@ def should_block_initial_backfill(
     )
 
 
+def resolve_ingest_since(
+    *,
+    symbol: str,
+    timeframe: str,
+    state_since: datetime | None,
+    last_time: datetime | None,
+    disk_level: str,
+    now: datetime | None = None,
+) -> tuple[datetime | None, str]:
+    """
+    ingest 시작 시점을 결정한다.
+
+    우선순위:
+    1) DB last timestamp (SoT)
+    2) lookback bootstrap
+
+    state cursor가 존재해도 DB에서 last timestamp를 찾지 못하면 drift로 보고
+    lookback bootstrap을 다시 수행한다.
+    """
+    resolved_now = now or datetime.now(timezone.utc)
+    if last_time is not None:
+        if state_since is not None and state_since > last_time:
+            logger.warning(
+                f"[{symbol} {timeframe}] ingest cursor drift detected: "
+                f"state_since={state_since.strftime('%Y-%m-%dT%H:%M:%SZ')} "
+                f"> db_last={last_time.strftime('%Y-%m-%dT%H:%M:%SZ')}. "
+                "Using db_last as source of truth."
+            )
+        return last_time, "db_last"
+
+    # DB에 데이터가 없는데 state cursor가 남아 있는 경우(드리프트)는
+    # 초기 백필과 동일하게 취급해 lookback bootstrap을 재수행한다.
+    guard_state_since = state_since
+    source = "bootstrap_lookback"
+    if state_since is not None:
+        guard_state_since = None
+        source = "state_drift_rebootstrap"
+        logger.warning(
+            f"[{symbol} {timeframe}] state cursor exists but DB has no last timestamp. "
+            "Rebootstrapping from lookback window."
+        )
+
+    if should_block_initial_backfill(
+        disk_level=disk_level,
+        timeframe=timeframe,
+        state_since=guard_state_since,
+        last_time=last_time,
+    ):
+        return None, "blocked_storage_guard"
+
+    lookback_days = _lookback_days_for_timeframe(timeframe)
+    return resolved_now - timedelta(days=lookback_days), source
+
+
 def enforce_1m_retention(
     delete_api,
     symbols: list[str],
@@ -1338,52 +1392,41 @@ def run_worker():
 
             for symbol in TARGET_COINS:
                 for timeframe in TIMEFRAMES:
-                    last_time = None
                     state_since = ingest_state_store.get_last_closed(
                         symbol, timeframe
                     )
-                    if state_since:
-                        since = state_since
-                    else:
-                        # DB에서 마지막 데이터 시간 확인
-                        last_time = get_last_timestamp(
-                            query_api, symbol, timeframe
+                    last_time = get_last_timestamp(query_api, symbol, timeframe)
+                    since, since_source = resolve_ingest_since(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        state_since=state_since,
+                        last_time=last_time,
+                        disk_level=disk_level,
+                        now=cycle_now,
+                    )
+
+                    if since_source == "blocked_storage_guard":
+                        logger.warning(
+                            f"[{symbol} {timeframe}] initial backfill blocked "
+                            f"by storage guard (usage={disk_usage_percent}%)."
                         )
+                        ingest_state_store.upsert(
+                            symbol,
+                            timeframe,
+                            last_closed_ts=state_since,
+                            status="blocked_storage_guard",
+                        )
+                        continue
 
-                        # 시작 시간 결정 (Since)
-                        if last_time:
-                            # 마지막 데이터가 있으면, 그 시간부터 다시 가져옴 (덮어쓰기 업데이트)
-                            since = last_time
-                        else:
-                            if should_block_initial_backfill(
-                                disk_level=disk_level,
-                                timeframe=timeframe,
-                                state_since=state_since,
-                                last_time=last_time,
-                            ):
-                                logger.warning(
-                                    f"[{symbol} {timeframe}] initial backfill blocked "
-                                    f"by storage guard (usage={disk_usage_percent}%)."
-                                )
-                                ingest_state_store.upsert(
-                                    symbol,
-                                    timeframe,
-                                    last_closed_ts=state_since,
-                                    status="blocked_storage_guard",
-                                )
-                                continue
-
-                            lookback_days = _lookback_days_for_timeframe(
-                                timeframe
-                            )
-                            # 데이터가 아예 없으면 timeframe 정책 기준 lookback부터
-                            since = datetime.now(timezone.utc) - timedelta(
-                                days=lookback_days
-                            )
-                            logger.info(
-                                f"[{symbol} {timeframe}] 초기 데이터 수집 시작 "
-                                f"({lookback_days}일 전부터)"
-                            )
+                    if since_source in {
+                        "bootstrap_lookback",
+                        "state_drift_rebootstrap",
+                    }:
+                        lookback_days = _lookback_days_for_timeframe(timeframe)
+                        logger.info(
+                            f"[{symbol} {timeframe}] 초기 데이터 수집 시작 "
+                            f"({lookback_days}일 전부터, source={since_source})"
+                        )
 
                     # 수집
                     if timeframe in DOWNSAMPLE_TARGET_TIMEFRAMES:

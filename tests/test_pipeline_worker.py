@@ -15,6 +15,7 @@ from scripts.pipeline_worker import (
     enforce_1m_retention,
     get_disk_usage_percent,
     prediction_enabled_for_timeframe,
+    resolve_ingest_since,
     resolve_disk_watermark_level,
     run_downsample_and_save,
     run_prediction_and_save,
@@ -454,6 +455,58 @@ def test_should_block_initial_backfill_only_for_1m_block_mode():
         )
         is False
     )
+
+
+def test_resolve_ingest_since_prefers_db_last_over_state_cursor():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    state_since = datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
+    db_last = datetime(2026, 2, 13, 9, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        state_since=state_since,
+        last_time=db_last,
+        disk_level="normal",
+        now=now,
+    )
+
+    assert since == db_last
+    assert source == "db_last"
+
+
+def test_resolve_ingest_since_rebootstraps_when_db_is_empty():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        state_since=state_since,
+        last_time=None,
+        disk_level="normal",
+        now=now,
+    )
+
+    assert source == "state_drift_rebootstrap"
+    assert since == datetime(2026, 1, 14, 12, 0, tzinfo=timezone.utc)
+
+
+def test_resolve_ingest_since_blocks_1m_drift_backfill_on_block_level():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1m",
+        state_since=state_since,
+        last_time=None,
+        disk_level="block",
+        now=now,
+    )
+
+    assert since is None
+    assert source == "blocked_storage_guard"
 
 
 def test_enforce_1m_retention_calls_delete_api(monkeypatch):
