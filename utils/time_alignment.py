@@ -41,7 +41,9 @@ def next_timeframe_boundary(now: datetime, timeframe: str) -> datetime:
 
     if unit == "d":
         anchor = datetime(1970, 1, 1, tzinfo=timezone.utc)
-        current_day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        current_day_start = now_utc.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         elapsed_days = (current_day_start - anchor).days
         next_bucket_start_days = ((elapsed_days // value) + 1) * value
         return anchor + timedelta(days=next_bucket_start_days)
@@ -49,9 +51,9 @@ def next_timeframe_boundary(now: datetime, timeframe: str) -> datetime:
     if unit == "w":
         # Week boundary: Monday 00:00 UTC
         anchor = datetime(1970, 1, 5, tzinfo=timezone.utc)  # Monday
-        current_week_start = (now_utc - timedelta(days=now_utc.weekday())).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        current_week_start = (
+            now_utc - timedelta(days=now_utc.weekday())
+        ).replace(hour=0, minute=0, second=0, microsecond=0)
         elapsed_weeks = (current_week_start - anchor).days // 7
         next_bucket_start_weeks = ((elapsed_weeks // value) + 1) * value
         return anchor + timedelta(weeks=next_bucket_start_weeks)
@@ -60,7 +62,9 @@ def next_timeframe_boundary(now: datetime, timeframe: str) -> datetime:
     current_month_start = now_utc.replace(
         day=1, hour=0, minute=0, second=0, microsecond=0
     )
-    month_index = current_month_start.year * 12 + (current_month_start.month - 1)
+    month_index = current_month_start.year * 12 + (
+        current_month_start.month - 1
+    )
     next_month_index = ((month_index // value) + 1) * value
     year = next_month_index // 12
     month = (next_month_index % 12) + 1
@@ -86,16 +90,18 @@ def last_closed_candle_open(now: datetime, timeframe: str) -> datetime:
 
     if unit == "d":
         anchor = datetime(1970, 1, 1, tzinfo=timezone.utc)
-        current_day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        current_day_start = now_utc.replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         elapsed_days = (current_day_start - anchor).days
         current_bucket_start_days = (elapsed_days // value) * value
         return anchor + timedelta(days=current_bucket_start_days - value)
 
     if unit == "w":
         anchor = datetime(1970, 1, 5, tzinfo=timezone.utc)  # Monday
-        current_week_start = (now_utc - timedelta(days=now_utc.weekday())).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        current_week_start = (
+            now_utc - timedelta(days=now_utc.weekday())
+        ).replace(hour=0, minute=0, second=0, microsecond=0)
         elapsed_weeks = (current_week_start - anchor).days // 7
         current_bucket_start_weeks = (elapsed_weeks // value) * value
         return anchor + timedelta(weeks=current_bucket_start_weeks - value)
@@ -104,7 +110,9 @@ def last_closed_candle_open(now: datetime, timeframe: str) -> datetime:
     current_month_start = now_utc.replace(
         day=1, hour=0, minute=0, second=0, microsecond=0
     )
-    month_index = current_month_start.year * 12 + (current_month_start.month - 1)
+    month_index = current_month_start.year * 12 + (
+        current_month_start.month - 1
+    )
     current_bucket_start_month = (month_index // value) * value
     last_closed_open_month = current_bucket_start_month - value
     year = last_closed_open_month // 12

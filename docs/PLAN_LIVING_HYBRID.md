@@ -70,12 +70,11 @@
 
 ## 7. Next Cycle (Recommended)
 1. `B-001`: timeframe tier 정책 매트릭스 잠금(1m 비대칭 + `latest closed 180` + `14d/30d` + Hard Gate+Accuracy)
-2. `B-004`: manifest 생성(심볼/타임프레임 최신 상태 요약)
-3. `B-006`: 저장소 예산 가드 + retention/downsample 실행
-4. `C-002`: 실행시간/실패율/overrun/missed boundary 메트릭 수집
-5. `C-006`: timeframe 경계 기반 scheduler 전환
-6. `C-007`: 신규 closed candle 감지 게이트 결합
-7. `B-007` 설계 착수: admin/app.py timeframe 운영 대시보드 확장
+2. `C-002`: 실행시간/실패율/overrun/missed boundary 메트릭 수집
+3. `C-006`: timeframe 경계 기반 scheduler 전환
+4. `C-007`: 신규 closed candle 감지 게이트 결합
+5. `B-007` 설계 착수: admin/app.py timeframe 운영 대시보드 확장
+6. `B-005` 검토: endpoint sunset 조건 충족 여부 확정
 
 ## 8. Portfolio Capability Matrix (Current vs Next)
 | Capability | Current Evidence | Next Strengthening |
@@ -92,8 +91,7 @@
 3. `TD-020`: 고정 poll loop로 비용/정합성 리스크
 4. `TD-024`: 단계별 부분 실패 알림 세분화 미완료
 5. `1m` 예측 경로를 그대로 확장할 경우 candle 경계 내 완료 실패(오버런) 리스크
-6. Free Tier 50GB 제약에서 다중 심볼 `1m` 장기 보관 시 디스크 고갈 리스크
-7. `1M` 등 장기 TF에서 샘플 부족 상태로 모델 판단/서빙이 왜곡될 리스크
+6. `1M` 등 장기 TF에서 샘플 부족 상태로 모델 판단/서빙이 왜곡될 리스크
 
 ## 10. Change Rules
 1. 정책 변경은 `docs/DECISIONS.md`를 먼저 갱신한다.

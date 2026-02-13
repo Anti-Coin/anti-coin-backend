@@ -22,7 +22,9 @@ def test_classify_freshness_returns_fresh_stale_hard_stale():
 
     fresh = classify_freshness(now - timedelta(minutes=5), now, soft, hard)
     stale = classify_freshness(now - timedelta(minutes=15), now, soft, hard)
-    hard_stale = classify_freshness(now - timedelta(minutes=25), now, soft, hard)
+    hard_stale = classify_freshness(
+        now - timedelta(minutes=25), now, soft, hard
+    )
 
     assert fresh.status == "fresh"
     assert stale.status == "stale"
@@ -45,4 +47,6 @@ def test_classify_freshness_rejects_invalid_limits():
     with pytest.raises(ValueError):
         classify_freshness(now, now, timedelta(minutes=0))
     with pytest.raises(ValueError):
-        classify_freshness(now, now, timedelta(minutes=10), timedelta(minutes=5))
+        classify_freshness(
+            now, now, timedelta(minutes=10), timedelta(minutes=5)
+        )

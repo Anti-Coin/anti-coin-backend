@@ -38,7 +38,9 @@ def classify_freshness(
 
     resolved_hard_limit = hard_limit or soft_limit * 2
     if resolved_hard_limit < soft_limit:
-        raise ValueError("hard_limit must be greater than or equal to soft_limit.")
+        raise ValueError(
+            "hard_limit must be greater than or equal to soft_limit."
+        )
 
     age = now - updated_at
     if age < timedelta(0):

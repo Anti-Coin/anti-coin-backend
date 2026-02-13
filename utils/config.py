@@ -46,7 +46,8 @@ def _parse_thresholds(
     raw: str | None, defaults: dict[str, int]
 ) -> dict[str, timedelta]:
     thresholds = {
-        timeframe: timedelta(minutes=minutes) for timeframe, minutes in defaults.items()
+        timeframe: timedelta(minutes=minutes)
+        for timeframe, minutes in defaults.items()
     }
     if not raw:
         return thresholds
@@ -90,7 +91,9 @@ def _enforce_ingest_timeframe_guard(
     return timeframes.copy()
 
 
-TARGET_SYMBOLS = _parse_csv_env(os.getenv("TARGET_SYMBOLS"), DEFAULT_TARGET_SYMBOLS)
+TARGET_SYMBOLS = _parse_csv_env(
+    os.getenv("TARGET_SYMBOLS"), DEFAULT_TARGET_SYMBOLS
+)
 ENABLE_MULTI_TIMEFRAMES = _parse_bool_env(
     os.getenv("ENABLE_MULTI_TIMEFRAMES"),
     default=False,
