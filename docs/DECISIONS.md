@@ -140,6 +140,30 @@
 - Revisit Trigger:
   - 실제 디스크 성장률이 예상과 크게 다르거나, 경보 노이즈가 운영 임계치를 넘을 때
 
+### D-2026-02-13-32
+- Date: 2026-02-13
+- Status: Accepted
+- Topic: Phase D Model Coverage Strategy (Tiered Coverage + Fallback Chain)
+- Context:
+  - Symbol/Timeframe별 전용 모델을 일괄 도입하면 Free Tier 자원과 운영 복잡도 기준에서 초기 실패 확률이 높다.
+  - 제품 목표는 "모든 모델 자동화" 자체가 아니라, 운영 가능한 AIOps 역량과 근거를 축적하는 것이다.
+  - 사용자 확인 기준상 심볼 확장은 점진적으로 진행되며, 초기에는 오래된/대표 심볼 중심 운영이 예상된다.
+- Decision:
+  - Phase D 기본 커버리지는 `timeframe-shared champion`으로 시작한다(전 심볼 공통 경로).
+  - `symbol+timeframe` 전용 모델은 아래 조건을 모두 만족할 때만 승격한다.
+    - 최소 샘플/평가 윈도우 게이트 통과
+    - shared 대비 성능 개선(사전 정의한 지표 임계치) 입증
+    - 학습/추론 비용이 운영 예산 범위 내
+  - 서빙 fallback 체인은 아래 순서로 고정한다.
+    - dedicated(`symbol+timeframe`) -> shared(`timeframe`) -> `insufficient_data` 차단
+  - dedicated 모델 실패 시 hard 상태를 숨기지 않으며, 조용한 shared 대체로 실패를 은닉하지 않는다(상태/사유 노출).
+  - 모델 메타데이터(`D-002`)에 `coverage_scope`, `fallback_parent`, `promoted_by_gate_at` 필드를 필수로 추가한다.
+- Consequence:
+  - 단기에는 모델 다양성보다 운영 안정성과 재현성을 우선 확보한다.
+  - 전용 모델 확장은 느리지만, 승격/롤백 근거가 명확해져 포트폴리오 설명 가능성이 높아진다.
+- Revisit Trigger:
+  - 심볼 수/트래픽이 예상보다 빠르게 증가하거나, shared 모델의 장기 품질 저하가 반복될 때
+
 ## 3. Decision Operation Policy
 1. Archive로 이동된 결정은 `Section 1`에 요약 형태로만 유지한다.
 2. 아직 archive로 이동하지 않은 결정은 `Section 2`에 상세 형태로 유지한다.

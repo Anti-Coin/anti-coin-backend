@@ -62,6 +62,20 @@ def _prediction_health_key(symbol: str, timeframe: str) -> str:
     return f"{symbol}|{timeframe}"
 
 
+def _static_export_paths(kind: str, symbol: str, timeframe: str) -> tuple[Path, Path | None]:
+    """
+    정적 산출물 파일 경로를 반환한다.
+
+    Phase B 전환 기간에는 canonical(timeframe 포함) + legacy를 함께 유지한다.
+    """
+    safe_symbol = symbol.replace("/", "_")
+    canonical = STATIC_DIR / f"{kind}_{safe_symbol}_{timeframe}.json"
+    legacy = STATIC_DIR / f"{kind}_{safe_symbol}.json"
+    if canonical == legacy:
+        return canonical, None
+    return canonical, legacy
+
+
 def _load_prediction_health(
     path: Path = PREDICTION_HEALTH_FILE,
 ) -> dict[str, dict]:
@@ -195,14 +209,18 @@ def save_history_to_json(df, symbol):
                 ["timestamp", "open", "high", "low", "close", "volume"]
             ].to_dict(orient="records"),
             "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "type": "history_1h",
+            "timeframe": TIMEFRAME,
+            "type": f"history_{TIMEFRAME}",
         }
 
-        safe_symbol = symbol.replace("/", "_")
-        file_path = STATIC_DIR / f"history_{safe_symbol}.json"
-        atomic_write_json(file_path, json_output)
+        canonical_path, legacy_path = _static_export_paths("history", symbol, TIMEFRAME)
+        atomic_write_json(canonical_path, json_output)
+        if legacy_path is not None:
+            atomic_write_json(legacy_path, json_output)
 
-        logger.info(f"[{symbol}] 정적 파일 생성 완료: {file_path}")
+        logger.info(
+            f"[{symbol}] 정적 파일 생성 완료: canonical={canonical_path}, legacy={legacy_path}"
+        )
     except Exception as e:
         logger.error(f"[{symbol}] 정적 파일 생성 실패: {e}")
 
@@ -457,17 +475,22 @@ def run_prediction_and_save(write_api, symbol) -> tuple[bool, str | None]:
 
         json_output = {
             "symbol": symbol,
+            "timeframe": TIMEFRAME,
             "updated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),  # 생성 시점 기록
             "forecast": export_data.to_dict(orient="records"),
         }
 
-        # 파일 저장 (덮어쓰기)
-        safe_symbol = symbol.replace("/", "_")
-        file_path = STATIC_DIR / f"prediction_{safe_symbol}.json"
-        atomic_write_json(file_path, json_output, indent=2)
+        # 파일 저장 (전환 기간: canonical + legacy 동시 유지)
+        canonical_path, legacy_path = _static_export_paths(
+            "prediction", symbol, TIMEFRAME
+        )
+        atomic_write_json(canonical_path, json_output, indent=2)
+        if legacy_path is not None:
+            atomic_write_json(legacy_path, json_output, indent=2)
 
         logger.info(
-            f"[{symbol}] SSG 파일 생성 완료: {file_path} (start={prediction_start.strftime('%Y-%m-%dT%H:%M:%SZ')}, freq={TIMEFRAME})"
+            f"[{symbol}] SSG 파일 생성 완료: canonical={canonical_path}, legacy={legacy_path} "
+            f"(start={prediction_start.strftime('%Y-%m-%dT%H:%M:%SZ')}, freq={TIMEFRAME})"
         )
 
         # 저장(DB)

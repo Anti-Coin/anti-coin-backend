@@ -32,6 +32,18 @@
 | C | ready | 장애 전파 범위 축소와 운영 관측성 강화 | `C-002` 관측 증거 확보 + `R-004` kickoff 확정 + (`C-005` 또는 대안) 구현으로 장애 격리 효과 검증 |
 | D | backlog | 모델 진화의 "운영 안전성" 확보(자동화 자체가 목적 아님) | D-001~D-005 핵심 게이트(인터페이스/메타데이터/shadow 비교/승격 차단) 확립 + 롤백 경로 검증 |
 
+## 4.1 Phase D Model Coverage Baseline (Locked)
+1. 기본 커버리지는 `timeframe-shared champion`으로 시작한다(전 심볼 공통).
+2. `symbol+timeframe` dedicated는 "기본값"이 아니라 "승격 결과"로만 도입한다.
+3. dedicated 승격 조건:
+   - 최소 샘플/평가 구간 게이트 통과
+   - shared 대비 성능 개선 증거 확보
+   - 학습/추론 비용이 운영 예산 범위 내
+4. serving fallback 체인:
+   - dedicated -> shared -> `insufficient_data` 차단
+5. dedicated 실패를 shared로 조용히 대체하지 않는다. 실패 상태/사유를 노출해 운영 정직성을 유지한다.
+6. 관련 정책 상세는 `D-2026-02-13-32`, 구현 단위는 `D-011`에서 관리한다.
+
 ## 5. Rebaseline Focus (Pre-Phase B)
 1. Phase A 이전에 작성된 B/C/D 태스크는 구현 중 드러난 리스크를 충분히 반영하지 못했을 가능성을 전제로 한다.
 2. Phase A 실행 결과(태스크 증가, 우선순위 변경)를 기준으로 B/C/D 전체를 다시 점검한다.
@@ -51,10 +63,11 @@
 
 ## 7. Next Cycle (Recommended)
 1. `B-001`: timeframe tier 정책 매트릭스 잠금(1m 비대칭 + `latest closed 180` + `14d/30d` + Hard Gate+Accuracy)
-2. `B-002`: 파일 네이밍 규칙 통일
-3. `B-003`: timeframe-aware export 전환(`1m` prediction 비생성 포함)
+2. `B-003`: timeframe-aware export 전환(`1m` prediction 비생성 포함)
+3. `B-004`: manifest 생성(심볼/타임프레임 최신 상태 요약)
 4. `B-006`: 저장소 예산 가드 + retention/downsample 실행
 5. `C-002`: 실행시간/실패율 메트릭 수집(Phase C 착수 근거)
+6. `D-011` 설계 착수: model coverage matrix + fallback resolver 구현 기준 세분화
 
 ## 8. Portfolio Capability Matrix (Current vs Next)
 | Capability | Current Evidence | Next Strengthening |

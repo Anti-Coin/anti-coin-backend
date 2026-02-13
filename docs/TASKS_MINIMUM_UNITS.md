@@ -20,6 +20,8 @@
 8. `D-2026-02-13-29` 채택: 1m 비대칭 정책(예측 비서빙 + hybrid 서빙 후보)과 저장소 가드가 Phase B 선행 조건임을 확정
 9. `D-2026-02-13-30` 채택: 서빙 정책을 Hard Gate + Accuracy Signal 2층 구조로 고정
 10. `B-001` 정책 매트릭스 초안(v1) 작성: `docs/TIMEFRAME_POLICY_MATRIX.md`
+11. `D-2026-02-13-32` 채택: Phase D 모델 커버리지를 `shared -> dedicated 승격` 전략으로 고정
+12. `B-002` 완료 (2026-02-13): canonical `{symbol}_{timeframe}` 네이밍 적용 + legacy 호환(dual-write) + 회귀 테스트(`29 passed`) 확인
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -35,7 +37,7 @@
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
 | B-001 | P1 | timeframe tier 정책 매트릭스 확정(수집/보존/서빙/예측) | in_progress | `docs/TIMEFRAME_POLICY_MATRIX.md` 정책 잠금 + `1m` 예측 비서빙, `1m` hybrid API=`latest closed 180 candles`, `1m` rolling=`default 14d / cap 30d`, `1h->1d/1w/1M` downsample 경로, Hard Gate+Accuracy 정책을 문서/설정으로 고정 |
-| B-002 | P1 | 파일 네이밍 규칙 통일 | open | `{symbol}_{timeframe}` 규칙 적용 |
+| B-002 | P1 | 파일 네이밍 규칙 통일 | done (2026-02-13) | canonical `{symbol}_{timeframe}` 파일 생성 + legacy fallback 호환 유지 + `tests/test_api_status.py`/`tests/test_status_monitor.py` 회귀 통과 |
 | B-003 | P1 | history/prediction export timeframe-aware 전환 | open | 다중 timeframe 파일 동시 생성 + `1m` prediction 산출물 비생성 정책 준수 |
 | B-004 | P1 | manifest 파일 생성 | open | 심볼/타임프레임별 최신 상태 요약 |
 | B-006 | P1 | 저장소 예산 가드(50GB) + retention/downsample 실행 | open | `1m` rolling(`14d default / 30d cap`) 적용 + 디스크 watermark 경보/차단 + downsample job의 lineage/검증 경로 확정 |
@@ -64,11 +66,12 @@
 | D-008 | P2 | 모델 롤백 절차/코드 추가 | open | 이전 champion 복귀 가능 |
 | D-009 | P2 | Drift 알림 연동 | open | 임계 초과 시 경고 발송 |
 | D-010 | P1 | 장기 timeframe 최소 샘플 gate 구현 | open | 최소 샘플 미달 TF는 `insufficient_data`로 표시하고 예측 서빙 차단 |
+| D-011 | P1 | Model Coverage Matrix + Fallback Resolver 구현 | open | 기본 `timeframe-shared`/조건부 `symbol+timeframe dedicated` 정책과 `dedicated -> shared -> insufficient_data` fallback 체인이 코드/메타데이터/테스트로 검증됨 |
 
 ## 3. Immediate Bundle
 1. `B-001`
-2. `B-002`
-3. `B-003`
+2. `B-003`
+3. `B-004`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
@@ -115,6 +118,7 @@
 | D-008 | 롤백 절차 없이는 모델 배포 실패 시 MTTR이 급증 | 잘못된 버전 복귀로 상태 악화 | 버전 pin 기반 롤백 리허설 + post-rollback smoke | 이전 champion 고정 포인터로 즉시 복귀 |
 | D-009 | drift 탐지 없이는 성능 저하를 늦게 인지함 | 과도한 false alert로 운영 피로 증가 | 임계값 backtest + 경보 빈도 검증 | 경고 채널 격하 또는 알림 비활성화 |
 | D-010 | 장기 TF에서 샘플 수가 부족하면 모델 비교/승격 판단이 왜곡된다 | 통계적으로 무의미한 지표로 잘못된 모델 선택 | timeframe별 최소 샘플 회귀 테스트 + 미달 시 `insufficient_data` 노출 테스트 | 장기 TF 예측 기능 비활성화 후 baseline 모델만 유지 |
+| D-011 | 전 심볼/TF 전용 모델 일괄 도입은 비용/운영 복잡도를 급격히 증가시킨다 | 자원 고갈, 승격/롤백 불명확, 실패 은닉 fallback 발생 | coverage matrix 테스트 + 승격 게이트 테스트 + fallback 우선순위 테스트 | shared-only 모드로 즉시 회귀(dedicated 해제) |
 
 ## 7. R-003 Priority Reorder (Options + Adopted Baseline)
 | Option | Intent | Ordered Sequence | 장점 | 리스크 |
