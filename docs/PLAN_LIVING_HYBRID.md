@@ -28,23 +28,52 @@
 | Phase | Status | Objective | Exit Condition |
 |---|---|---|---|
 | A | completed | 수집/복구/상태판정 신뢰성 확보 | A-001~A-019 완료 + Exit Criteria 충족 |
-| B | ready | 다중 timeframe 구조 전환 | timeframe-aware export + manifest + 정책 분리 |
-| C | ready | worker 분리/운영 관측성 강화 | C-005/C-006 완료 후 안정 운용 증거 확보 |
-| D | backlog | 모델 진화 자동화 | champion/shadow 비교 + 승격/롤백 게이트 확립 |
+| B | ready | 다중 timeframe 전환 시 정합성(파일 규칙/상태 판정/운영 경계) 유지 | B-001~B-004 완료 + API/monitor 상태 계약 유지 + `B-005` sunset 조건 충족 여부 확정 |
+| C | ready | 장애 전파 범위 축소와 운영 관측성 강화 | `C-002` 관측 증거 확보 + `R-004` kickoff 확정 + (`C-005` 또는 대안) 구현으로 장애 격리 효과 검증 |
+| D | backlog | 모델 진화의 "운영 안전성" 확보(자동화 자체가 목적 아님) | D-001~D-005 핵심 게이트(인터페이스/메타데이터/shadow 비교/승격 차단) 확립 + 롤백 경로 검증 |
 
-## 5. Next Cycle (Recommended)
-1. `C-005`: pipeline worker 역할 분리(ingest/predict/export)
-2. `C-006`: timeframe 경계/새 캔들 감지 기반 trigger 전환
-3. `B-005`: `/history`/`/predict` sunset 정리
+## 5. Rebaseline Focus (Pre-Phase B)
+1. Phase A 이전에 작성된 B/C/D 태스크는 구현 중 드러난 리스크를 충분히 반영하지 못했을 가능성을 전제로 한다.
+2. Phase A 실행 결과(태스크 증가, 우선순위 변경)를 기준으로 B/C/D 전체를 다시 점검한다.
+3. 이번 Rebaseline의 목표는 "완벽한 예측"이 아니라 "현재 시점에서 최대한 완결된 실행 기준선"을 만드는 것이다.
+4. Rebaseline은 아래 4가지 질문에 답해야 완료로 본다.
+   - 각 Phase 목적/Exit 조건이 지금도 타당한가?
+   - 각 Task는 지금 아는 리스크를 반영해 충분히 세분화되었는가?
+   - 우선순위는 실제 리스크/의존성/운영비 기준으로 재정렬되었는가?
+   - Phase B kickoff에 필요한 최소 묶음(실행+검증+롤백)이 확정되었는가?
+5. `R-001`~`R-004`는 완료됐으며, 현재는 kickoff 기준선에 따라 `B-002 -> B-003` 구현에 착수하는 단계다.
 
-## 6. Current Risk Register (Top)
+## 6. Rebaseline Protocol (Execution)
+1. 목적 재검증(`R-001`, 완료): B/C/D의 Objective/Exit Condition을 다시 정의한다.
+2. 태스크 재세분화(`R-002`, 완료): 각 태스크에 `why/failure mode/verification/rollback`을 추가한다.
+3. 우선순위 재정렬(`R-003`, 완료): Option A/B를 비교하고 안정성 우선 기준으로 Option A를 채택한다.
+4. 착수 게이트 확정(`R-004`, 완료): kickoff 구현 묶음을 `B-002 -> B-003`으로 고정하고, 검증/롤백 경계를 확정한다.
+
+## 7. Next Cycle (Recommended)
+1. `B-002`: 파일 네이밍 규칙 통일
+2. `B-003`: timeframe-aware export 전환
+3. `B-004`: manifest 파일 생성
+4. `C-002`: 실행시간/실패율 메트릭 수집(Phase C 착수 근거)
+5. `R-005`: SLA-lite 지표 정의(포트폴리오 운영 증거)
+
+## 8. Portfolio Capability Matrix (Current vs Next)
+| Capability | Current Evidence | Next Strengthening |
+|---|---|---|
+| 사용자 플레인 안정 서빙(SSG) | 정적 JSON + nginx 분리, freshness 상태 노출 | availability 지표화(`R-005`) |
+| 상태 정직성(fresh/stale/hard/corrupt) | `/status` 및 monitor 공통 evaluator 운용 | 경고 노출 정책의 FE 계약 명문화(`B-005`) |
+| 장애 신호 분리(`soft stale` vs `degraded`) | prediction health 및 상태전이 알림 적용 | alert miss 측정 체계(`R-005`) |
+| 수집 복구/무결성 | gap detect/refill, ingest cursor 상태 저장 | 장주기 중단 복구 시나리오 운영 검증(`C-002`) |
+| 배포 전 품질 게이트 | CI `pytest` 선행 후 배포 | 운영 승인 게이트 분리(후속 태스크화 필요) |
+
+## 9. Current Risk Register (Top)
 1. `TD-018`: API-SSG 운영 계약 최종 확정 전까지 경계 혼선 가능
 2. `TD-019`: 단일 worker 결합으로 장애 전파 가능
 3. `TD-020`: 고정 poll loop로 비용/정합성 리스크
 4. `TD-024`: 단계별 부분 실패 알림 세분화 미완료
+5. 초기 B/C/D 태스크 기준선과 현재 리스크 현실의 드리프트 가능성
 
-## 7. Change Rules
+## 10. Change Rules
 1. 정책 변경은 `docs/DECISIONS.md`를 먼저 갱신한다.
 2. 실행 우선순위 변경은 `docs/TASKS_MINIMUM_UNITS.md`와 동기화한다.
 3. 새 기술 부채는 `docs/TECH_DEBT_REGISTER.md`에 기록한다.
-4. 상세 진행 로그는 Archive에 append한다.
+4. Archive append는 Phase 종료 시점 또는 명시 요청이 있을 때만 수행한다.

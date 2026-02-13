@@ -41,9 +41,7 @@ def next_timeframe_boundary(now: datetime, timeframe: str) -> datetime:
 
     if unit == "d":
         anchor = datetime(1970, 1, 1, tzinfo=timezone.utc)
-        current_day_start = now_utc.replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        current_day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
         elapsed_days = (current_day_start - anchor).days
         next_bucket_start_days = ((elapsed_days // value) + 1) * value
         return anchor + timedelta(days=next_bucket_start_days)
@@ -51,9 +49,9 @@ def next_timeframe_boundary(now: datetime, timeframe: str) -> datetime:
     if unit == "w":
         # Week boundary: Monday 00:00 UTC
         anchor = datetime(1970, 1, 5, tzinfo=timezone.utc)  # Monday
-        current_week_start = (
-            now_utc - timedelta(days=now_utc.weekday())
-        ).replace(hour=0, minute=0, second=0, microsecond=0)
+        current_week_start = (now_utc - timedelta(days=now_utc.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         elapsed_weeks = (current_week_start - anchor).days // 7
         next_bucket_start_weeks = ((elapsed_weeks // value) + 1) * value
         return anchor + timedelta(weeks=next_bucket_start_weeks)
@@ -84,37 +82,29 @@ def last_closed_candle_open(now: datetime, timeframe: str) -> datetime:
         now_seconds = int(now_utc.timestamp())
         current_open_seconds = (now_seconds // step_seconds) * step_seconds
         last_closed_open_seconds = current_open_seconds - step_seconds
-        return datetime.fromtimestamp(
-            last_closed_open_seconds, tz=timezone.utc
-        )
+        return datetime.fromtimestamp(last_closed_open_seconds, tz=timezone.utc)
 
     if unit == "d":
         anchor = datetime(1970, 1, 1, tzinfo=timezone.utc)
-        current_day_start = now_utc.replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        current_day_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
         elapsed_days = (current_day_start - anchor).days
         current_bucket_start_days = (elapsed_days // value) * value
         return anchor + timedelta(days=current_bucket_start_days - value)
 
     if unit == "w":
         anchor = datetime(1970, 1, 5, tzinfo=timezone.utc)  # Monday
-        current_week_start = (
-            now_utc - timedelta(days=now_utc.weekday())
-        ).replace(hour=0, minute=0, second=0, microsecond=0)
+        current_week_start = (now_utc - timedelta(days=now_utc.weekday())).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
         elapsed_weeks = (current_week_start - anchor).days // 7
         current_bucket_start_weeks = (elapsed_weeks // value) * value
-        return anchor + timedelta(
-            weeks=current_bucket_start_weeks - value
-        )
+        return anchor + timedelta(weeks=current_bucket_start_weeks - value)
 
     # unit == "M"
     current_month_start = now_utc.replace(
         day=1, hour=0, minute=0, second=0, microsecond=0
     )
-    month_index = current_month_start.year * 12 + (
-        current_month_start.month - 1
-    )
+    month_index = current_month_start.year * 12 + (current_month_start.month - 1)
     current_bucket_start_month = (month_index // value) * value
     last_closed_open_month = current_bucket_start_month - value
     year = last_closed_open_month // 12
@@ -132,9 +122,7 @@ def timeframe_to_timedelta(timeframe: str) -> timedelta:
         return timedelta(days=value)
     if unit == "w":
         return timedelta(weeks=value)
-    raise ValueError(
-        "Gap detection does not support month-based timeframe."
-    )
+    raise ValueError("Gap detection does not support month-based timeframe.")
 
 
 @dataclass(frozen=True)

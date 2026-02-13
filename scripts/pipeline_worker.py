@@ -194,9 +194,7 @@ def save_history_to_json(df, symbol):
             "data": export_df[
                 ["timestamp", "open", "high", "low", "close", "volume"]
             ].to_dict(orient="records"),
-            "updated_at": datetime.now(timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            ),
+            "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "type": "history_1h",
         }
 
@@ -273,27 +271,23 @@ def fetch_and_save(write_api, symbol, since_ts) -> tuple[datetime | None, str]:
                 last_closed_ms=last_closed_ms,
             )
             if refill_pages > 0:
-                logger.info(
-                    f"[{symbol}] Gap refill 시도 완료 (pages={refill_pages})"
-                )
+                logger.info(f"[{symbol}] Gap refill 시도 완료 (pages={refill_pages})")
 
             remaining_gaps = _detect_gaps_from_ms_timestamps(
                 timestamps_ms=df["timestamp"].tolist(),
                 timeframe=TIMEFRAME,
             )
             if remaining_gaps:
-                remaining_missing = sum(
-                    gap.missing_count for gap in remaining_gaps
-                )
+                remaining_missing = sum(gap.missing_count for gap in remaining_gaps)
                 logger.warning(
                     f"[{symbol}] Gap 잔존: windows={len(remaining_gaps)}, missing={remaining_missing}"
                 )
             else:
                 logger.info(f"[{symbol}] Gap refill 완료.")
 
-        df["timestamp"] = pd.to_datetime(
-            df["timestamp"], unit="ms"
-        ).dt.tz_localize("UTC")
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms").dt.tz_localize(
+            "UTC"
+        )
         df.set_index("timestamp", inplace=True)
 
         # 태그 추가
@@ -330,9 +324,7 @@ def _fetch_ohlcv_paginated(
     chunks: list[pd.DataFrame] = []
 
     while cursor <= until_ms:
-        ohlcv = exchange.fetch_ohlcv(
-            symbol, timeframe, since=cursor, limit=fetch_limit
-        )
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=cursor, limit=fetch_limit)
         if not ohlcv:
             break
 
@@ -375,12 +367,9 @@ def _fetch_ohlcv_paginated(
     return merged, page_count
 
 
-def _detect_gaps_from_ms_timestamps(
-    timestamps_ms: list[int], timeframe: str
-):
+def _detect_gaps_from_ms_timestamps(timestamps_ms: list[int], timeframe: str):
     candle_opens = [
-        datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc)
-        for ts in timestamps_ms
+        datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc) for ts in timestamps_ms
     ]
     return detect_timeframe_gaps(candle_opens, timeframe)
 
@@ -532,9 +521,7 @@ def run_worker():
         f"[Pipeline Worker] Started. Target: {TARGET_COINS}, Timeframe: {TIMEFRAME}"
     )
 
-    client = InfluxDBClient(
-        url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG
-    )
+    client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
     write_api = client.write_api(write_options=SYNCHRONOUS)
     query_api = client.query_api()
     ingest_state_store = IngestStateStore(INGEST_STATE_FILE)
@@ -565,9 +552,7 @@ def run_worker():
                         since = datetime.now(timezone.utc) - timedelta(
                             days=LOOKBACK_DAYS
                         )
-                        logger.info(
-                            f"[{symbol}] 초기 데이터 수집 시작 (30일 전부터)"
-                        )
+                        logger.info(f"[{symbol}] 초기 데이터 수집 시작 (30일 전부터)")
 
                 # 수집
                 latest_saved_at, ingest_result = fetch_and_save(

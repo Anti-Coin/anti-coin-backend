@@ -38,9 +38,7 @@ def _parse_positive_int_env(name: str, default: int) -> int:
 
 
 MONITOR_POLL_SECONDS = _parse_positive_int_env("MONITOR_POLL_SECONDS", 60)
-MONITOR_RE_ALERT_CYCLES = _parse_positive_int_env(
-    "MONITOR_RE_ALERT_CYCLES", 3
-)
+MONITOR_RE_ALERT_CYCLES = _parse_positive_int_env("MONITOR_RE_ALERT_CYCLES", 3)
 
 HEALTHY_STATUSES = {"fresh", "stale"}
 ALERTABLE_UNHEALTHY_STATUSES = {"hard_stale", "corrupt", "missing"}
@@ -110,10 +108,7 @@ def update_status_cycle_counter(
     동일 상태가 유지되면 카운터를 +1 한다.
     """
     previous = counters.get(key)
-    if (
-        isinstance(previous, dict)
-        and previous.get("status") == current_status
-    ):
+    if isinstance(previous, dict) and previous.get("status") == current_status:
         raw_cycles = previous.get("cycles", 0)
         try:
             cycles = int(raw_cycles) + 1
@@ -260,9 +255,7 @@ def run_monitor_cycle(
     resolved_now = now or datetime.now(timezone.utc)
     resolved_symbols = symbols or TARGET_SYMBOLS
     resolved_timeframes = timeframes or INGEST_TIMEFRAMES
-    resolved_status_counters = (
-        status_counters if status_counters is not None else {}
-    )
+    resolved_status_counters = status_counters if status_counters is not None else {}
     events: list[MonitorAlertEvent] = []
 
     for symbol in resolved_symbols:
@@ -278,9 +271,7 @@ def run_monitor_cycle(
                 soft_thresholds=soft_thresholds,
                 hard_thresholds=hard_thresholds,
             )
-            snapshot = apply_influx_json_consistency(
-                base_snapshot, latest_ohlcv_ts
-            )
+            snapshot = apply_influx_json_consistency(base_snapshot, latest_ohlcv_ts)
             # JSON 단독 판정과 최종 판정이 달라졌다면, 운영자 추적을 위해 명시 로그를 남긴다.
             if snapshot.status != base_snapshot.status:
                 logger.warning(
@@ -295,9 +286,7 @@ def run_monitor_cycle(
             )
             # 상태전이 알림이 없으면, 동일 상태의 장기 지속 여부를 확인해 재알림을 보낸다.
             if event is None:
-                event = detect_realert_event(
-                    snapshot.status, cycles_in_status
-                )
+                event = detect_realert_event(snapshot.status, cycles_in_status)
             if event:
                 events.append(
                     MonitorAlertEvent(

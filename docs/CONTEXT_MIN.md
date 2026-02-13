@@ -5,8 +5,10 @@
 
 ## 1. Snapshot
 1. Phase A(Reliability Baseline)는 2026-02-12에 완료했다.
-2. 현재 우선 작업은 `C-005`(worker 분리), `C-006`(trigger 전환), `B-005`(endpoint sunset 정리)다.
-3. 운영 현실은 Oracle Free Tier ARM + 단일 운영자다.
+2. 현재 우선 작업은 `B-002`(파일 네이밍 통일), `B-003`(timeframe-aware export), `B-004`(manifest)다.
+3. `C-005`, `C-006`는 `B-003` 검증 증거 확보 전까지 gated 상태다.
+4. `B-005`(endpoint sunset)는 P2 트랙으로 유지한다.
+5. 운영 현실은 Oracle Free Tier ARM + 단일 운영자다.
 
 ## 2. Non-Negotiables
 1. 우선순위: Stability > Cost > Performance.
@@ -26,6 +28,8 @@
 4. `D-2026-02-12-18`: prediction 저장 유지 + 실패 시 last-good + degraded
 5. `D-2026-02-12-19`: `soft stale`와 `degraded` 분리
 6. `D-2026-02-12-24`: soft/hard 상태 3사이클 재알림
+7. `D-2026-02-12-27`: Option A(phase-ordered stability) 기준선 채택
+8. `D-2026-02-12-28`: `R-004` kickoff 계약(`B-002 -> B-003` + 검증/롤백 경계) 고정
 
 ## 5. Current Risk Focus
 1. `TD-018`: API-SSG 운영 계약/endpoint sunset 최종 확정 미완료 (mitigated)

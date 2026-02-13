@@ -34,8 +34,7 @@ def _parse_thresholds(
     raw: str | None, defaults: dict[str, int]
 ) -> dict[str, timedelta]:
     thresholds = {
-        timeframe: timedelta(minutes=minutes)
-        for timeframe, minutes in defaults.items()
+        timeframe: timedelta(minutes=minutes) for timeframe, minutes in defaults.items()
     }
     if not raw:
         return thresholds
@@ -64,19 +63,14 @@ def _enforce_phase_a_timeframe_guard(timeframes: list[str]) -> list[str]:
     if len(timeframes) != 1 or timeframes[0] != PHASE_A_FIXED_TIMEFRAME:
         rendered = ",".join(timeframes) if timeframes else "(empty)"
         raise ValueError(
-            "INGEST_TIMEFRAMES must be exactly '1h' before Phase B. "
-            f"Got: {rendered}"
+            "INGEST_TIMEFRAMES must be exactly '1h' before Phase B. " f"Got: {rendered}"
         )
     return timeframes.copy()
 
 
-TARGET_SYMBOLS = _parse_csv_env(
-    os.getenv("TARGET_SYMBOLS"), DEFAULT_TARGET_SYMBOLS
-)
+TARGET_SYMBOLS = _parse_csv_env(os.getenv("TARGET_SYMBOLS"), DEFAULT_TARGET_SYMBOLS)
 INGEST_TIMEFRAMES = _enforce_phase_a_timeframe_guard(
-    _parse_csv_env(
-        os.getenv("INGEST_TIMEFRAMES"), DEFAULT_INGEST_TIMEFRAMES
-    )
+    _parse_csv_env(os.getenv("INGEST_TIMEFRAMES"), DEFAULT_INGEST_TIMEFRAMES)
 )
 PRIMARY_TIMEFRAME = (
     INGEST_TIMEFRAMES[0] if INGEST_TIMEFRAMES else DEFAULT_INGEST_TIMEFRAMES[0]

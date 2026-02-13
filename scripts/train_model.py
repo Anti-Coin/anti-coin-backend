@@ -9,9 +9,7 @@ from utils.config import TARGET_SYMBOLS, PRIMARY_TIMEFRAME
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-def train_and_save(
-    symbol: str = "BTC/USDT", timeframe: str = PRIMARY_TIMEFRAME
-):
+def train_and_save(symbol: str = "BTC/USDT", timeframe: str = PRIMARY_TIMEFRAME):
     print(f"[{symbol}] 모델 학습 시작...")
 
     # 데이터 수집 (최근 500시간)
