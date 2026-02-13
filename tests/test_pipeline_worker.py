@@ -9,6 +9,7 @@ from scripts.pipeline_worker import (
     _fetch_ohlcv_paginated,
     _lookback_days_for_timeframe,
     _refill_detected_gaps,
+    append_runtime_cycle_metrics,
     build_runtime_manifest,
     downsample_ohlcv_frame,
     enforce_1m_retention,
@@ -316,6 +317,84 @@ def test_write_runtime_manifest_writes_manifest_file(tmp_path):
     assert payload["summary"]["entry_count"] == 1
     assert payload["summary"]["status_counts"]["missing"] == 1
     assert payload["entries"][0]["serve_allowed"] is False
+
+
+def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
+    metrics_path = tmp_path / "runtime_metrics.json"
+    base = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    append_runtime_cycle_metrics(
+        started_at=base,
+        elapsed_seconds=12.4,
+        sleep_seconds=47.6,
+        overrun=False,
+        cycle_result="ok",
+        path=metrics_path,
+        target_cycle_seconds=60,
+        window_size=10,
+    )
+    append_runtime_cycle_metrics(
+        started_at=base + timedelta(minutes=1),
+        elapsed_seconds=70.0,
+        sleep_seconds=0.0,
+        overrun=True,
+        cycle_result="failed",
+        error="worker_error",
+        path=metrics_path,
+        target_cycle_seconds=60,
+        window_size=10,
+    )
+
+    payload = json.loads(metrics_path.read_text())
+    assert payload["target_cycle_seconds"] == 60
+    assert payload["window_size"] == 10
+    assert payload["boundary_tracking"]["missed_boundary_supported"] is False
+    assert payload["summary"]["samples"] == 2
+    assert payload["summary"]["success_count"] == 1
+    assert payload["summary"]["failure_count"] == 1
+    assert payload["summary"]["overrun_count"] == 1
+    assert payload["summary"]["p95_elapsed_seconds"] == 70.0
+    assert payload["summary"]["missed_boundary_count"] is None
+    assert payload["recent_cycles"][1]["error"] == "worker_error"
+
+
+def test_append_runtime_cycle_metrics_applies_window_limit(tmp_path):
+    metrics_path = tmp_path / "runtime_metrics.json"
+    base = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    append_runtime_cycle_metrics(
+        started_at=base,
+        elapsed_seconds=10.0,
+        sleep_seconds=50.0,
+        overrun=False,
+        cycle_result="ok",
+        path=metrics_path,
+        window_size=2,
+    )
+    append_runtime_cycle_metrics(
+        started_at=base + timedelta(minutes=1),
+        elapsed_seconds=11.0,
+        sleep_seconds=49.0,
+        overrun=False,
+        cycle_result="ok",
+        path=metrics_path,
+        window_size=2,
+    )
+    append_runtime_cycle_metrics(
+        started_at=base + timedelta(minutes=2),
+        elapsed_seconds=12.0,
+        sleep_seconds=48.0,
+        overrun=False,
+        cycle_result="ok",
+        path=metrics_path,
+        window_size=2,
+    )
+
+    payload = json.loads(metrics_path.read_text())
+    assert len(payload["recent_cycles"]) == 2
+    assert payload["recent_cycles"][0]["started_at"] == "2026-02-13T12:01:00Z"
+    assert payload["recent_cycles"][1]["started_at"] == "2026-02-13T12:02:00Z"
+    assert payload["summary"]["samples"] == 2
 
 
 def test_lookback_days_for_timeframe_uses_1m_policy():

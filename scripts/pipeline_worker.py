@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import time
+import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import requests
@@ -46,6 +47,7 @@ INGEST_STATE_FILE = STATIC_DIR / "ingest_state.json"
 PREDICTION_HEALTH_FILE = STATIC_DIR / "prediction_health.json"
 MANIFEST_FILE = STATIC_DIR / "manifest.json"
 DOWNSAMPLE_LINEAGE_FILE = STATIC_DIR / "downsample_lineage.json"
+RUNTIME_METRICS_FILE = STATIC_DIR / "runtime_metrics.json"
 PREDICTION_DISABLED_TIMEFRAMES = {
     value.strip()
     for value in os.getenv("PREDICTION_DISABLED_TIMEFRAMES", "1m").split(",")
@@ -62,6 +64,10 @@ RETENTION_ENFORCE_INTERVAL_SECONDS = 60 * 60
 DOWNSAMPLE_TARGET_TIMEFRAMES = {"1d", "1w", "1M"}
 DOWNSAMPLE_SOURCE_TIMEFRAME = "1h"
 DOWNSAMPLE_SOURCE_LOOKBACK_DAYS = 120
+CYCLE_TARGET_SECONDS = int(os.getenv("WORKER_CYCLE_SECONDS", "60"))
+RUNTIME_METRICS_WINDOW_SIZE = int(
+    os.getenv("RUNTIME_METRICS_WINDOW_SIZE", "240")
+)
 
 
 def send_alert(message):
@@ -142,6 +148,120 @@ def _save_prediction_health(
         "entries": entries,
     }
     atomic_write_json(path, payload, indent=2)
+
+
+def _load_runtime_metrics(path: Path = RUNTIME_METRICS_FILE) -> list[dict]:
+    if not path.exists():
+        return []
+
+    try:
+        with open(path, "r") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.error(f"Failed to load runtime metrics file: {e}")
+        return []
+
+    entries = payload.get("recent_cycles")
+    if not isinstance(entries, list):
+        logger.error(
+            "Invalid runtime metrics format: recent_cycles is not a list."
+        )
+        return []
+    return entries
+
+
+def _percentile(values: list[float], q: float) -> float | None:
+    if not values:
+        return None
+    if q <= 0:
+        return min(values)
+    if q >= 100:
+        return max(values)
+
+    sorted_values = sorted(values)
+    rank = math.ceil((q / 100) * len(sorted_values)) - 1
+    rank = max(0, min(rank, len(sorted_values) - 1))
+    return sorted_values[rank]
+
+
+def append_runtime_cycle_metrics(
+    *,
+    started_at: datetime,
+    elapsed_seconds: float,
+    sleep_seconds: float,
+    overrun: bool,
+    cycle_result: str,
+    error: str | None = None,
+    path: Path = RUNTIME_METRICS_FILE,
+    target_cycle_seconds: int = CYCLE_TARGET_SECONDS,
+    window_size: int = RUNTIME_METRICS_WINDOW_SIZE,
+) -> dict:
+    entries = _load_runtime_metrics(path=path)
+    entry = {
+        "started_at": started_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "elapsed_seconds": round(max(0.0, elapsed_seconds), 2),
+        "sleep_seconds": round(max(0.0, sleep_seconds), 2),
+        "overrun": overrun,
+        "result": cycle_result,
+        "error": error,
+    }
+    entries.append(entry)
+
+    effective_window = max(1, window_size)
+    entries = entries[-effective_window:]
+
+    samples = len(entries)
+    success_count = sum(1 for item in entries if item.get("result") == "ok")
+    failure_count = samples - success_count
+    overrun_count = sum(1 for item in entries if item.get("overrun") is True)
+    elapsed_values = [
+        float(item.get("elapsed_seconds", 0.0)) for item in entries
+    ]
+    sleep_values = [
+        float(item.get("sleep_seconds", 0.0)) for item in entries
+    ]
+    avg_elapsed = (
+        round(sum(elapsed_values) / samples, 2) if samples else None
+    )
+    avg_sleep = round(sum(sleep_values) / samples, 2) if samples else None
+    p95_elapsed = _percentile(elapsed_values, 95)
+    summary = {
+        "samples": samples,
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "success_rate": (
+            round(success_count / samples, 4) if samples else None
+        ),
+        "avg_elapsed_seconds": avg_elapsed,
+        "p95_elapsed_seconds": (
+            round(p95_elapsed, 2) if p95_elapsed is not None else None
+        ),
+        "avg_sleep_seconds": avg_sleep,
+        "overrun_count": overrun_count,
+        "overrun_rate": (
+            round(overrun_count / samples, 4) if samples else None
+        ),
+        # C-006 전에는 boundary scheduler가 없어서 missed boundary를 측정하지 않는다.
+        "missed_boundary_count": None,
+        "missed_boundary_rate": None,
+    }
+
+    payload = {
+        "version": 1,
+        "updated_at": datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
+        "target_cycle_seconds": target_cycle_seconds,
+        "window_size": effective_window,
+        "boundary_tracking": {
+            "mode": "poll_loop",
+            "missed_boundary_supported": False,
+        },
+        "summary": summary,
+        "recent_cycles": entries,
+    }
+    atomic_write_json(path, payload, indent=2)
+    return summary
 
 
 def upsert_prediction_health(
@@ -1172,12 +1292,13 @@ def run_worker():
     send_alert("Worker Started.")
 
     while True:
+        cycle_started_at = datetime.now(timezone.utc)
+        start_time = time.time()
         try:
-            start_time = time.time()
             logger.info(
-                f"\n[Cycle] 작업 시작: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                f"\n[Cycle] 작업 시작: {cycle_started_at.strftime('%Y-%m-%d %H:%M:%S')}"
             )
-            cycle_now = datetime.now(timezone.utc)
+            cycle_now = cycle_started_at
             disk_level = "normal"
             disk_usage_percent: float | None = None
 
@@ -1347,7 +1468,19 @@ def run_worker():
 
             # Cycle Overrun 감지 및 주기 보정
             elapsed = time.time() - start_time
-            sleep_time = 60 - elapsed
+            sleep_time = CYCLE_TARGET_SECONDS - elapsed
+            overrun = sleep_time <= 0
+
+            try:
+                append_runtime_cycle_metrics(
+                    started_at=cycle_started_at,
+                    elapsed_seconds=elapsed,
+                    sleep_seconds=max(sleep_time, 0.0),
+                    overrun=overrun,
+                    cycle_result="ok",
+                )
+            except Exception as e:
+                logger.error(f"Runtime metrics update failed: {e}")
 
             if sleep_time > 0:
                 logger.info(
@@ -1356,7 +1489,8 @@ def run_worker():
                 time.sleep(sleep_time)
             else:
                 warning_msg = (
-                    f"[Warning] Cycle Overrun! Took {elapsed:.2f}s (Limit: 60s)"
+                    f"[Warning] Cycle Overrun! Took {elapsed:.2f}s "
+                    f"(Limit: {CYCLE_TARGET_SECONDS}s)"
                 )
                 send_alert(warning_msg)
 
@@ -1365,6 +1499,20 @@ def run_worker():
             error_msg = f"Worker Critical Error:\n{traceback.format_exc()}"
             logger.error(error_msg)
             send_alert(error_msg)
+            elapsed = time.time() - start_time
+            try:
+                append_runtime_cycle_metrics(
+                    started_at=cycle_started_at,
+                    elapsed_seconds=elapsed,
+                    sleep_seconds=10.0,
+                    overrun=elapsed > CYCLE_TARGET_SECONDS,
+                    cycle_result="failed",
+                    error=str(e),
+                )
+            except Exception as metrics_error:
+                logger.error(
+                    f"Runtime metrics update failed after worker error: {metrics_error}"
+                )
             time.sleep(10)  # 에러 루프 방지용 대기
 
 

@@ -28,6 +28,7 @@
 16. `B-004` 완료 (2026-02-13): worker cycle마다 `manifest.json` 생성(심볼/타임프레임별 history/prediction 상태 + degraded 병합), 회귀 `68 passed`
 17. `B-006` 완료 (2026-02-13): `1m` retention(기본 14d, 상한 30d clamp) + 디스크 워터마크(70/85/90) 가드 + `block` 레벨에서 `1m` 초기 백필 차단 반영 + `1h->1d/1w/1M` downsample + `downsample_lineage.json` 경로 및 검증 테스트 반영, 회귀 `76 passed`
 18. `D-2026-02-13-34` 채택: reconciliation mismatch를 내부/외부로 분리(`internal_deterministic_mismatch` vs `external_reconciliation_mismatch`)하고, `1d/1w/1M` direct ingest 금지 경계를 정책으로 고정
+19. `C-002` 진행 (2026-02-13): `runtime_metrics.json` baseline 추가(실행시간/실패율/overrun 추세, poll-loop 모드에서 `missed_boundary`는 미지원으로 명시)
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -54,7 +55,7 @@
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
 | C-001 | P1 | 심볼 목록 확장 자동화 | open | 심볼 추가 시 코드 수정 최소화 |
-| C-002 | P1 | 실행시간/실패율 메트릭 수집 | open | 주기별 성능 추세 확인 가능 |
+| C-002 | P1 | 실행시간/실패율 메트릭 수집 | in_progress | `static_data/runtime_metrics.json`에 cycle 실행시간/실패율/overrun 추세가 누적되고, `missed_boundary` 지원 여부(전환 전 미지원)가 명시된다 |
 | C-003 | P2 | 부하 테스트 시나리오 업데이트 | open | 정적/상태 경로 부하 테스트 가능 |
 | C-004 | P2 | 모델 학습 잡 분리 초안 | open | 수집/예측과 독립 실행 가능 |
 | C-005 | P1 | pipeline worker 역할 분리 | open (gated) | `B-003` 검증 증거 확보 후 착수, 완료 시 ingest 지연/장애가 predict/export에 즉시 전파되지 않으며 base ingest(`1m`,`1h`)와 derived materialization(`1d/1w/1M`) 경계가 코드 레벨로 분리됨 |
