@@ -19,6 +19,7 @@
 7. `R-004` 완료 (2026-02-12): Phase B kickoff 구현 묶음(`B-002 -> B-003`)과 검증/롤백 경계 확정
 8. `D-2026-02-13-29` 채택: 1m 비대칭 정책(예측 비서빙 + hybrid 서빙 후보)과 저장소 가드가 Phase B 선행 조건임을 확정
 9. `D-2026-02-13-30` 채택: 서빙 정책을 Hard Gate + Accuracy Signal 2층 구조로 고정
+10. `B-001` 정책 매트릭스 초안(v1) 작성: `docs/TIMEFRAME_POLICY_MATRIX.md`
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -33,7 +34,7 @@
 ### Phase B (Timeframe Expansion)
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
-| B-001 | P1 | timeframe tier 정책 매트릭스 확정(수집/보존/서빙/예측) | open (gated-first) | `1m` 예측 비서빙, `1m` hybrid API=`latest closed 180 candles`, `1m` rolling=`default 14d / cap 30d`, `1h->1d/1w/1M` downsample 경로, Hard Gate+Accuracy 정책을 문서/설정으로 고정 |
+| B-001 | P1 | timeframe tier 정책 매트릭스 확정(수집/보존/서빙/예측) | in_progress | `docs/TIMEFRAME_POLICY_MATRIX.md` 정책 잠금 + `1m` 예측 비서빙, `1m` hybrid API=`latest closed 180 candles`, `1m` rolling=`default 14d / cap 30d`, `1h->1d/1w/1M` downsample 경로, Hard Gate+Accuracy 정책을 문서/설정으로 고정 |
 | B-002 | P1 | 파일 네이밍 규칙 통일 | open | `{symbol}_{timeframe}` 규칙 적용 |
 | B-003 | P1 | history/prediction export timeframe-aware 전환 | open | 다중 timeframe 파일 동시 생성 + `1m` prediction 산출물 비생성 정책 준수 |
 | B-004 | P1 | manifest 파일 생성 | open | 심볼/타임프레임별 최신 상태 요약 |

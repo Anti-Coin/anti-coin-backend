@@ -116,6 +116,30 @@
 - Revisit Trigger:
   - FE 계약 변경, 지표 산식 변경, 또는 정확도 지표 노이즈가 과도할 때
 
+### D-2026-02-13-31
+- Date: 2026-02-13
+- Status: Accepted
+- Topic: B-001 Open Questions Lock (Retention / Evaluation Window / Reconciliation)
+- Context:
+  - `docs/TIMEFRAME_POLICY_MATRIX.md`의 Open Questions 3개가 미고정 상태로 남아 있어, `B-002/B-003` 착수 시 정책 드리프트 가능성이 있었다.
+  - 사용자 확인 결과 심볼 확장은 점진적이며, 오래된/유명 심볼 중심으로 운영할 계획이다.
+- Decision:
+  - `1h` retention은 `365d` 기본, `730d` 상한으로 고정한다.
+  - evaluation window와 최소 샘플은 timeframe별로 분리 고정한다:
+    - `1h`: `rolling_30d`, min sample `240`
+    - `1d`: `rolling_180d`, min sample `120`
+    - `1w`: `rolling_104w`, min sample `52`
+    - `1M`: `rolling_36M`, min sample `24`
+  - reconciliation은 동일 거래소/동일 심볼 기준으로 수행한다.
+  - 내부 downsample deterministic 검증은 `0 tolerance`로 적용한다.
+  - 운영 주기는 `daily quick(24h)`, `weekly deep(90d)`로 고정한다.
+  - `incomplete_bucket/missing bucket`은 즉시 `critical`, 동일 bucket mismatch 3회 연속 시 `critical`로 상향한다.
+- Consequence:
+  - Phase B 실행 기준이 수치 수준까지 고정되어 구현 중 정책 재역전 가능성을 줄인다.
+  - 대사/품질 기준이 엄격해져 초기 경보량이 늘 수 있으나, 데이터 신뢰성 요구를 우선 충족한다.
+- Revisit Trigger:
+  - 실제 디스크 성장률이 예상과 크게 다르거나, 경보 노이즈가 운영 임계치를 넘을 때
+
 ## 3. Decision Operation Policy
 1. Archive로 이동된 결정은 `Section 1`에 요약 형태로만 유지한다.
 2. 아직 archive로 이동하지 않은 결정은 `Section 2`에 상세 형태로 유지한다.
