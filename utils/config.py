@@ -30,6 +30,18 @@ def _parse_csv_env(raw: str | None, default: list[str]) -> list[str]:
     return values or default.copy()
 
 
+def _parse_bool_env(raw: str | None, default: bool = False) -> bool:
+    if raw is None:
+        return default
+
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def _parse_thresholds(
     raw: str | None, defaults: dict[str, int]
 ) -> dict[str, timedelta]:
@@ -56,21 +68,36 @@ def _parse_thresholds(
     return thresholds
 
 
-def _enforce_phase_a_timeframe_guard(timeframes: list[str]) -> list[str]:
+def _enforce_ingest_timeframe_guard(
+    timeframes: list[str], *, allow_multi: bool
+) -> list[str]:
     """
-    Phase B 이전에는 운영 타임프레임을 1h로 고정한다.
+    기본값은 Phase A 가드(1h 고정)이며, allow_multi=true일 때만 다중 timeframe을 허용한다.
     """
+    if not timeframes:
+        raise ValueError("INGEST_TIMEFRAMES must not be empty.")
+
+    if allow_multi:
+        return timeframes.copy()
+
     if len(timeframes) != 1 or timeframes[0] != PHASE_A_FIXED_TIMEFRAME:
         rendered = ",".join(timeframes) if timeframes else "(empty)"
         raise ValueError(
-            "INGEST_TIMEFRAMES must be exactly '1h' before Phase B. " f"Got: {rendered}"
+            "INGEST_TIMEFRAMES must be exactly '1h' before Phase B "
+            "(set ENABLE_MULTI_TIMEFRAMES=true to allow multiple timeframes). "
+            f"Got: {rendered}"
         )
     return timeframes.copy()
 
 
 TARGET_SYMBOLS = _parse_csv_env(os.getenv("TARGET_SYMBOLS"), DEFAULT_TARGET_SYMBOLS)
-INGEST_TIMEFRAMES = _enforce_phase_a_timeframe_guard(
-    _parse_csv_env(os.getenv("INGEST_TIMEFRAMES"), DEFAULT_INGEST_TIMEFRAMES)
+ENABLE_MULTI_TIMEFRAMES = _parse_bool_env(
+    os.getenv("ENABLE_MULTI_TIMEFRAMES"),
+    default=False,
+)
+INGEST_TIMEFRAMES = _enforce_ingest_timeframe_guard(
+    _parse_csv_env(os.getenv("INGEST_TIMEFRAMES"), DEFAULT_INGEST_TIMEFRAMES),
+    allow_multi=ENABLE_MULTI_TIMEFRAMES,
 )
 PRIMARY_TIMEFRAME = (
     INGEST_TIMEFRAMES[0] if INGEST_TIMEFRAMES else DEFAULT_INGEST_TIMEFRAMES[0]
