@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -6,7 +7,12 @@ from scripts.pipeline_worker import (
     _detect_gaps_from_ms_timestamps,
     _fetch_ohlcv_paginated,
     _refill_detected_gaps,
+    build_runtime_manifest,
+    prediction_enabled_for_timeframe,
+    run_prediction_and_save,
+    save_history_to_json,
     upsert_prediction_health,
+    write_runtime_manifest,
 )
 
 
@@ -130,3 +136,148 @@ def test_upsert_prediction_health_tracks_failure_and_recovery(tmp_path):
     assert third["consecutive_failures"] == 0
     assert third["last_success_at"] is not None
     assert third["last_failure_at"] is not None
+
+
+def test_prediction_enabled_for_timeframe_respects_disabled_set(monkeypatch):
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.PREDICTION_DISABLED_TIMEFRAMES",
+        {"1m", "5m"},
+    )
+
+    assert prediction_enabled_for_timeframe("1m") is False
+    assert prediction_enabled_for_timeframe("1h") is True
+
+
+def test_run_prediction_and_save_skips_disabled_timeframe(monkeypatch):
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.PREDICTION_DISABLED_TIMEFRAMES",
+        {"1m"},
+    )
+
+    result, error = run_prediction_and_save(
+        write_api=None,
+        symbol="BTC/USDT",
+        timeframe="1m",
+    )
+    assert result == "skipped"
+    assert error is None
+
+
+def test_save_history_to_json_writes_timeframe_aware_files(tmp_path, monkeypatch):
+    monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
+
+    base = datetime(2026, 2, 12, 0, 0, tzinfo=timezone.utc)
+    df = pd.DataFrame(
+        [
+            {
+                "timestamp": base,
+                "open": 1.0,
+                "high": 2.0,
+                "low": 0.5,
+                "close": 1.5,
+                "volume": 10.0,
+            }
+        ]
+    ).set_index("timestamp")
+
+    save_history_to_json(df, "BTC/USDT", "4h")
+
+    canonical_path = tmp_path / "history_BTC_USDT_4h.json"
+    legacy_path = tmp_path / "history_BTC_USDT.json"
+    assert canonical_path.exists()
+    assert legacy_path.exists()
+
+    payload = json.loads(canonical_path.read_text())
+    assert payload["symbol"] == "BTC/USDT"
+    assert payload["timeframe"] == "4h"
+    assert payload["type"] == "history_4h"
+
+
+def test_build_runtime_manifest_merges_freshness_and_health(tmp_path):
+    symbol = "BTC/USDT"
+    timeframe = "1h"
+    safe_symbol = symbol.replace("/", "_")
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    history_path = tmp_path / f"history_{safe_symbol}_{timeframe}.json"
+    history_path.write_text(
+        json.dumps(
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "updated_at": "2026-02-13T11:15:00Z",
+                "data": [],
+            }
+        )
+    )
+    prediction_path = tmp_path / f"prediction_{safe_symbol}_{timeframe}.json"
+    prediction_path.write_text(
+        json.dumps(
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "updated_at": "2026-02-13T11:30:00Z",
+                "forecast": [],
+            }
+        )
+    )
+    health_path = tmp_path / "prediction_health.json"
+    health_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-02-13T11:31:00Z",
+                "entries": {
+                    "BTC/USDT|1h": {
+                        "degraded": True,
+                        "last_success_at": "2026-02-13T11:00:00Z",
+                        "last_failure_at": "2026-02-13T11:29:00Z",
+                        "consecutive_failures": 2,
+                    }
+                },
+            }
+        )
+    )
+
+    manifest = build_runtime_manifest(
+        [symbol],
+        [timeframe],
+        now=now,
+        static_dir=tmp_path,
+        prediction_health_path=health_path,
+    )
+
+    assert manifest["version"] == 1
+    assert manifest["summary"]["entry_count"] == 1
+    assert manifest["summary"]["status_counts"]["fresh"] == 1
+    assert manifest["summary"]["degraded_count"] == 1
+
+    entry = manifest["entries"][0]
+    assert entry["key"] == "BTC/USDT|1h"
+    assert entry["history"]["updated_at"] == "2026-02-13T11:15:00Z"
+    assert entry["prediction"]["status"] == "fresh"
+    assert entry["prediction"]["updated_at"] == "2026-02-13T11:30:00Z"
+    assert entry["degraded"] is True
+    assert entry["prediction_failure_count"] == 2
+    assert entry["serve_allowed"] is True
+
+
+def test_write_runtime_manifest_writes_manifest_file(tmp_path):
+    symbol = "BTC/USDT"
+    timeframe = "1h"
+    manifest_path = tmp_path / "manifest.json"
+
+    write_runtime_manifest(
+        [symbol],
+        [timeframe],
+        now=datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc),
+        static_dir=tmp_path,
+        prediction_health_path=tmp_path / "prediction_health.json",
+        path=manifest_path,
+    )
+
+    payload = json.loads(manifest_path.read_text())
+    assert payload["version"] == 1
+    assert payload["summary"]["entry_count"] == 1
+    assert payload["summary"]["status_counts"]["missing"] == 1
+    assert payload["entries"][0]["serve_allowed"] is False

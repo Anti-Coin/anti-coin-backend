@@ -221,3 +221,5 @@ influxdb_data
 
 # models
 models/
+
+static_data/

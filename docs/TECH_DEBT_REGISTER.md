@@ -16,7 +16,7 @@
 | TD-003 | Ingest | gap refill 잡 미구현 | 누락 자동 복구 불가 | resolved | A-006 | 감지 gap 구간 재수집/병합 경로 구현 완료, 회귀 테스트 유지 |
 | TD-004 | Alerting | hard_stale/corrupt/missing/recovery 알림 미연동 | 운영자 탐지 지연 | mitigated | A-010 | 배포 환경에서 monitor 서비스 기동/알림 확인 후 `resolved` 전환 |
 | TD-005 | API | timeframe-aware 파일 네이밍 미완성 | 확장 시 라우팅 혼선 | resolved | B-002 | canonical `{symbol}_{timeframe}` 적용 + legacy 호환(dual-write/dual-read) 유지, 회귀 테스트 통과 |
-| TD-006 | API | manifest 미구현 | 상태 가시성 부족 | open | B-004 | manifest 생성 경로 추가 |
+| TD-006 | API | manifest 미구현 | 상태 가시성 부족 | resolved | B-004 | worker cycle에서 `static_data/manifest.json` 생성(심볼/타임프레임 상태 요약 + health 병합) 및 회귀 테스트 완료 |
 | TD-007 | Worker | 워커 경계 조건 테스트 부족 | 회귀 리스크 증가 | resolved | A-011-6 | pagination 종료 경계/리필 병합 경계 테스트 추가 완료 |
 | TD-008 | CI/CD | 테스트 게이트 미적용 | 실패 코드 배포 가능 | resolved | A-011-7 | CI `test` 선행 및 build/deploy 의존 게이트 적용 완료 |
 | TD-009 | Deployment | dev push 즉시 배포 구조 | 운영 실수 영향 확대 | open | (TBD) | CI/CD 정책 분리 문서화 후 적용 |
@@ -30,7 +30,7 @@
 | TD-017 | Runtime Guard | Phase B 이전 다중 timeframe 설정 방어 미구현 | `missing` 오탐 증가 및 운영 판단 혼선 | resolved | A-015 | `INGEST_TIMEFRAMES=1h` fail-fast 가드 적용 완료 |
 | TD-018 | Serving Policy | API-SSG 경계 및 endpoint sunset 기준의 운영 계약(필드/경로) 미확정 | 사용자/운영 경로 혼선, 불필요한 유지비 지속 | mitigated | A-016,B-005 | 1차 경계/체크리스트 문서화는 완료. 프론트 요구 필드 계약과 운영 API(`/status`, 필요 시 `/ops/*`) 범위를 확정한 뒤 `B-005`에서 endpoint 삭제 실행 |
 | TD-019 | Worker Architecture | ingest/predict/export 단일 worker 결합 구조 | 특정 단계 지연/장애가 전체 파이프라인 SLA를 악화 | open | C-005 | 단계별 worker 분리 순서/의존성 정의 후 점진 분리 |
-| TD-020 | Scheduling | 고정 간격 while-loop 중심 스케줄 | timeframe별 리소스 낭비/경계 불일치 가능 | open | C-006 | Phase A에서는 단기 패치 없이 defer, C-006에서 timeframe 경계 기반 트리거로 전환 |
+| TD-020 | Scheduling | 고정 간격 while-loop 중심 스케줄 | timeframe별 리소스 낭비/경계 불일치 가능 | open | C-006,C-007 | `D-2026-02-13-33` 기준으로 `C-006(UTC boundary scheduler) -> C-007(new closed candle detection gate)` 순서로 전환 |
 | TD-021 | Failure Signaling | predict 실패 시 degraded 상태/알림 표준 미구현 | 마지막 정상값 제공 중 실패 사실이 숨겨질 수 있음 | resolved | A-017 | worker predict 실패/복구 상태전이 알림 + `/status` degraded/last success/failure 노출 적용 완료 |
 | TD-022 | Freshness Semantics | prediction 파일 `updated_at` 기반 fresh 판정이 입력 데이터 stale을 가릴 수 있음 | freshness honesty 훼손 및 운영 오판 가능 | open | A-014,A-017 | A-014 정합성 체크 운영 검증은 완료, 입력 데이터 최신 시각(`ohlcv_last`)의 사용자 노출 경로 추가 검토 필요 |
 | TD-023 | Status Consistency | API와 monitor의 prediction 파일 선택/판정 경로가 분리됨 | 동일 시점 상태 불일치 및 경보 혼선 가능 | resolved | A-018 | `utils/prediction_status.py` 공통 evaluator 도입 및 API/monitor 공용 경로 통합 완료 |

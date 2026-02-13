@@ -22,7 +22,7 @@
 3. 사용자 데이터 플레인: SSG(static JSON).
 4. `soft stale`는 경고 허용, `hard_stale/corrupt`는 차단.
 5. `soft stale`와 `degraded`는 분리 신호로 운용.
-6. Phase B 전 운영 timeframe은 `1h` 고정.
+6. 운영 timeframe 기본값은 `1h`이며, `ENABLE_MULTI_TIMEFRAMES=true`에서만 다중 timeframe을 허용한다.
 
 ## 4. Phase Roadmap
 | Phase | Status | Objective | Exit Condition |
@@ -44,6 +44,13 @@
 5. dedicated 실패를 shared로 조용히 대체하지 않는다. 실패 상태/사유를 노출해 운영 정직성을 유지한다.
 6. 관련 정책 상세는 `D-2026-02-13-32`, 구현 단위는 `D-011`에서 관리한다.
 
+## 4.2 Runtime Cadence Baseline (Locked)
+1. 다중 timeframe 실행 주기는 `UTC candle boundary`를 기준으로 한다.
+2. 실행 직전 `new closed candle detection gate`를 적용해 신규 데이터가 없으면 cycle을 skip한다.
+3. 구현 순서는 `C-006(boundary scheduler) -> C-007(detection gate)`를 따른다.
+4. 계측은 `C-002`를 선행 조건으로 유지한다(실행시간/overrun/missed boundary).
+5. 장애 시 fallback은 고정 poll 루프로 즉시 회귀한다.
+
 ## 5. Rebaseline Focus (Pre-Phase B)
 1. Phase A 이전에 작성된 B/C/D 태스크는 구현 중 드러난 리스크를 충분히 반영하지 못했을 가능성을 전제로 한다.
 2. Phase A 실행 결과(태스크 증가, 우선순위 변경)를 기준으로 B/C/D 전체를 다시 점검한다.
@@ -63,11 +70,12 @@
 
 ## 7. Next Cycle (Recommended)
 1. `B-001`: timeframe tier 정책 매트릭스 잠금(1m 비대칭 + `latest closed 180` + `14d/30d` + Hard Gate+Accuracy)
-2. `B-003`: timeframe-aware export 전환(`1m` prediction 비생성 포함)
-3. `B-004`: manifest 생성(심볼/타임프레임 최신 상태 요약)
-4. `B-006`: 저장소 예산 가드 + retention/downsample 실행
-5. `C-002`: 실행시간/실패율 메트릭 수집(Phase C 착수 근거)
-6. `D-011` 설계 착수: model coverage matrix + fallback resolver 구현 기준 세분화
+2. `B-004`: manifest 생성(심볼/타임프레임 최신 상태 요약)
+3. `B-006`: 저장소 예산 가드 + retention/downsample 실행
+4. `C-002`: 실행시간/실패율/overrun/missed boundary 메트릭 수집
+5. `C-006`: timeframe 경계 기반 scheduler 전환
+6. `C-007`: 신규 closed candle 감지 게이트 결합
+7. `B-007` 설계 착수: admin/app.py timeframe 운영 대시보드 확장
 
 ## 8. Portfolio Capability Matrix (Current vs Next)
 | Capability | Current Evidence | Next Strengthening |

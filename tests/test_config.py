@@ -3,7 +3,8 @@ from datetime import timedelta
 import pytest
 
 from utils.config import (
-    _enforce_phase_a_timeframe_guard,
+    _enforce_ingest_timeframe_guard,
+    _parse_bool_env,
     _parse_csv_env,
     _parse_thresholds,
 )
@@ -19,6 +20,21 @@ def test_parse_csv_env_trims_and_filters_empty_values():
     raw = " BTC/USDT, , ETH/USDT ,,SOL/USDT "
     parsed = _parse_csv_env(raw, ["X"])
     assert parsed == ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+
+
+def test_parse_bool_env_parses_common_values():
+    assert _parse_bool_env("true") is True
+    assert _parse_bool_env("1") is True
+    assert _parse_bool_env("on") is True
+    assert _parse_bool_env("false") is False
+    assert _parse_bool_env("0") is False
+    assert _parse_bool_env("off") is False
+
+
+def test_parse_bool_env_falls_back_to_default_for_invalid():
+    assert _parse_bool_env("not-a-bool", default=False) is False
+    assert _parse_bool_env("not-a-bool", default=True) is True
+    assert _parse_bool_env(None, default=True) is True
 
 
 def test_parse_thresholds_keeps_defaults_and_applies_valid_overrides():
@@ -37,15 +53,23 @@ def test_parse_thresholds_ignores_invalid_values():
     assert "2h" not in parsed
 
 
-def test_enforce_phase_a_timeframe_guard_accepts_only_1h():
-    assert _enforce_phase_a_timeframe_guard(["1h"]) == ["1h"]
+def test_enforce_ingest_timeframe_guard_accepts_only_1h_in_default_mode():
+    assert _enforce_ingest_timeframe_guard(["1h"], allow_multi=False) == ["1h"]
 
 
-def test_enforce_phase_a_timeframe_guard_rejects_non_1h():
+def test_enforce_ingest_timeframe_guard_rejects_non_1h_in_default_mode():
     with pytest.raises(ValueError):
-        _enforce_phase_a_timeframe_guard(["4h"])
+        _enforce_ingest_timeframe_guard(["4h"], allow_multi=False)
 
 
-def test_enforce_phase_a_timeframe_guard_rejects_multiple_timeframes():
+def test_enforce_ingest_timeframe_guard_rejects_multiple_in_default_mode():
     with pytest.raises(ValueError):
-        _enforce_phase_a_timeframe_guard(["1h", "4h"])
+        _enforce_ingest_timeframe_guard(["1h", "4h"], allow_multi=False)
+
+
+def test_enforce_ingest_timeframe_guard_accepts_multiple_when_enabled():
+    assert _enforce_ingest_timeframe_guard(["1m", "1h", "1d"], allow_multi=True) == [
+        "1m",
+        "1h",
+        "1d",
+    ]

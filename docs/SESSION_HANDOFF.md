@@ -7,16 +7,19 @@
 1. Phase A(Reliability Baseline) 완료.
 2. 핵심 기준: 안정성 > 비용 > 성능, SSG 사용자 플레인 + InfluxDB SoT 유지.
 3. `/status`는 운영/경고 신호 노출 경로로 유지, `/history`/`/predict`는 fallback 경로.
-4. `R-001`~`R-004` 완료. `D-2026-02-13-29/30/32` 반영으로 Phase B/Phase D 기준선을 보정.
+4. `R-001`~`R-004` 완료. `D-2026-02-13-29/30/32/33` 반영으로 Phase B/C/D 기준선을 보정.
 5. `B-002` 완료: canonical `{symbol}_{timeframe}` 네이밍 적용 + legacy 호환(dual-write) 유지 + 회귀 테스트 `29 passed`.
 6. `B-005`는 P2 유지(조건 충족 기반 sunset, 비긴급 트랙).
+7. `B-003` 완료: 다중 timeframe(`1h/1d/1w/1M`) + 5 symbol 조합에서 실운영 cycle 확인(약 30초), `1m` prediction 비생성 정책 반영.
+8. config gate 변경: `ENABLE_MULTI_TIMEFRAMES`(default `0`) 도입. 기본은 `1h` 고정 유지, 명시 활성화 시 다중 timeframe 허용.
 
 ## 2. Next Priority Tasks
 1. `B-001`: timeframe tier 정책 매트릭스 잠금(1m 비대칭 + `latest closed 180` + `14d/30d` + Hard Gate+Accuracy)
-2. `B-003`: timeframe-aware export 전환(`1m` prediction 비생성 포함)
-3. `B-004`: manifest 생성(심볼/타임프레임 최신 상태 요약)
-4. `B-006`: 저장소 예산 가드 + retention/downsample 실행
-5. `C-002`: 실행시간/실패율 메트릭 수집(Phase C 착수 판단 근거)
+2. `B-004`: manifest 생성(심볼/타임프레임 최신 상태 요약)
+3. `B-006`: 저장소 예산 가드 + retention/downsample 실행
+4. `C-002`: 실행시간/실패율/overrun/missed boundary 메트릭 수집
+5. `C-006 -> C-007`: boundary scheduler + detection gate 하이브리드 전환
+6. `B-007`: admin/app.py timeframe 운영 대시보드 확장
 
 ## 3. Current Risks
 1. `TD-018`: API-SSG 운영 계약(필드/경로) 최종 확정 미완료
