@@ -338,6 +338,7 @@ def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
         sleep_seconds=47.6,
         overrun=False,
         cycle_result="ok",
+        ingest_since_source_counts={"db_last": 5, "bootstrap_lookback": 1},
         path=metrics_path,
         target_cycle_seconds=60,
         window_size=10,
@@ -349,6 +350,10 @@ def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
         overrun=True,
         cycle_result="failed",
         error="worker_error",
+        ingest_since_source_counts={
+            "underfilled_rebootstrap": 2,
+            "blocked_storage_guard": 1,
+        },
         path=metrics_path,
         target_cycle_seconds=60,
         window_size=10,
@@ -364,6 +369,21 @@ def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
     assert payload["summary"]["overrun_count"] == 1
     assert payload["summary"]["p95_elapsed_seconds"] == 70.0
     assert payload["summary"]["missed_boundary_count"] is None
+    assert payload["summary"]["ingest_since_source_counts"]["db_last"] == 5
+    assert (
+        payload["summary"]["ingest_since_source_counts"][
+            "underfilled_rebootstrap"
+        ]
+        == 2
+    )
+    assert payload["summary"]["rebootstrap_cycles"] == 1
+    assert payload["summary"]["rebootstrap_events"] == 2
+    assert payload["summary"]["underfill_guard_retrigger_cycles"] == 1
+    assert payload["summary"]["underfill_guard_retrigger_events"] == 2
+    assert payload["recent_cycles"][1]["ingest_since_source_counts"] == {
+        "underfilled_rebootstrap": 2,
+        "blocked_storage_guard": 1,
+    }
     assert payload["recent_cycles"][1]["error"] == "worker_error"
 
 
@@ -404,6 +424,35 @@ def test_append_runtime_cycle_metrics_applies_window_limit(tmp_path):
     assert payload["recent_cycles"][0]["started_at"] == "2026-02-13T12:01:00Z"
     assert payload["recent_cycles"][1]["started_at"] == "2026-02-13T12:02:00Z"
     assert payload["summary"]["samples"] == 2
+
+
+def test_append_runtime_cycle_metrics_ignores_invalid_source_counts(tmp_path):
+    metrics_path = tmp_path / "runtime_metrics.json"
+    base = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    append_runtime_cycle_metrics(
+        started_at=base,
+        elapsed_seconds=9.0,
+        sleep_seconds=51.0,
+        overrun=False,
+        cycle_result="ok",
+        ingest_since_source_counts={
+            "db_last": "not_a_number",
+            "": 3,
+            "underfilled_rebootstrap": -1,
+            "bootstrap_lookback": 2,
+        },
+        path=metrics_path,
+    )
+
+    payload = json.loads(metrics_path.read_text())
+    assert payload["recent_cycles"][0]["ingest_since_source_counts"] == {
+        "bootstrap_lookback": 2
+    }
+    assert payload["summary"]["ingest_since_source_counts"] == {
+        "bootstrap_lookback": 2
+    }
+    assert payload["summary"]["rebootstrap_events"] == 0
 
 
 def test_lookback_days_for_timeframe_uses_1m_policy():

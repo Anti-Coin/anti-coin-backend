@@ -36,6 +36,7 @@
 24. `B-001` 완료 (2026-02-17): 정책/구현/회귀 근거(`87 passed`)가 정렬되어 timeframe 정책 잠금 태스크를 종료
 25. `C-008` 시작 (2026-02-17): `1h underfill` RCA 착수(`I-2026-02-13-01` 임시 guard의 유지/조정/제거 결론 도출 준비)
 26. `C-008` 완료 (2026-02-17): fallback 오염 경로 차단 + 회귀(`89 passed`) + `D-2026-02-17-37` 반영, guard 7일 관찰은 차단 게이트가 아닌 운영 메모로 `C-002`에서 병행 추적
+27. `C-002` 완료 (2026-02-17): `runtime_metrics.json`에 `ingest_since_source_counts`/`rebootstrap`/`underfill_guard_retrigger` 집계를 추가해 `C-008` 후속 7일 관찰 근거를 메트릭 경로로 고정, 회귀 `90 passed`
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -63,7 +64,7 @@
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
 | C-001 | P1 | 심볼 목록 확장 자동화 | open | 심볼 추가 시 코드 수정 최소화 |
-| C-002 | P1 | 실행시간/실패율 메트릭 수집 | in_progress | `static_data/runtime_metrics.json`에 cycle 실행시간/실패율/overrun 추세가 누적되고, `missed_boundary` 지원 여부(전환 전 미지원)가 명시된다 |
+| C-002 | P1 | 실행시간/실패율 메트릭 수집 | done (2026-02-17) | `static_data/runtime_metrics.json`에 cycle 실행시간/실패율/overrun 추세가 누적되고, poll-loop 기준 `missed_boundary` 미지원이 명시되며, `ingest_since_source_counts`/`rebootstrap_events`/`underfill_guard_retrigger_*`가 함께 집계되어 `C-008` 후속 관찰 근거를 제공한다 |
 | C-003 | P2 | 부하 테스트 시나리오 업데이트 | open | 정적/상태 경로 부하 테스트 가능 |
 | C-004 | P2 | 모델 학습 잡 분리 초안 | open | 수집/예측과 독립 실행 가능 |
 | C-005 | P1 | pipeline worker 역할 분리 | open (gated) | `B-003` 검증 증거 확보 후 착수, 완료 시 ingest 지연/장애가 predict/export에 즉시 전파되지 않으며 base ingest(`1m`,`1h`)와 derived materialization(`1d/1w/1M`) 경계가 코드 레벨로 분리됨 |
@@ -87,9 +88,9 @@
 | D-011 | P1 | Model Coverage Matrix + Fallback Resolver 구현 | open | 기본 `timeframe-shared`/조건부 `symbol+timeframe dedicated` 정책과 `dedicated -> shared -> insufficient_data` fallback 체인이 코드/메타데이터/테스트로 검증됨 |
 
 ## 3. Immediate Bundle
-1. `C-002`
-2. `C-006`
-3. `C-007`
+1. `C-006`
+2. `C-007`
+3. `C-005`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
@@ -152,7 +153,7 @@
 1. 현재 우선순위(`Stability > Cost > Performance`)에 따라 Option A를 기준선으로 채택한다.
 2. `B-005`는 사용자 의견에 따라 P2를 유지한다.
 3. Option B는 `C-002`에서 비용 압력이 즉시 심각하다는 증거가 나올 때 fallback 후보로만 유지한다.
-4. `D-2026-02-13-33`/`D-2026-02-13-35`/`D-2026-02-17-36`/`D-2026-02-17-37` 반영 후 활성 실행 순서는 `C-002 -> C-006 -> C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2)`다.
+4. `D-2026-02-13-33`/`D-2026-02-13-35`/`D-2026-02-17-36`/`D-2026-02-17-37` 반영 후 활성 실행 순서는 `C-006 -> C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2)`다.
 
 ## 8. R-004 Kickoff Contract (Accepted)
 1. Kickoff 구현 묶음은 `B-002`, `B-003` 2개로 고정한다.

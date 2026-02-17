@@ -244,6 +244,58 @@ def _percentile(values: list[float], q: float) -> float | None:
     return sorted_values[rank]
 
 
+def _normalize_source_counts(raw_counts: dict | None) -> dict[str, int]:
+    if not isinstance(raw_counts, dict):
+        return {}
+
+    normalized: dict[str, int] = {}
+    for source, raw_count in raw_counts.items():
+        if not isinstance(source, str) or not source:
+            continue
+        try:
+            count = int(raw_count)
+        except (TypeError, ValueError):
+            continue
+        if count <= 0:
+            continue
+        normalized[source] = normalized.get(source, 0) + count
+    return normalized
+
+
+def _aggregate_ingest_source_metrics(entries: list[dict]) -> dict[str, int | dict]:
+    source_counts: dict[str, int] = {}
+    rebootstrap_cycles = 0
+    rebootstrap_events = 0
+    underfill_guard_retrigger_cycles = 0
+    underfill_guard_retrigger_events = 0
+
+    for item in entries:
+        counts = _normalize_source_counts(item.get("ingest_since_source_counts"))
+        cycle_has_rebootstrap = False
+
+        for source, count in counts.items():
+            source_counts[source] = source_counts.get(source, 0) + count
+            if "rebootstrap" in source:
+                cycle_has_rebootstrap = True
+                rebootstrap_events += count
+
+        underfill_count = counts.get("underfilled_rebootstrap", 0)
+        if underfill_count > 0:
+            underfill_guard_retrigger_cycles += 1
+            underfill_guard_retrigger_events += underfill_count
+
+        if cycle_has_rebootstrap:
+            rebootstrap_cycles += 1
+
+    return {
+        "source_counts": source_counts,
+        "rebootstrap_cycles": rebootstrap_cycles,
+        "rebootstrap_events": rebootstrap_events,
+        "underfill_guard_retrigger_cycles": underfill_guard_retrigger_cycles,
+        "underfill_guard_retrigger_events": underfill_guard_retrigger_events,
+    }
+
+
 def append_runtime_cycle_metrics(
     *,
     started_at: datetime,
@@ -252,6 +304,7 @@ def append_runtime_cycle_metrics(
     overrun: bool,
     cycle_result: str,
     error: str | None = None,
+    ingest_since_source_counts: dict[str, int] | None = None,
     path: Path = RUNTIME_METRICS_FILE,
     target_cycle_seconds: int = CYCLE_TARGET_SECONDS,
     window_size: int = RUNTIME_METRICS_WINDOW_SIZE,
@@ -264,6 +317,9 @@ def append_runtime_cycle_metrics(
         "overrun": overrun,
         "result": cycle_result,
         "error": error,
+        "ingest_since_source_counts": _normalize_source_counts(
+            ingest_since_source_counts
+        ),
     }
     entries.append(entry)
 
@@ -285,6 +341,7 @@ def append_runtime_cycle_metrics(
     )
     avg_sleep = round(sum(sleep_values) / samples, 2) if samples else None
     p95_elapsed = _percentile(elapsed_values, 95)
+    ingest_source_metrics = _aggregate_ingest_source_metrics(entries)
     summary = {
         "samples": samples,
         "success_count": success_count,
@@ -304,6 +361,15 @@ def append_runtime_cycle_metrics(
         # C-006 전에는 boundary scheduler가 없어서 missed boundary를 측정하지 않는다.
         "missed_boundary_count": None,
         "missed_boundary_rate": None,
+        "ingest_since_source_counts": ingest_source_metrics["source_counts"],
+        "rebootstrap_cycles": ingest_source_metrics["rebootstrap_cycles"],
+        "rebootstrap_events": ingest_source_metrics["rebootstrap_events"],
+        "underfill_guard_retrigger_cycles": ingest_source_metrics[
+            "underfill_guard_retrigger_cycles"
+        ],
+        "underfill_guard_retrigger_events": ingest_source_metrics[
+            "underfill_guard_retrigger_events"
+        ],
     }
 
     payload = {
@@ -1654,6 +1720,7 @@ def run_worker():
     while True:
         cycle_started_at = datetime.now(timezone.utc)
         start_time = time.time()
+        cycle_since_source_counts: dict[str, int] = {}
         try:
             logger.info(
                 f"\n[Cycle] 작업 시작: {cycle_started_at.strftime('%Y-%m-%d %H:%M:%S')}"
@@ -1758,6 +1825,9 @@ def run_worker():
                             == "hidden_backfilling"
                         ),
                         now=cycle_now,
+                    )
+                    cycle_since_source_counts[since_source] = (
+                        cycle_since_source_counts.get(since_source, 0) + 1
                     )
 
                     if since_source == "blocked_storage_guard":
@@ -1920,6 +1990,7 @@ def run_worker():
                     sleep_seconds=max(sleep_time, 0.0),
                     overrun=overrun,
                     cycle_result="ok",
+                    ingest_since_source_counts=cycle_since_source_counts,
                 )
             except Exception as e:
                 logger.error(f"Runtime metrics update failed: {e}")
@@ -1950,6 +2021,7 @@ def run_worker():
                     overrun=elapsed > CYCLE_TARGET_SECONDS,
                     cycle_result="failed",
                     error=str(e),
+                    ingest_since_source_counts=cycle_since_source_counts,
                 )
             except Exception as metrics_error:
                 logger.error(
