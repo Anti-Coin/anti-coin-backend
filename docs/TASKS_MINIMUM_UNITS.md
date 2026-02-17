@@ -1,6 +1,6 @@
 # Coin Predict Task Board (Active)
 
-- Last Updated: 2026-02-13
+- Last Updated: 2026-02-17
 - Rule: 활성 태스크만 유지하고, 완료 상세 이력은 Archive로 분리
 - Full Phase A History: `docs/archive/phase_a/TASKS_MINIMUM_UNITS_PHASE_A_FULL_2026-02-12.md`
 
@@ -31,6 +31,7 @@
 19. `C-002` 진행 (2026-02-13): `runtime_metrics.json` baseline 추가(실행시간/실패율/overrun 추세, poll-loop 모드에서 `missed_boundary`는 미지원으로 명시)
 20. `I-2026-02-13-01` 반영: `1h` canonical underfill(예: 30d 대비 소량 row) 시 DB last가 있어도 lookback 재부트스트랩을 강제해 bootstrap drift를 복구
 21. `D-2026-02-13-35` 채택: `I-2026-02-13-01`은 임시 방편(containment)이며 RCA 완료 전 최종 해결로 간주하지 않음
+22. `D-2026-02-17-36` 채택: 모든 심볼 onboarding을 `1h full-first(exchange earliest)`로 고정하고, full backfill 완료 전 FE 심볼 완전 비노출 게이트를 정책으로 채택
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -45,7 +46,7 @@
 ### Phase B (Timeframe Expansion)
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
-| B-001 | P1 | timeframe tier 정책 매트릭스 확정(수집/보존/서빙/예측) | in_progress | `docs/TIMEFRAME_POLICY_MATRIX.md` 정책 잠금 + `1m` 예측 비서빙, `1m` hybrid API=`latest closed 180 candles`, `1m` rolling=`default 14d / cap 30d`, `1h->1d/1w/1M` downsample 경로, `1d/1w/1M` direct ingest 금지 경계, `internal_deterministic_mismatch`/`external_reconciliation_mismatch` 구분 규칙, Hard Gate+Accuracy 정책을 문서/설정으로 고정 |
+| B-001 | P1 | timeframe tier 정책 매트릭스 확정(수집/보존/서빙/예측) | in_progress | `docs/TIMEFRAME_POLICY_MATRIX.md` 정책 잠금 + `1m` 예측 비서빙, `1m` hybrid API=`latest closed 180 candles`, `1m` rolling=`default 14d / cap 30d`, `1h` onboarding=`full-first(exchange earliest)` + `registered/backfilling/ready_for_serving` 게이트 + full backfill 완료 전 FE 심볼 완전 비노출, `1h->1d/1w/1M` downsample 경로, `1d/1w/1M` direct ingest 금지 경계, `internal_deterministic_mismatch`/`external_reconciliation_mismatch` 구분 규칙, Hard Gate+Accuracy 정책을 문서/설정으로 고정 |
 | B-002 | P1 | 파일 네이밍 규칙 통일 | done (2026-02-13) | canonical `{symbol}_{timeframe}` 파일 생성 + legacy fallback 호환 유지 + `tests/test_api_status.py`/`tests/test_status_monitor.py` 회귀 통과 |
 | B-003 | P1 | history/prediction export timeframe-aware 전환 | done (2026-02-13) | 다중 timeframe(`1h/1d/1w/1M`) 동시 export 동작 확인 + `1m` prediction 비생성 정책 코드/테스트 반영 + 회귀 `66 passed` |
 | B-004 | P1 | manifest 파일 생성 | done (2026-02-13) | `static_data/manifest.json`에 심볼/타임프레임별 `history.updated_at`, `prediction.status/updated_at/age`, `degraded`, `serve_allowed`, `summary(status_counts)`가 주기적으로 갱신됨 |
@@ -100,7 +101,7 @@
 ### Phase B
 | ID | Why Now | Failure Mode | Verification | Rollback |
 |---|---|---|---|---|
-| B-001 | 1m/장기 TF를 동일 규칙으로 처리하면 지연/저표본/저장소 리스크를 동시에 키움 | 1m 예측 오버런, 장기 TF 저품질 예측, 보존 정책 충돌, mismatch 해석 혼선 | 정책 매트릭스 리뷰 + 설정 스키마 테스트 + `latest=180`/`14d+30d`/Hard Gate 규칙 dry-run + `internal`/`external` mismatch taxonomy 검증 | Phase A `1h` 단일 모드로 회귀 |
+| B-001 | 1m/장기 TF를 동일 규칙으로 처리하면 지연/저표본/저장소 리스크를 동시에 키움 | 1m 예측 오버런, 장기 TF 저품질 예측, 보존 정책 충돌, 부분 이력 심볼 조기 노출에 따른 사용자 오판 | 정책 매트릭스 리뷰 + 설정 스키마 테스트 + `latest=180`/`14d+30d`/Hard Gate 규칙 dry-run + `internal`/`external` mismatch taxonomy 검증 + symbol activation gate(`hidden_backfilling`) 검증 | Phase A `1h` 단일 모드로 회귀 |
 | B-002 | 파일 네이밍 불일치가 API/monitor 오탐(`missing`)을 유발함 | 잘못된 파일 탐색으로 상태 오판 및 경보 노이즈 | 파일명 규칙 테스트 + legacy fallback 동작 확인 | dual-read(신규+legacy) 유지 후 단계적 전환 |
 | B-003 | export가 timeframe-aware가 아니면 산출물이 덮어써지고, 1m 예측 비서빙 정책 위반 위험이 생김 | 타임프레임 간 파일 충돌/유실 + 1m prediction 파일 노출 | 다중 timeframe 동시 export 테스트 + `1m` prediction 미생성 검증 | `1h` export 경로로 임시 복귀 |
 | B-004 | manifest 부재 시 운영자가 전체 상태를 빠르게 파악하기 어려움 | manifest stale/오류로 잘못된 운영 판단 | manifest와 원본 파일 간 일관성 검사 + updated_at 검증 | manifest 소비 중지, 개별 파일 점검으로 회귀 |

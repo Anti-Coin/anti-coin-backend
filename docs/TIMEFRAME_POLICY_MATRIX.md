@@ -1,9 +1,9 @@
 # Coin Predict Timeframe Policy Matrix (B-001)
 
-- Last Updated: 2026-02-13
-- Status: Draft v3 (Semantics Clarified)
+- Last Updated: 2026-02-17
+- Status: Draft v4 (Onboarding Gate Added)
 - Owners: Backend/Platform
-- Source Decisions: `D-2026-02-13-29`, `D-2026-02-13-30`, `D-2026-02-13-31`, `D-2026-02-13-34`
+- Source Decisions: `D-2026-02-13-29`, `D-2026-02-13-30`, `D-2026-02-13-31`, `D-2026-02-13-34`, `D-2026-02-17-36`
 
 ## 1. Purpose
 1. Phase B에서 timeframe별 수집/보존/서빙/예측 경계를 명확히 고정한다.
@@ -21,7 +21,7 @@
 | Timeframe | Data Source | Retention | Serving Policy | Prediction Policy | Notes |
 |---|---|---|---|---|---|
 | `1m` | Exchange closed candles | `14d` default, `30d` cap | SSG + Hybrid API(latest window only) | Disabled(default) | 고빈도 특성상 지연/비용 리스크 우선 차단 |
-| `1h` | Exchange closed candles (canonical base) | `365d` default, `730d` cap | SSG primary | Enabled | `1d/1w/1M` downsample의 기준 소스 |
+| `1h` | Exchange closed candles (canonical base) | full-first(`exchange earliest -> now`) | SSG primary | Enabled | `1d/1w/1M` downsample의 기준 소스 |
 | `1d` | Derived from `1h` downsample | Derived retention | SSG primary | Enabled(샘플 gate 통과 시) | direct exchange ingest 금지(파생 전용) |
 | `1w` | Derived from `1h` downsample | Derived retention | SSG primary | Enabled(샘플 gate 통과 시) | direct exchange ingest 금지(파생 전용) |
 | `1M` | Derived from `1h` downsample | Derived retention | SSG primary | Enabled(샘플 gate 통과 시) | direct exchange ingest 금지(파생 전용) |
@@ -32,6 +32,14 @@
 3. 현재 worker의 공용 fetch 함수는 base timeframe 재사용 경로이며, 파생 timeframe 경로는 정책상 호출하지 않는다.
 4. 파생 timeframe direct ingest 정리/하드 가드는 `C-005` 구현 범위에서 확정한다.
 
+## 3.2 Symbol Activation Gate (`1h` Full-First)
+1. 적용 범위: 현재 및 미래의 모든 심볼.
+2. `full` 기준: 상장일 메타가 아닌 `exchange API가 제공하는 earliest closed 1h candle`부터 현재까지.
+3. 상태 전이: `registered -> backfilling -> ready_for_serving`.
+4. `backfilling` 상태 심볼은 FE 사용자 플레인에서 완전 비노출한다(심볼 목록 포함).
+5. 운영자 경로(admin/ops)에서는 `backfilling` 상태와 진행 메타를 노출할 수 있다.
+6. 저장소 `block(>=90%)`에서는 신규 심볼 full backfill을 시작/재개하지 않는다(가드 우회 금지).
+
 ## 4. 1m Hybrid API Boundary
 1. `1m` Hybrid API는 `latest closed 180 candles`만 제공한다(약 3시간).
 2. 임의 range 조회(`from/to`)는 허용하지 않는다.
@@ -40,11 +48,12 @@
 
 ## 5. Retention and Budget Guard
 1. `1m` raw retention 기본값은 `14d`, 운영 상한은 `30d`.
-2. 용량 압박 시 정책:
+2. `1h`는 onboarding 시 full-first 수집을 수행하고, 기본 운영에서는 주기적 day-cap purge를 적용하지 않는다.
+3. 용량 압박 시 정책:
 1. 먼저 `14d` 유지 여부를 보장한다.
 2. `14d` 유지가 불가능해지면 경보를 우선 발행한다.
 3. 강제 축소가 필요하면 운영 의사결정 로그를 남긴다.
-3. `B-006`에서 disk watermark를 적용한다.
+4. `B-006`에서 disk watermark를 적용한다.
 1. `warn`: 70%
 2. `critical`: 85%
 3. `block new expensive backfill`: 90%
@@ -98,9 +107,13 @@
 {
   "symbol": "BTCUSDT",
   "timeframe": "1h",
+  "visibility": "visible|hidden_backfilling",
+  "is_full_backfilled": true,
+  "coverage_start_at": "2018-01-01T00:00:00Z",
+  "coverage_end_at": "2026-02-17T12:00:00Z",
   "status": "healthy|soft_stale|hard_stale|corrupt|insufficient_data|incomplete_bucket",
   "serve_allowed": true,
-  "updated_at": "2026-02-13T12:00:00Z",
+  "updated_at": "2026-02-17T12:00:00Z",
   "quality": {
     "mae": 123.4,
     "smape": 2.1,
@@ -124,6 +137,10 @@
 4. 평가 구간 검증:
 1. timeframe별 `evaluation_window`와 `min sample` 규칙이 매핑대로 적용된다.
 2. `min sample` 미달 시 `insufficient_data`로 차단된다.
+5. onboarding/노출 게이트 검증:
+1. 신규 심볼은 full backfill 완료 전 `visibility=hidden_backfilling`이며 FE 목록에서 제외된다.
+2. full backfill 완료 후에만 `ready_for_serving`으로 전이된다(`is_full_backfilled=true` + coverage 메타 존재).
+3. 디스크 `block` 구간에서는 신규 심볼 full backfill 시작/재개가 차단된다.
 
 ## 10. Rollback Rules
 1. 정책 충돌/과도한 장애 발생 시 즉시 `1h` 단일 운영 모드로 회귀.
