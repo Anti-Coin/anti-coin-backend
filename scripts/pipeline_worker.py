@@ -48,6 +48,7 @@ PREDICTION_HEALTH_FILE = STATIC_DIR / "prediction_health.json"
 MANIFEST_FILE = STATIC_DIR / "manifest.json"
 DOWNSAMPLE_LINEAGE_FILE = STATIC_DIR / "downsample_lineage.json"
 RUNTIME_METRICS_FILE = STATIC_DIR / "runtime_metrics.json"
+SYMBOL_ACTIVATION_FILE = STATIC_DIR / "symbol_activation.json"
 PREDICTION_DISABLED_TIMEFRAMES = {
     value.strip()
     for value in os.getenv("PREDICTION_DISABLED_TIMEFRAMES", "1m").split(",")
@@ -64,6 +65,7 @@ RETENTION_ENFORCE_INTERVAL_SECONDS = 60 * 60
 DOWNSAMPLE_TARGET_TIMEFRAMES = {"1d", "1w", "1M"}
 DOWNSAMPLE_SOURCE_TIMEFRAME = "1h"
 DOWNSAMPLE_SOURCE_LOOKBACK_DAYS = 120
+FULL_BACKFILL_TOLERANCE_HOURS = 1
 CYCLE_TARGET_SECONDS = int(os.getenv("WORKER_CYCLE_SECONDS", "60"))
 RUNTIME_METRICS_WINDOW_SIZE = int(
     os.getenv("RUNTIME_METRICS_WINDOW_SIZE", "240")
@@ -149,6 +151,63 @@ def _save_prediction_health(
         "entries": entries,
     }
     atomic_write_json(path, payload, indent=2)
+
+
+def _format_utc(dt: datetime | None) -> str | None:
+    if dt is None:
+        return None
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _load_symbol_activation(
+    path: Path = SYMBOL_ACTIVATION_FILE,
+) -> dict[str, dict]:
+    if not path.exists():
+        return {}
+
+    try:
+        with open(path, "r") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.error(f"Failed to load symbol activation file: {e}")
+        return {}
+
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        logger.error("Invalid symbol activation format: entries is not a dict.")
+        return {}
+    return entries
+
+
+def _save_symbol_activation(
+    entries: dict[str, dict], path: Path = SYMBOL_ACTIVATION_FILE
+) -> None:
+    payload = {
+        "version": 1,
+        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "entries": entries,
+    }
+    atomic_write_json(path, payload, indent=2)
+
+
+def _remove_static_exports_for_symbol(
+    symbol: str, timeframes: list[str], *, static_dir: Path = STATIC_DIR
+) -> None:
+    for timeframe in timeframes:
+        for kind in ("history", "prediction"):
+            canonical_path, legacy_path = _static_export_paths(
+                kind, symbol, timeframe, static_dir=static_dir
+            )
+            for path in (canonical_path, legacy_path):
+                if path is None:
+                    continue
+                try:
+                    if path.exists():
+                        path.unlink()
+                except OSError as e:
+                    logger.warning(
+                        f"[{symbol} {timeframe}] failed to remove static file {path}: {e}"
+                    )
 
 
 def _load_runtime_metrics(path: Path = RUNTIME_METRICS_FILE) -> list[dict]:
@@ -388,6 +447,8 @@ def resolve_ingest_since(
     last_time: datetime | None,
     disk_level: str,
     force_rebootstrap: bool = False,
+    bootstrap_since: datetime | None = None,
+    enforce_full_backfill: bool = False,
     now: datetime | None = None,
 ) -> tuple[datetime | None, str]:
     """
@@ -401,6 +462,13 @@ def resolve_ingest_since(
     lookback bootstrap을 다시 수행한다.
     """
     resolved_now = now or datetime.now(timezone.utc)
+    if (
+        enforce_full_backfill
+        and timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
+        and bootstrap_since is not None
+    ):
+        return bootstrap_since, "full_backfill_exchange_earliest"
+
     if force_rebootstrap:
         if should_block_initial_backfill(
             disk_level=disk_level,
@@ -445,6 +513,14 @@ def resolve_ingest_since(
         last_time=last_time,
     ):
         return None, "blocked_storage_guard"
+
+    if timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME and bootstrap_since is not None:
+        if source == "state_drift_rebootstrap":
+            return (
+                bootstrap_since,
+                "state_drift_rebootstrap_exchange_earliest",
+            )
+        return bootstrap_since, "bootstrap_exchange_earliest"
 
     lookback_days = _lookback_days_for_timeframe(timeframe)
     return resolved_now - timedelta(days=lookback_days), source
@@ -851,6 +927,7 @@ def build_runtime_manifest(
     now: datetime | None = None,
     static_dir: Path | None = None,
     prediction_health_path: Path | None = None,
+    symbol_activation_entries: dict[str, dict] | None = None,
 ) -> dict:
     """
     심볼/타임프레임별 정적 산출물 상태(manifest) 페이로드를 생성한다.
@@ -868,8 +945,27 @@ def build_runtime_manifest(
     entries: list[dict] = []
     status_counts: dict[str, int] = {}
     degraded_count = 0
+    activation_entries = symbol_activation_entries or {}
+    symbol_state_counts: dict[str, int] = {}
+    visible_symbols: set[str] = set()
 
     for symbol in symbols:
+        activation = activation_entries.get(symbol, {})
+        visibility = (
+            "visible"
+            if activation.get("visibility") != "hidden_backfilling"
+            else "hidden_backfilling"
+        )
+        symbol_state = activation.get("state", "ready_for_serving")
+        is_full_backfilled = bool(
+            activation.get("is_full_backfilled", visibility == "visible")
+        )
+        if visibility == "visible":
+            visible_symbols.add(symbol)
+        symbol_state_counts[symbol_state] = (
+            symbol_state_counts.get(symbol_state, 0) + 1
+        )
+
         for timeframe in timeframes:
             history_updated_at, history_file = _extract_updated_at_from_files(
                 _static_export_candidates(
@@ -920,7 +1016,16 @@ def build_runtime_manifest(
                     "last_prediction_success_at": health.get("last_success_at"),
                     "last_prediction_failure_at": health.get("last_failure_at"),
                     "prediction_failure_count": failure_count,
-                    "serve_allowed": snapshot.status in SERVE_ALLOWED_STATUSES,
+                    "visibility": visibility,
+                    "symbol_state": symbol_state,
+                    "is_full_backfilled": is_full_backfilled,
+                    "coverage_start_at": activation.get("coverage_start_at"),
+                    "coverage_end_at": activation.get("coverage_end_at"),
+                    "exchange_earliest_at": activation.get("exchange_earliest_at"),
+                    "serve_allowed": (
+                        visibility == "visible"
+                        and snapshot.status in SERVE_ALLOWED_STATUSES
+                    ),
                 }
             )
 
@@ -932,6 +1037,9 @@ def build_runtime_manifest(
             "entry_count": len(entries),
             "status_counts": status_counts,
             "degraded_count": degraded_count,
+            "visible_symbol_count": len(visible_symbols),
+            "hidden_symbol_count": max(0, len(symbols) - len(visible_symbols)),
+            "symbol_state_counts": symbol_state_counts,
         },
     }
 
@@ -943,6 +1051,7 @@ def write_runtime_manifest(
     now: datetime | None = None,
     static_dir: Path | None = None,
     prediction_health_path: Path | None = None,
+    symbol_activation_entries: dict[str, dict] | None = None,
     path: Path | None = None,
 ) -> None:
     resolved_path = path or MANIFEST_FILE
@@ -952,6 +1061,7 @@ def write_runtime_manifest(
         now=now,
         static_dir=static_dir,
         prediction_health_path=prediction_health_path,
+        symbol_activation_entries=symbol_activation_entries,
     )
     atomic_write_json(resolved_path, payload, indent=2)
     logger.info(f"Runtime manifest updated: {resolved_path}")
@@ -964,14 +1074,55 @@ def _query_last_timestamp(query_api, query: str) -> datetime | None:
     return result[0].records[0].get_time()
 
 
-def get_last_timestamp(query_api, symbol, timeframe):
+def _query_first_timestamp(query_api, query: str) -> datetime | None:
+    result = query_api.query(query=query)
+    if len(result) == 0 or len(result[0].records) == 0:
+        return None
+    return result[0].records[0].get_time()
+
+
+def get_first_timestamp(
+    query_api, symbol: str, timeframe: str
+) -> datetime | None:
+    query = f"""
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: 0)
+      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
+      |> filter(fn: (r) => r["symbol"] == "{symbol}")
+      |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
+      |> first(column: "_time")
+    """
+    legacy_query = f"""
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: 0)
+      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
+      |> filter(fn: (r) => r["symbol"] == "{symbol}")
+      |> first(column: "_time")
+    """
+
+    try:
+        first_time = _query_first_timestamp(query_api, query)
+        if first_time is None and timeframe == PRIMARY_TIMEFRAME:
+            first_time = _query_first_timestamp(query_api, legacy_query)
+        return first_time
+    except Exception as e:
+        logger.error(
+            f"[{symbol} {timeframe}] DB earliest 조회 중 에러: {e}"
+        )
+        return None
+
+
+def get_last_timestamp(
+    query_api, symbol, timeframe, *, full_range: bool = False
+):
     """
     InfluxDB에서 해당 코인/타임프레임의 가장 마지막 데이터 시간(Timestamp)을 조회
     """
     lookback_days = _lookback_days_for_timeframe(timeframe)
+    range_start = "0" if full_range else f"-{lookback_days}d"
     query = f"""
     from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -{lookback_days}d)
+      |> range(start: {range_start})
       |> filter(fn: (r) => r["_measurement"] == "ohlcv")
       |> filter(fn: (r) => r["symbol"] == "{symbol}")
       |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
@@ -979,7 +1130,7 @@ def get_last_timestamp(query_api, symbol, timeframe):
     """
     legacy_query = f"""
     from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -{lookback_days}d)
+      |> range(start: {range_start})
       |> filter(fn: (r) => r["_measurement"] == "ohlcv")
       |> filter(fn: (r) => r["symbol"] == "{symbol}")
       |> last(column: "_time")
@@ -999,6 +1150,95 @@ def get_last_timestamp(query_api, symbol, timeframe):
         )
 
     return None
+
+
+def get_exchange_earliest_closed_timestamp(
+    exchange,
+    symbol: str,
+    timeframe: str,
+    *,
+    now: datetime | None = None,
+) -> datetime | None:
+    try:
+        rows = exchange.fetch_ohlcv(symbol, timeframe, since=0, limit=1)
+    except Exception as e:
+        logger.warning(
+            f"[{symbol} {timeframe}] failed to fetch exchange earliest candle: {e}"
+        )
+        return None
+
+    if not rows:
+        return None
+
+    try:
+        first_open = datetime.fromtimestamp(
+            int(rows[0][0]) / 1000, tz=timezone.utc
+        )
+    except (TypeError, ValueError):
+        return None
+
+    resolved_now = now or datetime.now(timezone.utc)
+    last_closed = last_closed_candle_open(resolved_now, timeframe)
+    if first_open > last_closed:
+        return None
+    return first_open
+
+
+def build_symbol_activation_entry(
+    *,
+    query_api,
+    symbol: str,
+    now: datetime,
+    exchange_earliest: datetime | None,
+    existing_entry: dict | None = None,
+) -> dict:
+    canonical_tf = DOWNSAMPLE_SOURCE_TIMEFRAME
+    db_first = get_first_timestamp(query_api, symbol, canonical_tf)
+    db_last = get_last_timestamp(
+        query_api, symbol, canonical_tf, full_range=True
+    )
+
+    prev_entry = existing_entry if isinstance(existing_entry, dict) else {}
+    prev_ready = bool(prev_entry.get("is_full_backfilled", False))
+    tolerance = timedelta(hours=max(0, FULL_BACKFILL_TOLERANCE_HOURS))
+
+    if prev_ready and db_first is not None:
+        state = "ready_for_serving"
+        visibility = "visible"
+        is_full_backfilled = True
+    elif db_first is None:
+        state = "registered"
+        visibility = "hidden_backfilling"
+        is_full_backfilled = False
+    elif exchange_earliest is None:
+        state = "backfilling"
+        visibility = "hidden_backfilling"
+        is_full_backfilled = False
+    else:
+        starts_covered = db_first <= (exchange_earliest + tolerance)
+        is_full_backfilled = starts_covered
+        if starts_covered:
+            state = "ready_for_serving"
+            visibility = "visible"
+        else:
+            state = "backfilling"
+            visibility = "hidden_backfilling"
+
+    ready_at = prev_entry.get("ready_at")
+    if is_full_backfilled and not ready_at:
+        ready_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return {
+        "symbol": symbol,
+        "state": state,
+        "visibility": visibility,
+        "is_full_backfilled": is_full_backfilled,
+        "coverage_start_at": _format_utc(db_first),
+        "coverage_end_at": _format_utc(db_last),
+        "exchange_earliest_at": _format_utc(exchange_earliest),
+        "ready_at": ready_at,
+        "updated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
 
 
 def save_history_to_json(df, symbol, timeframe):
@@ -1401,8 +1641,11 @@ def run_worker():
     query_api = client.query_api()
     delete_api = client.delete_api()
     ingest_state_store = IngestStateStore(INGEST_STATE_FILE)
+    symbol_activation_entries = _load_symbol_activation()
     previous_disk_level: str | None = None
     last_retention_enforced_at: datetime | None = None
+    activation_exchange = ccxt.binance()
+    activation_exchange.enableRateLimit = True
 
     send_alert("Worker Started.")
 
@@ -1452,6 +1695,25 @@ def run_worker():
                     send_alert(f"[Retention Error] {e}")
 
             for symbol in TARGET_COINS:
+                exchange_earliest = get_exchange_earliest_closed_timestamp(
+                    activation_exchange,
+                    symbol,
+                    DOWNSAMPLE_SOURCE_TIMEFRAME,
+                    now=cycle_now,
+                )
+                symbol_activation = build_symbol_activation_entry(
+                    query_api=query_api,
+                    symbol=symbol,
+                    now=cycle_now,
+                    exchange_earliest=exchange_earliest,
+                    existing_entry=symbol_activation_entries.get(symbol),
+                )
+                symbol_activation_entries[symbol] = symbol_activation
+                if symbol_activation["visibility"] == "hidden_backfilling":
+                    _remove_static_exports_for_symbol(
+                        symbol, TIMEFRAMES, static_dir=STATIC_DIR
+                    )
+
                 for timeframe in TIMEFRAMES:
                     state_since = ingest_state_store.get_last_closed(
                         symbol, timeframe
@@ -1483,6 +1745,16 @@ def run_worker():
                         last_time=last_time,
                         disk_level=disk_level,
                         force_rebootstrap=force_rebootstrap,
+                        bootstrap_since=(
+                            exchange_earliest
+                            if timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
+                            else None
+                        ),
+                        enforce_full_backfill=(
+                            timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
+                            and symbol_activation["visibility"]
+                            == "hidden_backfilling"
+                        ),
                         now=cycle_now,
                     )
 
@@ -1501,13 +1773,22 @@ def run_worker():
 
                     if since_source in {
                         "bootstrap_lookback",
+                        "bootstrap_exchange_earliest",
+                        "full_backfill_exchange_earliest",
                         "state_drift_rebootstrap",
+                        "state_drift_rebootstrap_exchange_earliest",
                     }:
-                        lookback_days = _lookback_days_for_timeframe(timeframe)
-                        logger.info(
-                            f"[{symbol} {timeframe}] 초기 데이터 수집 시작 "
-                            f"({lookback_days}일 전부터, source={since_source})"
-                        )
+                        if since_source.endswith("exchange_earliest"):
+                            logger.info(
+                                f"[{symbol} {timeframe}] 초기 데이터 수집 시작 "
+                                f"(source={since_source}, since={_format_utc(since)})"
+                            )
+                        else:
+                            lookback_days = _lookback_days_for_timeframe(timeframe)
+                            logger.info(
+                                f"[{symbol} {timeframe}] 초기 데이터 수집 시작 "
+                                f"({lookback_days}일 전부터, source={since_source})"
+                            )
 
                     # 수집
                     if timeframe in DOWNSAMPLE_TARGET_TIMEFRAMES:
@@ -1537,6 +1818,36 @@ def run_worker():
                             last_closed_ts=state_since,
                             status="failed",
                         )
+
+                    if (
+                        timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
+                        and symbol_activation["visibility"]
+                        == "hidden_backfilling"
+                    ):
+                        symbol_activation = build_symbol_activation_entry(
+                            query_api=query_api,
+                            symbol=symbol,
+                            now=cycle_now,
+                            exchange_earliest=exchange_earliest,
+                            existing_entry=symbol_activation_entries.get(
+                                symbol
+                            ),
+                        )
+                        symbol_activation_entries[symbol] = symbol_activation
+                        if (
+                            symbol_activation["visibility"]
+                            == "hidden_backfilling"
+                        ):
+                            _remove_static_exports_for_symbol(
+                                symbol, TIMEFRAMES, static_dir=STATIC_DIR
+                            )
+
+                    if symbol_activation["visibility"] == "hidden_backfilling":
+                        logger.info(
+                            f"[{symbol}] activation state={symbol_activation['state']} "
+                            "-> skip static export/prediction for FE hide policy."
+                        )
+                        continue
 
                     # History 파일 갱신
                     update_full_history_file(query_api, symbol, timeframe)
@@ -1585,7 +1896,12 @@ def run_worker():
                         )
 
             try:
-                write_runtime_manifest(TARGET_COINS, TIMEFRAMES)
+                _save_symbol_activation(symbol_activation_entries)
+                write_runtime_manifest(
+                    TARGET_COINS,
+                    TIMEFRAMES,
+                    symbol_activation_entries=symbol_activation_entries,
+                )
             except Exception as e:
                 logger.error(f"Runtime manifest update failed: {e}")
                 send_alert(f"[Manifest Error] {e}")

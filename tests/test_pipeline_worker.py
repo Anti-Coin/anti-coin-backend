@@ -298,6 +298,9 @@ def test_build_runtime_manifest_merges_freshness_and_health(tmp_path):
     assert entry["degraded"] is True
     assert entry["prediction_failure_count"] == 2
     assert entry["serve_allowed"] is True
+    assert entry["visibility"] == "visible"
+    assert entry["symbol_state"] == "ready_for_serving"
+    assert entry["is_full_backfilled"] is True
 
 
 def test_write_runtime_manifest_writes_manifest_file(tmp_path):
@@ -318,6 +321,8 @@ def test_write_runtime_manifest_writes_manifest_file(tmp_path):
     assert payload["version"] == 1
     assert payload["summary"]["entry_count"] == 1
     assert payload["summary"]["status_counts"]["missing"] == 1
+    assert payload["summary"]["visible_symbol_count"] == 1
+    assert payload["summary"]["hidden_symbol_count"] == 0
     assert payload["entries"][0]["serve_allowed"] is False
 
 
@@ -527,6 +532,117 @@ def test_resolve_ingest_since_rebootstraps_when_underfilled_even_with_db_last():
 
     assert source == "underfilled_rebootstrap"
     assert since == datetime(2026, 1, 14, 12, 0, tzinfo=timezone.utc)
+
+
+def test_resolve_ingest_since_uses_exchange_earliest_for_1h_bootstrap():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        state_since=None,
+        last_time=None,
+        disk_level="normal",
+        bootstrap_since=earliest,
+        now=now,
+    )
+
+    assert source == "bootstrap_exchange_earliest"
+    assert since == earliest
+
+
+def test_resolve_ingest_since_uses_exchange_earliest_for_1h_state_drift():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+    state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        state_since=state_since,
+        last_time=None,
+        disk_level="normal",
+        bootstrap_since=earliest,
+        now=now,
+    )
+
+    assert source == "state_drift_rebootstrap_exchange_earliest"
+    assert since == earliest
+
+
+def test_resolve_ingest_since_enforces_full_backfill_for_hidden_1h():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+    db_last = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        state_since=db_last,
+        last_time=db_last,
+        disk_level="normal",
+        bootstrap_since=earliest,
+        enforce_full_backfill=True,
+        now=now,
+    )
+
+    assert source == "full_backfill_exchange_earliest"
+    assert since == earliest
+
+
+def test_build_runtime_manifest_marks_hidden_symbol_unservable(tmp_path):
+    symbol = "BTC/USDT"
+    timeframe = "1h"
+    safe_symbol = symbol.replace("/", "_")
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    history_path = tmp_path / f"history_{safe_symbol}_{timeframe}.json"
+    history_path.write_text(
+        json.dumps(
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "updated_at": "2026-02-13T11:55:00Z",
+                "data": [],
+            }
+        )
+    )
+    prediction_path = tmp_path / f"prediction_{safe_symbol}_{timeframe}.json"
+    prediction_path.write_text(
+        json.dumps(
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "updated_at": "2026-02-13T11:56:00Z",
+                "forecast": [],
+            }
+        )
+    )
+
+    manifest = build_runtime_manifest(
+        [symbol],
+        [timeframe],
+        now=now,
+        static_dir=tmp_path,
+        prediction_health_path=tmp_path / "prediction_health.json",
+        symbol_activation_entries={
+            symbol: {
+                "state": "backfilling",
+                "visibility": "hidden_backfilling",
+                "is_full_backfilled": False,
+                "coverage_start_at": "2026-01-01T00:00:00Z",
+                "coverage_end_at": "2026-02-13T11:00:00Z",
+            }
+        },
+    )
+
+    assert manifest["summary"]["visible_symbol_count"] == 0
+    assert manifest["summary"]["hidden_symbol_count"] == 1
+    entry = manifest["entries"][0]
+    assert entry["visibility"] == "hidden_backfilling"
+    assert entry["symbol_state"] == "backfilling"
+    assert entry["serve_allowed"] is False
 
 
 def test_minimum_required_lookback_rows_for_1h_only():
