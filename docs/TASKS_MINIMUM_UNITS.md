@@ -37,6 +37,7 @@
 25. `C-008` 시작 (2026-02-17): `1h underfill` RCA 착수(`I-2026-02-13-01` 임시 guard의 유지/조정/제거 결론 도출 준비)
 26. `C-008` 완료 (2026-02-17): fallback 오염 경로 차단 + 회귀(`89 passed`) + `D-2026-02-17-37` 반영, guard 7일 관찰은 차단 게이트가 아닌 운영 메모로 `C-002`에서 병행 추적
 27. `C-002` 완료 (2026-02-17): `runtime_metrics.json`에 `ingest_since_source_counts`/`rebootstrap`/`underfill_guard_retrigger` 집계를 추가해 `C-008` 후속 7일 관찰 근거를 메트릭 경로로 고정, 회귀 `90 passed`
+28. `C-006` 완료 (2026-02-17): boundary scheduler(`WORKER_SCHEDULER_MODE=boundary` 기본) 도입으로 timeframe 경계 시점에만 실행하도록 전환, `runtime_metrics.json`에 `missed_boundary_count/rate` 실측 반영, 회귀 `93 passed`
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -68,7 +69,7 @@
 | C-003 | P2 | 부하 테스트 시나리오 업데이트 | open | 정적/상태 경로 부하 테스트 가능 |
 | C-004 | P2 | 모델 학습 잡 분리 초안 | open | 수집/예측과 독립 실행 가능 |
 | C-005 | P1 | pipeline worker 역할 분리 | open (gated) | `B-003` 검증 증거 확보 후 착수, 완료 시 ingest 지연/장애가 predict/export에 즉시 전파되지 않으며 base ingest(`1m`,`1h`)와 derived materialization(`1d/1w/1M`) 경계가 코드 레벨로 분리됨 |
-| C-006 | P1 | timeframe 경계 기반 scheduler 전환 | open | UTC candle boundary 기준으로 `symbol+timeframe` 실행 스케줄을 고정하고 고정 poll 루프 대비 overrun을 감소시킴 |
+| C-006 | P1 | timeframe 경계 기반 scheduler 전환 | done (2026-02-17) | `WORKER_SCHEDULER_MODE=boundary` 기준으로 UTC candle boundary에서 due timeframe만 실행되며, 경계 미도래 시 idle sleep으로 불필요 cycle을 억제한다. `runtime_metrics.json`에 `boundary_tracking.mode=boundary_scheduler`와 `missed_boundary_count/rate`가 기록된다 |
 | C-007 | P1 | 신규 candle 감지 게이트 결합 | open | boundary 스케줄 직전 신규 closed candle 감지 후 실행/skip를 분기해 불필요 cycle을 억제하고 `missed_boundary=0`을 검증 |
 | C-008 | P1 | `1h` underfill RCA + temporary guard sunset 결정 | done (2026-02-17) | legacy fallback 오염 경로(`timeframe` 미존재 row만 허용) 차단 + 회귀 테스트 반영 + `D-2026-02-17-37` 문서화 완료. guard 7일 관찰은 블로킹 조건이 아닌 운영 메모로 `C-002` 계측 트랙에서 병행 추적 |
 
@@ -88,9 +89,9 @@
 | D-011 | P1 | Model Coverage Matrix + Fallback Resolver 구현 | open | 기본 `timeframe-shared`/조건부 `symbol+timeframe dedicated` 정책과 `dedicated -> shared -> insufficient_data` fallback 체인이 코드/메타데이터/테스트로 검증됨 |
 
 ## 3. Immediate Bundle
-1. `C-006`
-2. `C-007`
-3. `C-005`
+1. `C-007`
+2. `C-005`
+3. `R-005`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
@@ -153,7 +154,7 @@
 1. 현재 우선순위(`Stability > Cost > Performance`)에 따라 Option A를 기준선으로 채택한다.
 2. `B-005`는 사용자 의견에 따라 P2를 유지한다.
 3. Option B는 `C-002`에서 비용 압력이 즉시 심각하다는 증거가 나올 때 fallback 후보로만 유지한다.
-4. `D-2026-02-13-33`/`D-2026-02-13-35`/`D-2026-02-17-36`/`D-2026-02-17-37` 반영 후 활성 실행 순서는 `C-006 -> C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2)`다.
+4. `D-2026-02-13-33`/`D-2026-02-13-35`/`D-2026-02-17-36`/`D-2026-02-17-37` 반영 후 활성 실행 순서는 `C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2)`다.
 
 ## 8. R-004 Kickoff Contract (Accepted)
 1. Kickoff 구현 묶음은 `B-002`, `B-003` 2개로 고정한다.

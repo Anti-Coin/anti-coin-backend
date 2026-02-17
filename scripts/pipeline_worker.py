@@ -71,6 +71,8 @@ RUNTIME_METRICS_WINDOW_SIZE = int(
     os.getenv("RUNTIME_METRICS_WINDOW_SIZE", "240")
 )
 LOOKBACK_MIN_ROWS_RATIO = float(os.getenv("LOOKBACK_MIN_ROWS_RATIO", "0.8"))
+WORKER_SCHEDULER_MODE = os.getenv("WORKER_SCHEDULER_MODE", "boundary").strip().lower()
+VALID_WORKER_SCHEDULER_MODES = {"poll_loop", "boundary"}
 
 
 def send_alert(message):
@@ -296,6 +298,50 @@ def _aggregate_ingest_source_metrics(entries: list[dict]) -> dict[str, int | dic
     }
 
 
+def initialize_boundary_schedule(
+    now: datetime, timeframes: list[str]
+) -> dict[str, datetime]:
+    return {
+        timeframe: next_timeframe_boundary(now, timeframe)
+        for timeframe in timeframes
+    }
+
+
+def resolve_boundary_due_timeframes(
+    *,
+    now: datetime,
+    timeframes: list[str],
+    next_boundary_by_timeframe: dict[str, datetime],
+) -> tuple[list[str], int, datetime | None]:
+    due_timeframes: list[str] = []
+    missed_boundary_count = 0
+
+    for timeframe in timeframes:
+        next_boundary = next_boundary_by_timeframe.get(timeframe)
+        if next_boundary is None:
+            next_boundary = next_timeframe_boundary(now, timeframe)
+            next_boundary_by_timeframe[timeframe] = next_boundary
+
+        if now < next_boundary:
+            continue
+
+        due_timeframes.append(timeframe)
+        boundary_advance_steps = 0
+        while next_boundary <= now:
+            next_boundary = next_timeframe_boundary(next_boundary, timeframe)
+            boundary_advance_steps += 1
+
+        next_boundary_by_timeframe[timeframe] = next_boundary
+        missed_boundary_count += max(0, boundary_advance_steps - 1)
+
+    next_boundary_at = (
+        min(next_boundary_by_timeframe.values())
+        if next_boundary_by_timeframe
+        else None
+    )
+    return due_timeframes, missed_boundary_count, next_boundary_at
+
+
 def append_runtime_cycle_metrics(
     *,
     started_at: datetime,
@@ -305,10 +351,23 @@ def append_runtime_cycle_metrics(
     cycle_result: str,
     error: str | None = None,
     ingest_since_source_counts: dict[str, int] | None = None,
+    boundary_tracking_mode: str = "poll_loop",
+    missed_boundary_count: int | None = None,
     path: Path = RUNTIME_METRICS_FILE,
     target_cycle_seconds: int = CYCLE_TARGET_SECONDS,
     window_size: int = RUNTIME_METRICS_WINDOW_SIZE,
 ) -> dict:
+    resolved_boundary_mode = (
+        boundary_tracking_mode
+        if boundary_tracking_mode in {"poll_loop", "boundary_scheduler"}
+        else "poll_loop"
+    )
+    resolved_missed_boundary_count = (
+        max(0, int(missed_boundary_count))
+        if missed_boundary_count is not None
+        else None
+    )
+
     entries = _load_runtime_metrics(path=path)
     entry = {
         "started_at": started_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -317,6 +376,8 @@ def append_runtime_cycle_metrics(
         "overrun": overrun,
         "result": cycle_result,
         "error": error,
+        "scheduler_mode": resolved_boundary_mode,
+        "missed_boundary_count": resolved_missed_boundary_count,
         "ingest_since_source_counts": _normalize_source_counts(
             ingest_since_source_counts
         ),
@@ -327,7 +388,9 @@ def append_runtime_cycle_metrics(
     entries = entries[-effective_window:]
 
     samples = len(entries)
-    success_count = sum(1 for item in entries if item.get("result") == "ok")
+    success_count = sum(
+        1 for item in entries if item.get("result") in {"ok", "idle"}
+    )
     failure_count = samples - success_count
     overrun_count = sum(1 for item in entries if item.get("overrun") is True)
     elapsed_values = [
@@ -342,6 +405,19 @@ def append_runtime_cycle_metrics(
     avg_sleep = round(sum(sleep_values) / samples, 2) if samples else None
     p95_elapsed = _percentile(elapsed_values, 95)
     ingest_source_metrics = _aggregate_ingest_source_metrics(entries)
+    if resolved_boundary_mode == "boundary_scheduler":
+        boundary_counts = [
+            max(0, int(item.get("missed_boundary_count") or 0))
+            for item in entries
+        ]
+        missed_boundary_total = sum(boundary_counts)
+        missed_boundary_rate = (
+            round(missed_boundary_total / samples, 4) if samples else None
+        )
+    else:
+        missed_boundary_total = None
+        missed_boundary_rate = None
+
     summary = {
         "samples": samples,
         "success_count": success_count,
@@ -358,9 +434,8 @@ def append_runtime_cycle_metrics(
         "overrun_rate": (
             round(overrun_count / samples, 4) if samples else None
         ),
-        # C-006 전에는 boundary scheduler가 없어서 missed boundary를 측정하지 않는다.
-        "missed_boundary_count": None,
-        "missed_boundary_rate": None,
+        "missed_boundary_count": missed_boundary_total,
+        "missed_boundary_rate": missed_boundary_rate,
         "ingest_since_source_counts": ingest_source_metrics["source_counts"],
         "rebootstrap_cycles": ingest_source_metrics["rebootstrap_cycles"],
         "rebootstrap_events": ingest_source_metrics["rebootstrap_events"],
@@ -380,8 +455,10 @@ def append_runtime_cycle_metrics(
         "target_cycle_seconds": target_cycle_seconds,
         "window_size": effective_window,
         "boundary_tracking": {
-            "mode": "poll_loop",
-            "missed_boundary_supported": False,
+            "mode": resolved_boundary_mode,
+            "missed_boundary_supported": (
+                resolved_boundary_mode == "boundary_scheduler"
+            ),
         },
         "summary": summary,
         "recent_cycles": entries,
@@ -1698,8 +1775,17 @@ def update_full_history_file(query_api, symbol, timeframe):
 
 
 def run_worker():
+    scheduler_mode = WORKER_SCHEDULER_MODE
+    if scheduler_mode not in VALID_WORKER_SCHEDULER_MODES:
+        logger.warning(
+            "[Scheduler] unsupported WORKER_SCHEDULER_MODE=%s, fallback to poll_loop.",
+            scheduler_mode,
+        )
+        scheduler_mode = "poll_loop"
+
     logger.info(
-        f"[Pipeline Worker] Started. Target: {TARGET_COINS}, Timeframes: {TIMEFRAMES}"
+        f"[Pipeline Worker] Started. Target: {TARGET_COINS}, Timeframes: {TIMEFRAMES}, "
+        f"SchedulerMode: {scheduler_mode}"
     )
 
     client = InfluxDBClient(
@@ -1714,6 +1800,11 @@ def run_worker():
     last_retention_enforced_at: datetime | None = None
     activation_exchange = ccxt.binance()
     activation_exchange.enableRateLimit = True
+    next_boundary_by_timeframe: dict[str, datetime] = {}
+    if scheduler_mode == "boundary":
+        next_boundary_by_timeframe = initialize_boundary_schedule(
+            datetime.now(timezone.utc), TIMEFRAMES
+        )
 
     send_alert("Worker Started.")
 
@@ -1721,11 +1812,48 @@ def run_worker():
         cycle_started_at = datetime.now(timezone.utc)
         start_time = time.time()
         cycle_since_source_counts: dict[str, int] = {}
+        cycle_missed_boundary_count: int | None = None
         try:
             logger.info(
                 f"\n[Cycle] 작업 시작: {cycle_started_at.strftime('%Y-%m-%d %H:%M:%S')}"
             )
             cycle_now = cycle_started_at
+            active_timeframes = TIMEFRAMES
+            if scheduler_mode == "boundary":
+                (
+                    active_timeframes,
+                    cycle_missed_boundary_count,
+                    next_boundary_at,
+                ) = resolve_boundary_due_timeframes(
+                    now=cycle_now,
+                    timeframes=TIMEFRAMES,
+                    next_boundary_by_timeframe=next_boundary_by_timeframe,
+                )
+                if not active_timeframes:
+                    sleep_until_boundary = (
+                        (next_boundary_at - cycle_now).total_seconds()
+                        if next_boundary_at is not None
+                        else CYCLE_TARGET_SECONDS
+                    )
+                    sleep_time = max(1.0, sleep_until_boundary)
+                    elapsed = time.time() - start_time
+                    append_runtime_cycle_metrics(
+                        started_at=cycle_started_at,
+                        elapsed_seconds=elapsed,
+                        sleep_seconds=sleep_time,
+                        overrun=False,
+                        cycle_result="idle",
+                        ingest_since_source_counts=cycle_since_source_counts,
+                        boundary_tracking_mode="boundary_scheduler",
+                        missed_boundary_count=cycle_missed_boundary_count,
+                    )
+                    logger.info(
+                        "[Scheduler] no due timeframe at boundary cycle. "
+                        f"sleep={sleep_time:.2f}s until next boundary."
+                    )
+                    time.sleep(sleep_time)
+                    continue
+
             disk_level = "normal"
             disk_usage_percent: float | None = None
 
@@ -1783,7 +1911,7 @@ def run_worker():
                         symbol, TIMEFRAMES, static_dir=STATIC_DIR
                     )
 
-                for timeframe in TIMEFRAMES:
+                for timeframe in active_timeframes:
                     state_since = ingest_state_store.get_last_closed(
                         symbol, timeframe
                     )
@@ -1991,6 +2119,12 @@ def run_worker():
                     overrun=overrun,
                     cycle_result="ok",
                     ingest_since_source_counts=cycle_since_source_counts,
+                    boundary_tracking_mode=(
+                        "boundary_scheduler"
+                        if scheduler_mode == "boundary"
+                        else "poll_loop"
+                    ),
+                    missed_boundary_count=cycle_missed_boundary_count,
                 )
             except Exception as e:
                 logger.error(f"Runtime metrics update failed: {e}")
@@ -2022,6 +2156,12 @@ def run_worker():
                     cycle_result="failed",
                     error=str(e),
                     ingest_since_source_counts=cycle_since_source_counts,
+                    boundary_tracking_mode=(
+                        "boundary_scheduler"
+                        if scheduler_mode == "boundary"
+                        else "poll_loop"
+                    ),
+                    missed_boundary_count=cycle_missed_boundary_count,
                 )
             except Exception as metrics_error:
                 logger.error(

@@ -17,7 +17,9 @@ from scripts.pipeline_worker import (
     get_first_timestamp,
     get_disk_usage_percent,
     get_last_timestamp,
+    initialize_boundary_schedule,
     prediction_enabled_for_timeframe,
+    resolve_boundary_due_timeframes,
     resolve_ingest_since,
     resolve_disk_watermark_level,
     run_downsample_and_save,
@@ -453,6 +455,60 @@ def test_append_runtime_cycle_metrics_ignores_invalid_source_counts(tmp_path):
         "bootstrap_lookback": 2
     }
     assert payload["summary"]["rebootstrap_events"] == 0
+
+
+def test_append_runtime_cycle_metrics_boundary_mode_tracks_missed_boundary(
+    tmp_path,
+):
+    metrics_path = tmp_path / "runtime_metrics.json"
+    base = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    append_runtime_cycle_metrics(
+        started_at=base,
+        elapsed_seconds=61.0,
+        sleep_seconds=0.0,
+        overrun=True,
+        cycle_result="ok",
+        boundary_tracking_mode="boundary_scheduler",
+        missed_boundary_count=2,
+        path=metrics_path,
+    )
+
+    payload = json.loads(metrics_path.read_text())
+    assert payload["boundary_tracking"]["mode"] == "boundary_scheduler"
+    assert payload["boundary_tracking"]["missed_boundary_supported"] is True
+    assert payload["summary"]["missed_boundary_count"] == 2
+    assert payload["summary"]["missed_boundary_rate"] == 2.0
+    assert payload["recent_cycles"][0]["scheduler_mode"] == "boundary_scheduler"
+    assert payload["recent_cycles"][0]["missed_boundary_count"] == 2
+
+
+def test_resolve_boundary_due_timeframes_counts_missed_boundaries():
+    now = datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
+    schedule = {
+        "1h": datetime(2026, 2, 13, 9, 0, tzinfo=timezone.utc),
+        "1d": datetime(2026, 2, 14, 0, 0, tzinfo=timezone.utc),
+    }
+
+    due, missed, next_boundary_at = resolve_boundary_due_timeframes(
+        now=now,
+        timeframes=["1h", "1d"],
+        next_boundary_by_timeframe=schedule,
+    )
+
+    assert due == ["1h"]
+    assert missed == 1
+    assert schedule["1h"] == datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+    assert next_boundary_at == datetime(
+        2026, 2, 13, 11, 0, tzinfo=timezone.utc
+    )
+
+
+def test_initialize_boundary_schedule_sets_next_boundaries():
+    now = datetime(2026, 2, 13, 10, 37, tzinfo=timezone.utc)
+    schedule = initialize_boundary_schedule(now, ["1h", "1d"])
+    assert schedule["1h"] == datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+    assert schedule["1d"] == datetime(2026, 2, 14, 0, 0, tzinfo=timezone.utc)
 
 
 def test_lookback_days_for_timeframe_uses_1m_policy():
