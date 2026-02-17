@@ -13,9 +13,11 @@ from scripts.pipeline_worker import (
     append_runtime_cycle_metrics,
     build_runtime_manifest,
     downsample_ohlcv_frame,
+    evaluate_detection_gate,
     enforce_1m_retention,
     get_first_timestamp,
     get_disk_usage_percent,
+    get_exchange_latest_closed_timestamp,
     get_last_timestamp,
     initialize_boundary_schedule,
     prediction_enabled_for_timeframe,
@@ -46,9 +48,18 @@ class FakeExchange:
         raise ValueError("unsupported timeframe for test")
 
     def fetch_ohlcv(
-        self, symbol: str, timeframe: str, since: int, limit: int
+        self,
+        symbol: str,
+        timeframe: str,
+        since: int | None = None,
+        limit: int | None = None,
     ) -> list[list[float]]:
-        candidates = [row for row in self._candles if row[0] >= since]
+        if since is None:
+            candidates = self._candles
+        else:
+            candidates = [row for row in self._candles if row[0] >= since]
+        if limit is None:
+            return candidates
         return candidates[:limit]
 
 
@@ -341,6 +352,7 @@ def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
         overrun=False,
         cycle_result="ok",
         ingest_since_source_counts={"db_last": 5, "bootstrap_lookback": 1},
+        detection_gate_run_counts={"new_closed_candle": 2},
         path=metrics_path,
         target_cycle_seconds=60,
         window_size=10,
@@ -356,6 +368,7 @@ def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
             "underfilled_rebootstrap": 2,
             "blocked_storage_guard": 1,
         },
+        detection_gate_skip_counts={"no_new_closed_candle": 3},
         path=metrics_path,
         target_cycle_seconds=60,
         window_size=10,
@@ -382,9 +395,22 @@ def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
     assert payload["summary"]["rebootstrap_events"] == 2
     assert payload["summary"]["underfill_guard_retrigger_cycles"] == 1
     assert payload["summary"]["underfill_guard_retrigger_events"] == 2
+    assert payload["summary"]["detection_gate_run_counts"]["new_closed_candle"] == 2
+    assert payload["summary"]["detection_gate_run_events"] == 2
+    assert (
+        payload["summary"]["detection_gate_skip_counts"]["no_new_closed_candle"]
+        == 3
+    )
+    assert payload["summary"]["detection_gate_skip_events"] == 3
     assert payload["recent_cycles"][1]["ingest_since_source_counts"] == {
         "underfilled_rebootstrap": 2,
         "blocked_storage_guard": 1,
+    }
+    assert payload["recent_cycles"][0]["detection_gate_run_counts"] == {
+        "new_closed_candle": 2
+    }
+    assert payload["recent_cycles"][1]["detection_gate_skip_counts"] == {
+        "no_new_closed_candle": 3
     }
     assert payload["recent_cycles"][1]["error"] == "worker_error"
 
@@ -483,6 +509,26 @@ def test_append_runtime_cycle_metrics_boundary_mode_tracks_missed_boundary(
     assert payload["recent_cycles"][0]["missed_boundary_count"] == 2
 
 
+def test_append_runtime_cycle_metrics_boundary_mode_zero_missed(tmp_path):
+    metrics_path = tmp_path / "runtime_metrics.json"
+    base = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    append_runtime_cycle_metrics(
+        started_at=base,
+        elapsed_seconds=20.0,
+        sleep_seconds=40.0,
+        overrun=False,
+        cycle_result="ok",
+        boundary_tracking_mode="boundary_scheduler",
+        missed_boundary_count=0,
+        path=metrics_path,
+    )
+
+    payload = json.loads(metrics_path.read_text())
+    assert payload["summary"]["missed_boundary_count"] == 0
+    assert payload["summary"]["missed_boundary_rate"] == 0.0
+
+
 def test_resolve_boundary_due_timeframes_counts_missed_boundaries():
     now = datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
     schedule = {
@@ -504,11 +550,107 @@ def test_resolve_boundary_due_timeframes_counts_missed_boundaries():
     )
 
 
+def test_resolve_boundary_due_timeframes_without_missed_boundary():
+    now = datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
+    schedule = {"1h": datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)}
+
+    due, missed, next_boundary_at = resolve_boundary_due_timeframes(
+        now=now,
+        timeframes=["1h"],
+        next_boundary_by_timeframe=schedule,
+    )
+
+    assert due == ["1h"]
+    assert missed == 0
+    assert next_boundary_at == datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+
 def test_initialize_boundary_schedule_sets_next_boundaries():
     now = datetime(2026, 2, 13, 10, 37, tzinfo=timezone.utc)
     schedule = initialize_boundary_schedule(now, ["1h", "1d"])
     assert schedule["1h"] == datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
     assert schedule["1d"] == datetime(2026, 2, 14, 0, 0, tzinfo=timezone.utc)
+
+
+def test_get_exchange_latest_closed_timestamp_ignores_open_candle():
+    now = datetime(2026, 2, 13, 10, 37, tzinfo=timezone.utc)
+    base = datetime(2026, 2, 13, 8, 0, tzinfo=timezone.utc)
+    candles = [
+        [_to_ms(base), 1.0, 1.0, 1.0, 1.0, 1.0],
+        [_to_ms(base + timedelta(hours=1)), 1.0, 1.0, 1.0, 1.0, 1.0],
+        [_to_ms(base + timedelta(hours=2)), 1.0, 1.0, 1.0, 1.0, 1.0],
+    ]
+    exchange = FakeExchange(candles)
+
+    latest = get_exchange_latest_closed_timestamp(
+        exchange,
+        "BTC/USDT",
+        "1h",
+        now=now,
+    )
+
+    assert latest == datetime(2026, 2, 13, 9, 0, tzinfo=timezone.utc)
+
+
+def test_evaluate_detection_gate_skips_when_no_new_closed_candle():
+    now = datetime(2026, 2, 13, 10, 37, tzinfo=timezone.utc)
+    last_saved = datetime(2026, 2, 13, 9, 0, tzinfo=timezone.utc)
+    candles = [
+        [_to_ms(datetime(2026, 2, 13, 9, 0, tzinfo=timezone.utc)), 1, 1, 1, 1, 1],
+        [_to_ms(datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)), 1, 1, 1, 1, 1],
+    ]
+    exchange = FakeExchange(candles)
+
+    should_run, reason = evaluate_detection_gate(
+        query_api=object(),
+        detection_exchange=exchange,
+        symbol="BTC/USDT",
+        timeframe="1h",
+        now=now,
+        last_saved=last_saved,
+    )
+
+    assert should_run is False
+    assert reason == "no_new_closed_candle"
+
+
+def test_evaluate_detection_gate_runs_when_detection_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.get_exchange_latest_closed_timestamp",
+        lambda *args, **kwargs: None,
+    )
+
+    should_run, reason = evaluate_detection_gate(
+        query_api=object(),
+        detection_exchange=object(),
+        symbol="BTC/USDT",
+        timeframe="1h",
+        now=datetime(2026, 2, 13, 10, 37, tzinfo=timezone.utc),
+        last_saved=None,
+    )
+
+    assert should_run is True
+    assert reason == "detection_unavailable_fallback_run"
+
+
+def test_evaluate_detection_gate_derived_already_materialized(monkeypatch):
+    now = datetime(2026, 2, 14, 0, 10, tzinfo=timezone.utc)
+    expected = datetime(2026, 2, 13, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.get_last_timestamp",
+        lambda *args, **kwargs: expected,
+    )
+
+    should_run, reason = evaluate_detection_gate(
+        query_api=object(),
+        detection_exchange=object(),
+        symbol="BTC/USDT",
+        timeframe="1d",
+        now=now,
+    )
+
+    assert should_run is False
+    assert reason == "already_materialized"
 
 
 def test_lookback_days_for_timeframe_uses_1m_policy():

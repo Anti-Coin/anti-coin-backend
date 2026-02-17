@@ -298,6 +298,15 @@ def _aggregate_ingest_source_metrics(entries: list[dict]) -> dict[str, int | dic
     }
 
 
+def _aggregate_reason_counts(entries: list[dict], field_name: str) -> dict[str, int]:
+    merged: dict[str, int] = {}
+    for item in entries:
+        counts = _normalize_source_counts(item.get(field_name))
+        for reason, count in counts.items():
+            merged[reason] = merged.get(reason, 0) + count
+    return merged
+
+
 def initialize_boundary_schedule(
     now: datetime, timeframes: list[str]
 ) -> dict[str, datetime]:
@@ -351,6 +360,8 @@ def append_runtime_cycle_metrics(
     cycle_result: str,
     error: str | None = None,
     ingest_since_source_counts: dict[str, int] | None = None,
+    detection_gate_skip_counts: dict[str, int] | None = None,
+    detection_gate_run_counts: dict[str, int] | None = None,
     boundary_tracking_mode: str = "poll_loop",
     missed_boundary_count: int | None = None,
     path: Path = RUNTIME_METRICS_FILE,
@@ -381,6 +392,12 @@ def append_runtime_cycle_metrics(
         "ingest_since_source_counts": _normalize_source_counts(
             ingest_since_source_counts
         ),
+        "detection_gate_skip_counts": _normalize_source_counts(
+            detection_gate_skip_counts
+        ),
+        "detection_gate_run_counts": _normalize_source_counts(
+            detection_gate_run_counts
+        ),
     }
     entries.append(entry)
 
@@ -405,6 +422,12 @@ def append_runtime_cycle_metrics(
     avg_sleep = round(sum(sleep_values) / samples, 2) if samples else None
     p95_elapsed = _percentile(elapsed_values, 95)
     ingest_source_metrics = _aggregate_ingest_source_metrics(entries)
+    detection_skip_counts = _aggregate_reason_counts(
+        entries, "detection_gate_skip_counts"
+    )
+    detection_run_counts = _aggregate_reason_counts(
+        entries, "detection_gate_run_counts"
+    )
     if resolved_boundary_mode == "boundary_scheduler":
         boundary_counts = [
             max(0, int(item.get("missed_boundary_count") or 0))
@@ -445,6 +468,10 @@ def append_runtime_cycle_metrics(
         "underfill_guard_retrigger_events": ingest_source_metrics[
             "underfill_guard_retrigger_events"
         ],
+        "detection_gate_skip_counts": detection_skip_counts,
+        "detection_gate_skip_events": sum(detection_skip_counts.values()),
+        "detection_gate_run_counts": detection_run_counts,
+        "detection_gate_run_events": sum(detection_run_counts.values()),
     }
 
     payload = {
@@ -1329,6 +1356,79 @@ def get_exchange_earliest_closed_timestamp(
     return first_open
 
 
+def get_exchange_latest_closed_timestamp(
+    exchange,
+    symbol: str,
+    timeframe: str,
+    *,
+    now: datetime | None = None,
+) -> datetime | None:
+    resolved_now = now or datetime.now(timezone.utc)
+    expected_latest_closed = last_closed_candle_open(resolved_now, timeframe)
+    try:
+        rows = exchange.fetch_ohlcv(symbol, timeframe, limit=3)
+    except Exception as e:
+        logger.warning(
+            f"[{symbol} {timeframe}] failed to fetch exchange latest candle: {e}"
+        )
+        return None
+
+    latest_closed: datetime | None = None
+    for row in rows:
+        try:
+            open_at = datetime.fromtimestamp(int(row[0]) / 1000, tz=timezone.utc)
+        except (TypeError, ValueError, IndexError):
+            continue
+
+        if open_at > expected_latest_closed:
+            continue
+        if latest_closed is None or open_at > latest_closed:
+            latest_closed = open_at
+
+    return latest_closed
+
+
+def evaluate_detection_gate(
+    query_api,
+    detection_exchange,
+    *,
+    symbol: str,
+    timeframe: str,
+    now: datetime,
+    last_saved: datetime | None = None,
+) -> tuple[bool, str]:
+    if timeframe in DOWNSAMPLE_TARGET_TIMEFRAMES:
+        expected_latest_closed = last_closed_candle_open(now, timeframe)
+        target_last = get_last_timestamp(
+            query_api,
+            symbol,
+            timeframe,
+            full_range=True,
+        )
+        if target_last is not None and target_last >= expected_latest_closed:
+            return False, "already_materialized"
+        return True, "materialization_due"
+
+    latest_closed = get_exchange_latest_closed_timestamp(
+        detection_exchange,
+        symbol,
+        timeframe,
+        now=now,
+    )
+    if latest_closed is None:
+        # 탐지 실패 시 skip 대신 실행 경로로 보수적으로 처리한다.
+        return True, "detection_unavailable_fallback_run"
+
+    reference_last = (
+        last_saved
+        if last_saved is not None
+        else get_last_timestamp(query_api, symbol, timeframe)
+    )
+    if reference_last is not None and reference_last >= latest_closed:
+        return False, "no_new_closed_candle"
+    return True, "new_closed_candle"
+
+
 def build_symbol_activation_entry(
     *,
     query_api,
@@ -1812,6 +1912,8 @@ def run_worker():
         cycle_started_at = datetime.now(timezone.utc)
         start_time = time.time()
         cycle_since_source_counts: dict[str, int] = {}
+        cycle_detection_skip_counts: dict[str, int] = {}
+        cycle_detection_run_counts: dict[str, int] = {}
         cycle_missed_boundary_count: int | None = None
         try:
             logger.info(
@@ -1844,6 +1946,8 @@ def run_worker():
                         overrun=False,
                         cycle_result="idle",
                         ingest_since_source_counts=cycle_since_source_counts,
+                        detection_gate_skip_counts=cycle_detection_skip_counts,
+                        detection_gate_run_counts=cycle_detection_run_counts,
                         boundary_tracking_mode="boundary_scheduler",
                         missed_boundary_count=cycle_missed_boundary_count,
                     )
@@ -1916,6 +2020,29 @@ def run_worker():
                         symbol, timeframe
                     )
                     last_time = get_last_timestamp(query_api, symbol, timeframe)
+                    if scheduler_mode == "boundary":
+                        should_run, gate_reason = evaluate_detection_gate(
+                            query_api,
+                            activation_exchange,
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            now=cycle_now,
+                            last_saved=last_time,
+                        )
+                        if not should_run:
+                            cycle_detection_skip_counts[gate_reason] = (
+                                cycle_detection_skip_counts.get(gate_reason, 0)
+                                + 1
+                            )
+                            logger.info(
+                                f"[{symbol} {timeframe}] detection gate skip "
+                                f"(reason={gate_reason})"
+                            )
+                            continue
+                        cycle_detection_run_counts[gate_reason] = (
+                            cycle_detection_run_counts.get(gate_reason, 0) + 1
+                        )
+
                     lookback_days = _lookback_days_for_timeframe(timeframe)
                     force_rebootstrap = False
                     min_required_rows = _minimum_required_lookback_rows(
@@ -2119,6 +2246,8 @@ def run_worker():
                     overrun=overrun,
                     cycle_result="ok",
                     ingest_since_source_counts=cycle_since_source_counts,
+                    detection_gate_skip_counts=cycle_detection_skip_counts,
+                    detection_gate_run_counts=cycle_detection_run_counts,
                     boundary_tracking_mode=(
                         "boundary_scheduler"
                         if scheduler_mode == "boundary"
@@ -2156,6 +2285,8 @@ def run_worker():
                     cycle_result="failed",
                     error=str(e),
                     ingest_since_source_counts=cycle_since_source_counts,
+                    detection_gate_skip_counts=cycle_detection_skip_counts,
+                    detection_gate_run_counts=cycle_detection_run_counts,
                     boundary_tracking_mode=(
                         "boundary_scheduler"
                         if scheduler_mode == "boundary"
