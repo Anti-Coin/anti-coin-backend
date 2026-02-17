@@ -8,12 +8,15 @@ from scripts.pipeline_worker import (
     _detect_gaps_from_ms_timestamps,
     _fetch_ohlcv_paginated,
     _lookback_days_for_timeframe,
+    _minimum_required_lookback_rows,
     _refill_detected_gaps,
+    append_runtime_cycle_metrics,
     build_runtime_manifest,
     downsample_ohlcv_frame,
     enforce_1m_retention,
     get_disk_usage_percent,
     prediction_enabled_for_timeframe,
+    resolve_ingest_since,
     resolve_disk_watermark_level,
     run_downsample_and_save,
     run_prediction_and_save,
@@ -295,6 +298,9 @@ def test_build_runtime_manifest_merges_freshness_and_health(tmp_path):
     assert entry["degraded"] is True
     assert entry["prediction_failure_count"] == 2
     assert entry["serve_allowed"] is True
+    assert entry["visibility"] == "visible"
+    assert entry["symbol_state"] == "ready_for_serving"
+    assert entry["is_full_backfilled"] is True
 
 
 def test_write_runtime_manifest_writes_manifest_file(tmp_path):
@@ -315,7 +321,87 @@ def test_write_runtime_manifest_writes_manifest_file(tmp_path):
     assert payload["version"] == 1
     assert payload["summary"]["entry_count"] == 1
     assert payload["summary"]["status_counts"]["missing"] == 1
+    assert payload["summary"]["visible_symbol_count"] == 1
+    assert payload["summary"]["hidden_symbol_count"] == 0
     assert payload["entries"][0]["serve_allowed"] is False
+
+
+def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
+    metrics_path = tmp_path / "runtime_metrics.json"
+    base = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    append_runtime_cycle_metrics(
+        started_at=base,
+        elapsed_seconds=12.4,
+        sleep_seconds=47.6,
+        overrun=False,
+        cycle_result="ok",
+        path=metrics_path,
+        target_cycle_seconds=60,
+        window_size=10,
+    )
+    append_runtime_cycle_metrics(
+        started_at=base + timedelta(minutes=1),
+        elapsed_seconds=70.0,
+        sleep_seconds=0.0,
+        overrun=True,
+        cycle_result="failed",
+        error="worker_error",
+        path=metrics_path,
+        target_cycle_seconds=60,
+        window_size=10,
+    )
+
+    payload = json.loads(metrics_path.read_text())
+    assert payload["target_cycle_seconds"] == 60
+    assert payload["window_size"] == 10
+    assert payload["boundary_tracking"]["missed_boundary_supported"] is False
+    assert payload["summary"]["samples"] == 2
+    assert payload["summary"]["success_count"] == 1
+    assert payload["summary"]["failure_count"] == 1
+    assert payload["summary"]["overrun_count"] == 1
+    assert payload["summary"]["p95_elapsed_seconds"] == 70.0
+    assert payload["summary"]["missed_boundary_count"] is None
+    assert payload["recent_cycles"][1]["error"] == "worker_error"
+
+
+def test_append_runtime_cycle_metrics_applies_window_limit(tmp_path):
+    metrics_path = tmp_path / "runtime_metrics.json"
+    base = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    append_runtime_cycle_metrics(
+        started_at=base,
+        elapsed_seconds=10.0,
+        sleep_seconds=50.0,
+        overrun=False,
+        cycle_result="ok",
+        path=metrics_path,
+        window_size=2,
+    )
+    append_runtime_cycle_metrics(
+        started_at=base + timedelta(minutes=1),
+        elapsed_seconds=11.0,
+        sleep_seconds=49.0,
+        overrun=False,
+        cycle_result="ok",
+        path=metrics_path,
+        window_size=2,
+    )
+    append_runtime_cycle_metrics(
+        started_at=base + timedelta(minutes=2),
+        elapsed_seconds=12.0,
+        sleep_seconds=48.0,
+        overrun=False,
+        cycle_result="ok",
+        path=metrics_path,
+        window_size=2,
+    )
+
+    payload = json.loads(metrics_path.read_text())
+    assert len(payload["recent_cycles"]) == 2
+    assert payload["recent_cycles"][0]["started_at"] == "2026-02-13T12:01:00Z"
+    assert payload["recent_cycles"][1]["started_at"] == "2026-02-13T12:02:00Z"
+    assert payload["summary"]["samples"] == 2
 
 
 def test_lookback_days_for_timeframe_uses_1m_policy():
@@ -342,15 +428,9 @@ def test_should_enforce_1m_retention_interval():
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
     assert should_enforce_1m_retention(None, now) is True
     assert (
-        should_enforce_1m_retention(
-            now - timedelta(minutes=59), now
-        )
-        is False
+        should_enforce_1m_retention(now - timedelta(minutes=59), now) is False
     )
-    assert (
-        should_enforce_1m_retention(now - timedelta(hours=1), now)
-        is True
-    )
+    assert should_enforce_1m_retention(now - timedelta(hours=1), now) is True
 
 
 def test_should_block_initial_backfill_only_for_1m_block_mode():
@@ -383,10 +463,199 @@ def test_should_block_initial_backfill_only_for_1m_block_mode():
     )
 
 
+def test_resolve_ingest_since_prefers_db_last_over_state_cursor():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    state_since = datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
+    db_last = datetime(2026, 2, 13, 9, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        state_since=state_since,
+        last_time=db_last,
+        disk_level="normal",
+        now=now,
+    )
+
+    assert since == db_last
+    assert source == "db_last"
+
+
+def test_resolve_ingest_since_rebootstraps_when_db_is_empty():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        state_since=state_since,
+        last_time=None,
+        disk_level="normal",
+        now=now,
+    )
+
+    assert source == "state_drift_rebootstrap"
+    assert since == datetime(2026, 1, 14, 12, 0, tzinfo=timezone.utc)
+
+
+def test_resolve_ingest_since_blocks_1m_drift_backfill_on_block_level():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1m",
+        state_since=state_since,
+        last_time=None,
+        disk_level="block",
+        now=now,
+    )
+
+    assert since is None
+    assert source == "blocked_storage_guard"
+
+
+def test_resolve_ingest_since_rebootstraps_when_underfilled_even_with_db_last():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+    db_last = datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        state_since=state_since,
+        last_time=db_last,
+        disk_level="normal",
+        force_rebootstrap=True,
+        now=now,
+    )
+
+    assert source == "underfilled_rebootstrap"
+    assert since == datetime(2026, 1, 14, 12, 0, tzinfo=timezone.utc)
+
+
+def test_resolve_ingest_since_uses_exchange_earliest_for_1h_bootstrap():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        state_since=None,
+        last_time=None,
+        disk_level="normal",
+        bootstrap_since=earliest,
+        now=now,
+    )
+
+    assert source == "bootstrap_exchange_earliest"
+    assert since == earliest
+
+
+def test_resolve_ingest_since_uses_exchange_earliest_for_1h_state_drift():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+    state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        state_since=state_since,
+        last_time=None,
+        disk_level="normal",
+        bootstrap_since=earliest,
+        now=now,
+    )
+
+    assert source == "state_drift_rebootstrap_exchange_earliest"
+    assert since == earliest
+
+
+def test_resolve_ingest_since_enforces_full_backfill_for_hidden_1h():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+    db_last = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        state_since=db_last,
+        last_time=db_last,
+        disk_level="normal",
+        bootstrap_since=earliest,
+        enforce_full_backfill=True,
+        now=now,
+    )
+
+    assert source == "full_backfill_exchange_earliest"
+    assert since == earliest
+
+
+def test_build_runtime_manifest_marks_hidden_symbol_unservable(tmp_path):
+    symbol = "BTC/USDT"
+    timeframe = "1h"
+    safe_symbol = symbol.replace("/", "_")
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    history_path = tmp_path / f"history_{safe_symbol}_{timeframe}.json"
+    history_path.write_text(
+        json.dumps(
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "updated_at": "2026-02-13T11:55:00Z",
+                "data": [],
+            }
+        )
+    )
+    prediction_path = tmp_path / f"prediction_{safe_symbol}_{timeframe}.json"
+    prediction_path.write_text(
+        json.dumps(
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "updated_at": "2026-02-13T11:56:00Z",
+                "forecast": [],
+            }
+        )
+    )
+
+    manifest = build_runtime_manifest(
+        [symbol],
+        [timeframe],
+        now=now,
+        static_dir=tmp_path,
+        prediction_health_path=tmp_path / "prediction_health.json",
+        symbol_activation_entries={
+            symbol: {
+                "state": "backfilling",
+                "visibility": "hidden_backfilling",
+                "is_full_backfilled": False,
+                "coverage_start_at": "2026-01-01T00:00:00Z",
+                "coverage_end_at": "2026-02-13T11:00:00Z",
+            }
+        },
+    )
+
+    assert manifest["summary"]["visible_symbol_count"] == 0
+    assert manifest["summary"]["hidden_symbol_count"] == 1
+    entry = manifest["entries"][0]
+    assert entry["visibility"] == "hidden_backfilling"
+    assert entry["symbol_state"] == "backfilling"
+    assert entry["serve_allowed"] is False
+
+
+def test_minimum_required_lookback_rows_for_1h_only():
+    assert _minimum_required_lookback_rows("1h", 30) == 576
+    assert _minimum_required_lookback_rows("1d", 30) is None
+
+
 def test_enforce_1m_retention_calls_delete_api(monkeypatch):
     fake_delete_api = FakeDeleteAPI()
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
-    monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data")
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data"
+    )
     monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_ORG", "coin")
 
     enforce_1m_retention(
@@ -401,7 +670,9 @@ def test_enforce_1m_retention_calls_delete_api(monkeypatch):
     assert first_call["bucket"] == "market_data"
     assert first_call["org"] == "coin"
     assert first_call["predicate"].endswith('timeframe="1m"')
-    assert first_call["stop"] == datetime(2026, 1, 14, 12, 0, tzinfo=timezone.utc)
+    assert first_call["stop"] == datetime(
+        2026, 1, 14, 12, 0, tzinfo=timezone.utc
+    )
 
 
 def test_downsample_ohlcv_frame_filters_incomplete_bucket():
@@ -437,7 +708,9 @@ def test_downsample_ohlcv_frame_filters_incomplete_bucket():
     assert incomplete_df.iloc[0]["expected_count"] == 24
 
 
-def test_run_downsample_and_save_writes_ohlcv_and_lineage(tmp_path, monkeypatch):
+def test_run_downsample_and_save_writes_ohlcv_and_lineage(
+    tmp_path, monkeypatch
+):
     base = datetime(2026, 2, 10, 0, 0, tzinfo=timezone.utc)
     rows = []
     for hour in range(48):
@@ -457,8 +730,12 @@ def test_run_downsample_and_save_writes_ohlcv_and_lineage(tmp_path, monkeypatch)
     write_api = FakeWriteAPI()
 
     lineage_path = tmp_path / "downsample_lineage.json"
-    monkeypatch.setattr("scripts.pipeline_worker.DOWNSAMPLE_LINEAGE_FILE", lineage_path)
-    monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data")
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.DOWNSAMPLE_LINEAGE_FILE", lineage_path
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data"
+    )
     monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_ORG", "coin")
 
     latest_saved_at, result = run_downsample_and_save(

@@ -1,6 +1,6 @@
 # Coin Predict Decision Register (Active)
 
-- Last Updated: 2026-02-13
+- Last Updated: 2026-02-17
 - Scope: archive 연동형 의사결정 레지스터 (요약/상세 분리)
 - Full History: `docs/archive/phase_a/DECISIONS_PHASE_A_FULL_2026-02-12.md`
 
@@ -204,6 +204,51 @@
 - Revisit Trigger:
   - 외부 대사 warning이 운영 허용치를 초과하거나, 단발 mismatch가 실질 장애를 반복 유발할 때
   - 파생 timeframe direct ingest 우회가 운영 중 필요해지는 긴급 사건이 발생할 때
+
+### D-2026-02-13-35
+- Date: 2026-02-13
+- Status: Accepted
+- Topic: `1h` Underfill Guard is Temporary Containment (Not Final Fix)
+- Context:
+  - 운영 중 `1h` ingest가 lookback 기대치 대비 과소 수집되는 사례가 관측되었다.
+  - 즉시 운영 안정성을 위해 `underfill -> lookback rebootstrap` 가드를 추가했지만, 단일 근본 원인(RCA)은 아직 확정되지 않았다.
+- Decision:
+  - `I-2026-02-13-01`에서 추가된 `1h underfill rebootstrap`은 `임시 방편(containment)`으로 분류한다.
+  - 이 가드는 "증상 완화" 목적이며 "근본 해결 완료"를 의미하지 않는다.
+  - RCA 완료 기준:
+    - 재현 가능한 시나리오 또는 충분한 인과 증거 확보
+    - 원인 분류(설정/커서 드리프트/조회 경계/런타임 계약 불일치) 확정
+    - 영구 수정안 적용 또는 guard 유지가 더 안전하다는 근거 문서화
+  - RCA 완료 전에는 guard 제거를 금지한다.
+- Consequence:
+  - 단기적으로 underfill 재발 시 자동 복구 확률이 높아진다.
+  - 반면 불필요한 재백필 비용/노이즈가 늘 수 있으므로 guard의 수명 관리를 강제해야 한다.
+- Revisit Trigger:
+  - 동일 증상이 7일 내 재발하거나, guard 재트리거 빈도가 운영 허용치를 넘을 때
+  - `C-008` RCA 태스크가 완료되어 guard sunset/유지 여부를 결정할 때
+
+### D-2026-02-17-36
+- Date: 2026-02-17
+- Status: Accepted
+- Topic: Symbol Onboarding Full-First + FE Visibility Gate (All Symbols)
+- Context:
+  - 장기 timeframe(`1d/1w/1M`) 품질과 사용자 신뢰를 위해 `1h` 기준 소스는 가능한 전체 이력이 필요하다.
+  - 실제 거래소 API의 상장일 메타데이터는 일관되지 않아, "상장일 기준 full"은 운영 기준으로 부적합하다.
+  - 심볼 확장 시 백필 진행 중 데이터를 사용자 화면에 노출하면 부분 이력을 정상 데이터로 오해할 수 있다.
+- Decision:
+  - 현재 및 미래의 모든 심볼에 대해 onboarding 기본 정책을 `1h full-first bootstrap`으로 고정한다.
+  - `full`의 기준은 `exchange API가 제공하는 earliest closed candle`부터 현재까지다(상장일 메타 기준 아님).
+  - 심볼은 `registered -> backfilling -> ready_for_serving` 상태 전이를 가진다.
+  - `backfilling` 상태 심볼은 FE 사용자 플레인에서 완전 비노출한다(심볼 목록 포함).
+  - `ready_for_serving` 전환 조건은 최소 `is_full_backfilled=true`, `coverage_start_at`, `coverage_end_at` 메타데이터 충족이다.
+  - 저장소 가드(70/85/90)는 유지하며, `block(>=90%)` 구간에서는 신규 심볼 full backfill을 지연/차단한다(가드 우회 금지).
+  - 본 결정은 `D-2026-02-13-31`의 `1h retention 365d/730d` 항목을 supersede한다.
+- Consequence:
+  - 장기 timeframe downsample과 히스토리 노출의 데이터 완전성이 강화된다.
+  - 심볼 확장 시 초기 노출까지 리드타임이 늘며, 디스크 압박 시 onboarding이 지연될 수 있다.
+- Revisit Trigger:
+  - 활성 심볼 수/디스크 성장률이 예상보다 커져 `warn` 이상이 장기 지속될 때
+  - 거래소 API가 earliest 구간 제공 정책을 변경해 full bootstrap 전략이 비효율적일 때
 
 ## 3. Decision Operation Policy
 1. Archive로 이동된 결정은 `Section 1`에 요약 형태로만 유지한다.

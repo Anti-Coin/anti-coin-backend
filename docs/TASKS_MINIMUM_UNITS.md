@@ -1,6 +1,6 @@
 # Coin Predict Task Board (Active)
 
-- Last Updated: 2026-02-13
+- Last Updated: 2026-02-17
 - Rule: 활성 태스크만 유지하고, 완료 상세 이력은 Archive로 분리
 - Full Phase A History: `docs/archive/phase_a/TASKS_MINIMUM_UNITS_PHASE_A_FULL_2026-02-12.md`
 
@@ -28,6 +28,10 @@
 16. `B-004` 완료 (2026-02-13): worker cycle마다 `manifest.json` 생성(심볼/타임프레임별 history/prediction 상태 + degraded 병합), 회귀 `68 passed`
 17. `B-006` 완료 (2026-02-13): `1m` retention(기본 14d, 상한 30d clamp) + 디스크 워터마크(70/85/90) 가드 + `block` 레벨에서 `1m` 초기 백필 차단 반영 + `1h->1d/1w/1M` downsample + `downsample_lineage.json` 경로 및 검증 테스트 반영, 회귀 `76 passed`
 18. `D-2026-02-13-34` 채택: reconciliation mismatch를 내부/외부로 분리(`internal_deterministic_mismatch` vs `external_reconciliation_mismatch`)하고, `1d/1w/1M` direct ingest 금지 경계를 정책으로 고정
+19. `C-002` 진행 (2026-02-13): `runtime_metrics.json` baseline 추가(실행시간/실패율/overrun 추세, poll-loop 모드에서 `missed_boundary`는 미지원으로 명시)
+20. `I-2026-02-13-01` 반영: `1h` canonical underfill(예: 30d 대비 소량 row) 시 DB last가 있어도 lookback 재부트스트랩을 강제해 bootstrap drift를 복구
+21. `D-2026-02-13-35` 채택: `I-2026-02-13-01`은 임시 방편(containment)이며 RCA 완료 전 최종 해결로 간주하지 않음
+22. `D-2026-02-17-36` 채택: 모든 심볼 onboarding을 `1h full-first(exchange earliest)`로 고정하고, full backfill 완료 전 FE 심볼 완전 비노출 게이트를 정책으로 채택
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -42,7 +46,7 @@
 ### Phase B (Timeframe Expansion)
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
-| B-001 | P1 | timeframe tier 정책 매트릭스 확정(수집/보존/서빙/예측) | in_progress | `docs/TIMEFRAME_POLICY_MATRIX.md` 정책 잠금 + `1m` 예측 비서빙, `1m` hybrid API=`latest closed 180 candles`, `1m` rolling=`default 14d / cap 30d`, `1h->1d/1w/1M` downsample 경로, `1d/1w/1M` direct ingest 금지 경계, `internal_deterministic_mismatch`/`external_reconciliation_mismatch` 구분 규칙, Hard Gate+Accuracy 정책을 문서/설정으로 고정 |
+| B-001 | P1 | timeframe tier 정책 매트릭스 확정(수집/보존/서빙/예측) | in_progress | `docs/TIMEFRAME_POLICY_MATRIX.md` 정책 잠금 + `1m` 예측 비서빙, `1m` hybrid API=`latest closed 180 candles`, `1m` rolling=`default 14d / cap 30d`, `1h` onboarding=`full-first(exchange earliest)` + `registered/backfilling/ready_for_serving` 게이트 + full backfill 완료 전 FE 심볼 완전 비노출, `1h->1d/1w/1M` downsample 경로, `1d/1w/1M` direct ingest 금지 경계, `internal_deterministic_mismatch`/`external_reconciliation_mismatch` 구분 규칙, Hard Gate+Accuracy 정책을 문서/설정으로 고정 |
 | B-002 | P1 | 파일 네이밍 규칙 통일 | done (2026-02-13) | canonical `{symbol}_{timeframe}` 파일 생성 + legacy fallback 호환 유지 + `tests/test_api_status.py`/`tests/test_status_monitor.py` 회귀 통과 |
 | B-003 | P1 | history/prediction export timeframe-aware 전환 | done (2026-02-13) | 다중 timeframe(`1h/1d/1w/1M`) 동시 export 동작 확인 + `1m` prediction 비생성 정책 코드/테스트 반영 + 회귀 `66 passed` |
 | B-004 | P1 | manifest 파일 생성 | done (2026-02-13) | `static_data/manifest.json`에 심볼/타임프레임별 `history.updated_at`, `prediction.status/updated_at/age`, `degraded`, `serve_allowed`, `summary(status_counts)`가 주기적으로 갱신됨 |
@@ -54,12 +58,13 @@
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
 | C-001 | P1 | 심볼 목록 확장 자동화 | open | 심볼 추가 시 코드 수정 최소화 |
-| C-002 | P1 | 실행시간/실패율 메트릭 수집 | open | 주기별 성능 추세 확인 가능 |
+| C-002 | P1 | 실행시간/실패율 메트릭 수집 | in_progress | `static_data/runtime_metrics.json`에 cycle 실행시간/실패율/overrun 추세가 누적되고, `missed_boundary` 지원 여부(전환 전 미지원)가 명시된다 |
 | C-003 | P2 | 부하 테스트 시나리오 업데이트 | open | 정적/상태 경로 부하 테스트 가능 |
 | C-004 | P2 | 모델 학습 잡 분리 초안 | open | 수집/예측과 독립 실행 가능 |
 | C-005 | P1 | pipeline worker 역할 분리 | open (gated) | `B-003` 검증 증거 확보 후 착수, 완료 시 ingest 지연/장애가 predict/export에 즉시 전파되지 않으며 base ingest(`1m`,`1h`)와 derived materialization(`1d/1w/1M`) 경계가 코드 레벨로 분리됨 |
 | C-006 | P1 | timeframe 경계 기반 scheduler 전환 | open | UTC candle boundary 기준으로 `symbol+timeframe` 실행 스케줄을 고정하고 고정 poll 루프 대비 overrun을 감소시킴 |
 | C-007 | P1 | 신규 candle 감지 게이트 결합 | open | boundary 스케줄 직전 신규 closed candle 감지 후 실행/skip를 분기해 불필요 cycle을 억제하고 `missed_boundary=0`을 검증 |
+| C-008 | P1 | `1h` underfill RCA + temporary guard sunset 결정 | open | underfill 원인(또는 유지 근거)이 증거 기반으로 확정되고, `I-2026-02-13-01` guard를 유지/조정/제거 중 하나로 결론내려 문서/테스트에 반영됨 |
 
 ### Phase D (Model Evolution)
 | ID | Priority | Task | Status | Done Condition |
@@ -79,7 +84,7 @@
 ## 3. Immediate Bundle
 1. `B-001`
 2. `C-002`
-3. `C-006`
+3. `C-008`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
@@ -96,7 +101,7 @@
 ### Phase B
 | ID | Why Now | Failure Mode | Verification | Rollback |
 |---|---|---|---|---|
-| B-001 | 1m/장기 TF를 동일 규칙으로 처리하면 지연/저표본/저장소 리스크를 동시에 키움 | 1m 예측 오버런, 장기 TF 저품질 예측, 보존 정책 충돌, mismatch 해석 혼선 | 정책 매트릭스 리뷰 + 설정 스키마 테스트 + `latest=180`/`14d+30d`/Hard Gate 규칙 dry-run + `internal`/`external` mismatch taxonomy 검증 | Phase A `1h` 단일 모드로 회귀 |
+| B-001 | 1m/장기 TF를 동일 규칙으로 처리하면 지연/저표본/저장소 리스크를 동시에 키움 | 1m 예측 오버런, 장기 TF 저품질 예측, 보존 정책 충돌, 부분 이력 심볼 조기 노출에 따른 사용자 오판 | 정책 매트릭스 리뷰 + 설정 스키마 테스트 + `latest=180`/`14d+30d`/Hard Gate 규칙 dry-run + `internal`/`external` mismatch taxonomy 검증 + symbol activation gate(`hidden_backfilling`) 검증 | Phase A `1h` 단일 모드로 회귀 |
 | B-002 | 파일 네이밍 불일치가 API/monitor 오탐(`missing`)을 유발함 | 잘못된 파일 탐색으로 상태 오판 및 경보 노이즈 | 파일명 규칙 테스트 + legacy fallback 동작 확인 | dual-read(신규+legacy) 유지 후 단계적 전환 |
 | B-003 | export가 timeframe-aware가 아니면 산출물이 덮어써지고, 1m 예측 비서빙 정책 위반 위험이 생김 | 타임프레임 간 파일 충돌/유실 + 1m prediction 파일 노출 | 다중 timeframe 동시 export 테스트 + `1m` prediction 미생성 검증 | `1h` export 경로로 임시 복귀 |
 | B-004 | manifest 부재 시 운영자가 전체 상태를 빠르게 파악하기 어려움 | manifest stale/오류로 잘못된 운영 판단 | manifest와 원본 파일 간 일관성 검사 + updated_at 검증 | manifest 소비 중지, 개별 파일 점검으로 회귀 |
@@ -114,6 +119,7 @@
 | C-005 | 단일 worker 결합 구조가 단계 장애를 전체 파이프라인으로 전파함 | 단계 간 계약 불일치로 freshness 저하/장애 확대, 파생 TF direct ingest 우회 경로 잔존 | 단계별 헬스체크 + 장애 격리 회귀 테스트 + `1d/1w/1M` direct exchange fetch 미호출 계약 테스트 | 단일 worker 엔트리포인트로 복귀 |
 | C-006 | 고정 poll 루프는 경계 미스/불필요 cycle로 비용과 오탐을 증가시킴 | 경계 누락 또는 중복 트리거로 stale/중복 실행 발생 | UTC 경계 시뮬레이션 + timeframe별 실행 cadence 검증 | 기존 고정 poll 루프로 복귀 |
 | C-007 | boundary-only는 신규 데이터가 없을 때도 불필요 cycle을 수행한다 | 신규 candle 감지 오탐/누락으로 skip 오류 또는 처리 지연 발생 | 신규 closed candle 감지 기반 run/skip 테스트 + `missed_boundary=0` 검증 | detection gate 비활성화 후 boundary-only 모드 유지 |
+| C-008 | `1h` underfill이 재발하면 이후 C-006/C-005 결과 해석이 왜곡될 수 있음 | 임시 guard에 의존한 채 근본 원인 미확정 상태가 장기화됨 | RCA 증거(재현/로그/쿼리) + guard 트리거 추적 + 유지/제거 회귀 테스트 | guard를 유지한 채 RCA 후속 태스크로 분리 |
 
 ### Phase D
 | ID | Why Now | Failure Mode | Verification | Rollback |
@@ -133,14 +139,14 @@
 ## 7. R-003 Priority Reorder (Options + Adopted Baseline)
 | Option | Intent | Ordered Sequence | 장점 | 리스크 |
 |---|---|---|---|---|
-| Option A (Adopted) | Stability-first, phase boundary 보호 | `R-004 -> B-001 -> B-002 -> B-003 -> B-004 -> B-006 -> C-002 -> C-005 -> C-006 -> C-007 -> R-005 -> B-007(P2) -> B-005(P2) -> D-001+` | 정책/저장소/서빙 경계를 먼저 고정해 C/D 재작업 가능성을 줄임 | 비용 최적화(C-006/C-007) 체감이 늦어질 수 있음 |
+| Option A (Adopted) | Stability-first, phase boundary 보호 | `R-004 -> B-001 -> B-002 -> B-003 -> B-004 -> B-006 -> C-002 -> C-008 -> C-006 -> C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2) -> D-001+` | 정책/저장소/서빙 경계를 먼저 고정해 C/D 재작업 가능성을 줄임 | 비용 최적화(C-006/C-007) 체감이 늦어질 수 있음 |
 | Option B | Cost-first, C 조기 최적화 | `R-004 -> C-002 -> C-006 -> C-007 -> C-005 -> B-001 -> B-002 -> B-003 -> B-004 -> B-006 -> R-005 -> B-007(P2) -> B-005(P2) -> D-001+` | 루프 비용 절감 효과를 빠르게 확인 가능 | B 경계 미고정 상태에서 C 변경이 들어가 계약 드리프트/재작업 위험 증가 |
 
 채택 기준선:
 1. 현재 우선순위(`Stability > Cost > Performance`)에 따라 Option A를 기준선으로 채택한다.
 2. `B-005`는 사용자 의견에 따라 P2를 유지한다.
 3. Option B는 `C-002`에서 비용 압력이 즉시 심각하다는 증거가 나올 때 fallback 후보로만 유지한다.
-4. `D-2026-02-13-33` 반영 후 활성 실행 순서는 `B-001 -> B-004 -> B-006 -> C-002 -> C-005 -> C-006 -> C-007 -> R-005 -> B-007(P2) -> B-005(P2)`다.
+4. `D-2026-02-13-33`/`D-2026-02-13-35` 반영 후 활성 실행 순서는 `B-001 -> B-004 -> B-006 -> C-002 -> C-008 -> C-006 -> C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2)`다.
 
 ## 8. R-004 Kickoff Contract (Accepted)
 1. Kickoff 구현 묶음은 `B-002`, `B-003` 2개로 고정한다.
