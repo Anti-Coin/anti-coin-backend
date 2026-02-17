@@ -30,6 +30,7 @@
 18. `D-2026-02-13-34` 채택: reconciliation mismatch를 내부/외부로 분리(`internal_deterministic_mismatch` vs `external_reconciliation_mismatch`)하고, `1d/1w/1M` direct ingest 금지 경계를 정책으로 고정
 19. `C-002` 진행 (2026-02-13): `runtime_metrics.json` baseline 추가(실행시간/실패율/overrun 추세, poll-loop 모드에서 `missed_boundary`는 미지원으로 명시)
 20. `I-2026-02-13-01` 반영: `1h` canonical underfill(예: 30d 대비 소량 row) 시 DB last가 있어도 lookback 재부트스트랩을 강제해 bootstrap drift를 복구
+21. `D-2026-02-13-35` 채택: `I-2026-02-13-01`은 임시 방편(containment)이며 RCA 완료 전 최종 해결로 간주하지 않음
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -62,6 +63,7 @@
 | C-005 | P1 | pipeline worker 역할 분리 | open (gated) | `B-003` 검증 증거 확보 후 착수, 완료 시 ingest 지연/장애가 predict/export에 즉시 전파되지 않으며 base ingest(`1m`,`1h`)와 derived materialization(`1d/1w/1M`) 경계가 코드 레벨로 분리됨 |
 | C-006 | P1 | timeframe 경계 기반 scheduler 전환 | open | UTC candle boundary 기준으로 `symbol+timeframe` 실행 스케줄을 고정하고 고정 poll 루프 대비 overrun을 감소시킴 |
 | C-007 | P1 | 신규 candle 감지 게이트 결합 | open | boundary 스케줄 직전 신규 closed candle 감지 후 실행/skip를 분기해 불필요 cycle을 억제하고 `missed_boundary=0`을 검증 |
+| C-008 | P1 | `1h` underfill RCA + temporary guard sunset 결정 | open | underfill 원인(또는 유지 근거)이 증거 기반으로 확정되고, `I-2026-02-13-01` guard를 유지/조정/제거 중 하나로 결론내려 문서/테스트에 반영됨 |
 
 ### Phase D (Model Evolution)
 | ID | Priority | Task | Status | Done Condition |
@@ -81,7 +83,7 @@
 ## 3. Immediate Bundle
 1. `B-001`
 2. `C-002`
-3. `C-006`
+3. `C-008`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
@@ -116,6 +118,7 @@
 | C-005 | 단일 worker 결합 구조가 단계 장애를 전체 파이프라인으로 전파함 | 단계 간 계약 불일치로 freshness 저하/장애 확대, 파생 TF direct ingest 우회 경로 잔존 | 단계별 헬스체크 + 장애 격리 회귀 테스트 + `1d/1w/1M` direct exchange fetch 미호출 계약 테스트 | 단일 worker 엔트리포인트로 복귀 |
 | C-006 | 고정 poll 루프는 경계 미스/불필요 cycle로 비용과 오탐을 증가시킴 | 경계 누락 또는 중복 트리거로 stale/중복 실행 발생 | UTC 경계 시뮬레이션 + timeframe별 실행 cadence 검증 | 기존 고정 poll 루프로 복귀 |
 | C-007 | boundary-only는 신규 데이터가 없을 때도 불필요 cycle을 수행한다 | 신규 candle 감지 오탐/누락으로 skip 오류 또는 처리 지연 발생 | 신규 closed candle 감지 기반 run/skip 테스트 + `missed_boundary=0` 검증 | detection gate 비활성화 후 boundary-only 모드 유지 |
+| C-008 | `1h` underfill이 재발하면 이후 C-006/C-005 결과 해석이 왜곡될 수 있음 | 임시 guard에 의존한 채 근본 원인 미확정 상태가 장기화됨 | RCA 증거(재현/로그/쿼리) + guard 트리거 추적 + 유지/제거 회귀 테스트 | guard를 유지한 채 RCA 후속 태스크로 분리 |
 
 ### Phase D
 | ID | Why Now | Failure Mode | Verification | Rollback |
@@ -135,14 +138,14 @@
 ## 7. R-003 Priority Reorder (Options + Adopted Baseline)
 | Option | Intent | Ordered Sequence | 장점 | 리스크 |
 |---|---|---|---|---|
-| Option A (Adopted) | Stability-first, phase boundary 보호 | `R-004 -> B-001 -> B-002 -> B-003 -> B-004 -> B-006 -> C-002 -> C-006 -> C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2) -> D-001+` | 정책/저장소/서빙 경계를 먼저 고정해 C/D 재작업 가능성을 줄임 | 비용 최적화(C-006/C-007) 체감이 늦어질 수 있음 |
+| Option A (Adopted) | Stability-first, phase boundary 보호 | `R-004 -> B-001 -> B-002 -> B-003 -> B-004 -> B-006 -> C-002 -> C-008 -> C-006 -> C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2) -> D-001+` | 정책/저장소/서빙 경계를 먼저 고정해 C/D 재작업 가능성을 줄임 | 비용 최적화(C-006/C-007) 체감이 늦어질 수 있음 |
 | Option B | Cost-first, C 조기 최적화 | `R-004 -> C-002 -> C-006 -> C-007 -> C-005 -> B-001 -> B-002 -> B-003 -> B-004 -> B-006 -> R-005 -> B-007(P2) -> B-005(P2) -> D-001+` | 루프 비용 절감 효과를 빠르게 확인 가능 | B 경계 미고정 상태에서 C 변경이 들어가 계약 드리프트/재작업 위험 증가 |
 
 채택 기준선:
 1. 현재 우선순위(`Stability > Cost > Performance`)에 따라 Option A를 기준선으로 채택한다.
 2. `B-005`는 사용자 의견에 따라 P2를 유지한다.
 3. Option B는 `C-002`에서 비용 압력이 즉시 심각하다는 증거가 나올 때 fallback 후보로만 유지한다.
-4. `D-2026-02-13-33` 반영 후 활성 실행 순서는 `B-001 -> B-004 -> B-006 -> C-002 -> C-006 -> C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2)`다.
+4. `D-2026-02-13-33`/`D-2026-02-13-35` 반영 후 활성 실행 순서는 `B-001 -> B-004 -> B-006 -> C-002 -> C-008 -> C-006 -> C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2)`다.
 
 ## 8. R-004 Kickoff Contract (Accepted)
 1. Kickoff 구현 묶음은 `B-002`, `B-003` 2개로 고정한다.

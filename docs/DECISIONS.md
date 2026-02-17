@@ -205,6 +205,28 @@
   - 외부 대사 warning이 운영 허용치를 초과하거나, 단발 mismatch가 실질 장애를 반복 유발할 때
   - 파생 timeframe direct ingest 우회가 운영 중 필요해지는 긴급 사건이 발생할 때
 
+### D-2026-02-13-35
+- Date: 2026-02-13
+- Status: Accepted
+- Topic: `1h` Underfill Guard is Temporary Containment (Not Final Fix)
+- Context:
+  - 운영 중 `1h` ingest가 lookback 기대치 대비 과소 수집되는 사례가 관측되었다.
+  - 즉시 운영 안정성을 위해 `underfill -> lookback rebootstrap` 가드를 추가했지만, 단일 근본 원인(RCA)은 아직 확정되지 않았다.
+- Decision:
+  - `I-2026-02-13-01`에서 추가된 `1h underfill rebootstrap`은 `임시 방편(containment)`으로 분류한다.
+  - 이 가드는 "증상 완화" 목적이며 "근본 해결 완료"를 의미하지 않는다.
+  - RCA 완료 기준:
+    - 재현 가능한 시나리오 또는 충분한 인과 증거 확보
+    - 원인 분류(설정/커서 드리프트/조회 경계/런타임 계약 불일치) 확정
+    - 영구 수정안 적용 또는 guard 유지가 더 안전하다는 근거 문서화
+  - RCA 완료 전에는 guard 제거를 금지한다.
+- Consequence:
+  - 단기적으로 underfill 재발 시 자동 복구 확률이 높아진다.
+  - 반면 불필요한 재백필 비용/노이즈가 늘 수 있으므로 guard의 수명 관리를 강제해야 한다.
+- Revisit Trigger:
+  - 동일 증상이 7일 내 재발하거나, guard 재트리거 빈도가 운영 허용치를 넘을 때
+  - `C-008` RCA 태스크가 완료되어 guard sunset/유지 여부를 결정할 때
+
 ## 3. Decision Operation Policy
 1. Archive로 이동된 결정은 `Section 1`에 요약 형태로만 유지한다.
 2. 아직 archive로 이동하지 않은 결정은 `Section 2`에 상세 형태로 유지한다.
