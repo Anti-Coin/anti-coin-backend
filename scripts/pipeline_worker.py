@@ -1097,6 +1097,7 @@ def get_first_timestamp(
       |> range(start: 0)
       |> filter(fn: (r) => r["_measurement"] == "ohlcv")
       |> filter(fn: (r) => r["symbol"] == "{symbol}")
+      |> filter(fn: (r) => not exists r["timeframe"])
       |> first(column: "_time")
     """
 
@@ -1133,6 +1134,7 @@ def get_last_timestamp(
       |> range(start: {range_start})
       |> filter(fn: (r) => r["_measurement"] == "ohlcv")
       |> filter(fn: (r) => r["symbol"] == "{symbol}")
+      |> filter(fn: (r) => not exists r["timeframe"])
       |> last(column: "_time")
     """
 

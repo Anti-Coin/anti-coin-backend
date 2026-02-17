@@ -32,6 +32,10 @@
 20. `I-2026-02-13-01` 반영: `1h` canonical underfill(예: 30d 대비 소량 row) 시 DB last가 있어도 lookback 재부트스트랩을 강제해 bootstrap drift를 복구
 21. `D-2026-02-13-35` 채택: `I-2026-02-13-01`은 임시 방편(containment)이며 RCA 완료 전 최종 해결로 간주하지 않음
 22. `D-2026-02-17-36` 채택: 모든 심볼 onboarding을 `1h full-first(exchange earliest)`로 고정하고, full backfill 완료 전 FE 심볼 완전 비노출 게이트를 정책으로 채택
+23. `B-001` 진행 (2026-02-17): worker에 symbol activation(`registered/backfilling/ready_for_serving`) 및 manifest `visibility/is_full_backfilled/coverage_*` 필드 반영, hidden 심볼 `serve_allowed=false` 강제, 회귀 `87 passed`
+24. `B-001` 완료 (2026-02-17): 정책/구현/회귀 근거(`87 passed`)가 정렬되어 timeframe 정책 잠금 태스크를 종료
+25. `C-008` 시작 (2026-02-17): `1h underfill` RCA 착수(`I-2026-02-13-01` 임시 guard의 유지/조정/제거 결론 도출 준비)
+26. `C-008` 완료 (2026-02-17): fallback 오염 경로 차단 + 회귀(`89 passed`) + `D-2026-02-17-37` 반영, guard 7일 관찰은 차단 게이트가 아닌 운영 메모로 `C-002`에서 병행 추적
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -46,11 +50,12 @@
 ### Phase B (Timeframe Expansion)
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
-| B-001 | P1 | timeframe tier 정책 매트릭스 확정(수집/보존/서빙/예측) | in_progress | `docs/TIMEFRAME_POLICY_MATRIX.md` 정책 잠금 + `1m` 예측 비서빙, `1m` hybrid API=`latest closed 180 candles`, `1m` rolling=`default 14d / cap 30d`, `1h` onboarding=`full-first(exchange earliest)` + `registered/backfilling/ready_for_serving` 게이트 + full backfill 완료 전 FE 심볼 완전 비노출, `1h->1d/1w/1M` downsample 경로, `1d/1w/1M` direct ingest 금지 경계, `internal_deterministic_mismatch`/`external_reconciliation_mismatch` 구분 규칙, Hard Gate+Accuracy 정책을 문서/설정으로 고정 |
+| B-001 | P1 | timeframe tier 정책 매트릭스 확정(수집/보존/서빙/예측) | done (2026-02-17) | `docs/TIMEFRAME_POLICY_MATRIX.md` 정책 잠금 + `1m` 예측 비서빙, `1m` hybrid API=`latest closed 180 candles`, `1m` rolling=`default 14d / cap 30d`, `1h` onboarding=`full-first(exchange earliest)` + `registered/backfilling/ready_for_serving` 게이트 + full backfill 완료 전 FE 심볼 완전 비노출, `1h->1d/1w/1M` downsample 경로, `1d/1w/1M` direct ingest 금지 경계, `internal_deterministic_mismatch`/`external_reconciliation_mismatch` 구분 규칙, Hard Gate+Accuracy 정책을 문서/설정으로 고정 |
 | B-002 | P1 | 파일 네이밍 규칙 통일 | done (2026-02-13) | canonical `{symbol}_{timeframe}` 파일 생성 + legacy fallback 호환 유지 + `tests/test_api_status.py`/`tests/test_status_monitor.py` 회귀 통과 |
 | B-003 | P1 | history/prediction export timeframe-aware 전환 | done (2026-02-13) | 다중 timeframe(`1h/1d/1w/1M`) 동시 export 동작 확인 + `1m` prediction 비생성 정책 코드/테스트 반영 + 회귀 `66 passed` |
 | B-004 | P1 | manifest 파일 생성 | done (2026-02-13) | `static_data/manifest.json`에 심볼/타임프레임별 `history.updated_at`, `prediction.status/updated_at/age`, `degraded`, `serve_allowed`, `summary(status_counts)`가 주기적으로 갱신됨 |
 | B-007 | P2 | 운영 대시보드(admin) timeframe 확장 | open | `admin/app.py`에서 symbol/timeframe 필터, timeframe별 freshness/degraded 상태 매트릭스, 최근 갱신 시각/지연 표시를 지원하고 `B-004` manifest를 1차 데이터 소스로 사용 |
+| B-008 | P2 | FE 심볼 노출 게이트 연동(`hidden_backfilling` 필터) | open | FE 심볼 리스트가 `manifest.visibility`를 소비해 `hidden_backfilling` 심볼을 완전 비노출하며, `ready_for_serving` 전환 시 자동 노출 복귀가 검증된다 |
 | B-006 | P1 | 저장소 예산 가드(50GB) + retention/downsample 실행 | done (2026-02-13) | `1m` rolling(`14d default / 30d cap`) 적용 + 디스크 watermark 경보/차단 + `1h->1d/1w/1M` downsample job 및 `downsample_lineage.json` 기반 lineage/검증 경로 확정 |
 | B-005 | P2 | `/history`/`/predict` fallback 정리(sunset) | open | Endpoint Sunset 체크리스트 조건 충족 + fallback 비의존 운영 1 cycle 검증 + rollback 절차 문서화 |
 
@@ -64,7 +69,7 @@
 | C-005 | P1 | pipeline worker 역할 분리 | open (gated) | `B-003` 검증 증거 확보 후 착수, 완료 시 ingest 지연/장애가 predict/export에 즉시 전파되지 않으며 base ingest(`1m`,`1h`)와 derived materialization(`1d/1w/1M`) 경계가 코드 레벨로 분리됨 |
 | C-006 | P1 | timeframe 경계 기반 scheduler 전환 | open | UTC candle boundary 기준으로 `symbol+timeframe` 실행 스케줄을 고정하고 고정 poll 루프 대비 overrun을 감소시킴 |
 | C-007 | P1 | 신규 candle 감지 게이트 결합 | open | boundary 스케줄 직전 신규 closed candle 감지 후 실행/skip를 분기해 불필요 cycle을 억제하고 `missed_boundary=0`을 검증 |
-| C-008 | P1 | `1h` underfill RCA + temporary guard sunset 결정 | open | underfill 원인(또는 유지 근거)이 증거 기반으로 확정되고, `I-2026-02-13-01` guard를 유지/조정/제거 중 하나로 결론내려 문서/테스트에 반영됨 |
+| C-008 | P1 | `1h` underfill RCA + temporary guard sunset 결정 | done (2026-02-17) | legacy fallback 오염 경로(`timeframe` 미존재 row만 허용) 차단 + 회귀 테스트 반영 + `D-2026-02-17-37` 문서화 완료. guard 7일 관찰은 블로킹 조건이 아닌 운영 메모로 `C-002` 계측 트랙에서 병행 추적 |
 
 ### Phase D (Model Evolution)
 | ID | Priority | Task | Status | Done Condition |
@@ -82,9 +87,9 @@
 | D-011 | P1 | Model Coverage Matrix + Fallback Resolver 구현 | open | 기본 `timeframe-shared`/조건부 `symbol+timeframe dedicated` 정책과 `dedicated -> shared -> insufficient_data` fallback 체인이 코드/메타데이터/테스트로 검증됨 |
 
 ## 3. Immediate Bundle
-1. `B-001`
-2. `C-002`
-3. `C-008`
+1. `C-002`
+2. `C-006`
+3. `C-007`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
@@ -106,6 +111,7 @@
 | B-003 | export가 timeframe-aware가 아니면 산출물이 덮어써지고, 1m 예측 비서빙 정책 위반 위험이 생김 | 타임프레임 간 파일 충돌/유실 + 1m prediction 파일 노출 | 다중 timeframe 동시 export 테스트 + `1m` prediction 미생성 검증 | `1h` export 경로로 임시 복귀 |
 | B-004 | manifest 부재 시 운영자가 전체 상태를 빠르게 파악하기 어려움 | manifest stale/오류로 잘못된 운영 판단 | manifest와 원본 파일 간 일관성 검사 + updated_at 검증 | manifest 소비 중지, 개별 파일 점검으로 회귀 |
 | B-007 | 다중 timeframe 전환 후 운영자가 상태를 단일 화면에서 파악하기 어려움 | timeframe별 stale/degraded를 놓쳐 운영 대응 지연 | admin 뷰에서 symbol/timeframe 필터 + 상태 매트릭스 + updated_at 지연 표시 검증 | 기존 단일 timeframe 대시보드로 임시 회귀 |
+| B-008 | FE가 manifest visibility를 소비하지 않으면 정책상 비노출 심볼이 사용자에게 노출될 수 있음 | backfilling 심볼 조기 노출로 사용자 신뢰 저하/해석 오류 발생 | FE 심볼 목록 필터 테스트(`hidden_backfilling` 제외) + ready 전환 시 노출 복귀 E2E 확인 | FE에서 visibility 필터 비활성화 후 기존 수동 심볼 목록으로 임시 회귀 |
 | B-006 | Free Tier 50GB 제약에서 다중 심볼 1m 원본 장기 보관은 운영 중단 리스크를 만든다 | 디스크 고갈로 쓰기 실패, DB 성능 저하, 복구 지연 | 디스크 사용량 추세 검증 + `14d default / 30d cap` enforcement 테스트 + downsample 결과 무결성 검증 | retention/downsample 중지 후 기존 수집 정책으로 회귀 |
 | B-005 | fallback endpoint를 무기한 유지하면 경계 혼선/숨은 의존이 누적됨 | 제거 시 숨어있던 호출 경로 장애 발생 | sunset 체크리스트 + fallback 비의존 운영 1 cycle 검증 | endpoint 복구 절차 즉시 실행(runbook) |
 
@@ -146,7 +152,7 @@
 1. 현재 우선순위(`Stability > Cost > Performance`)에 따라 Option A를 기준선으로 채택한다.
 2. `B-005`는 사용자 의견에 따라 P2를 유지한다.
 3. Option B는 `C-002`에서 비용 압력이 즉시 심각하다는 증거가 나올 때 fallback 후보로만 유지한다.
-4. `D-2026-02-13-33`/`D-2026-02-13-35` 반영 후 활성 실행 순서는 `B-001 -> B-004 -> B-006 -> C-002 -> C-008 -> C-006 -> C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2)`다.
+4. `D-2026-02-13-33`/`D-2026-02-13-35`/`D-2026-02-17-36`/`D-2026-02-17-37` 반영 후 활성 실행 순서는 `C-002 -> C-006 -> C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2)`다.
 
 ## 8. R-004 Kickoff Contract (Accepted)
 1. Kickoff 구현 묶음은 `B-002`, `B-003` 2개로 고정한다.

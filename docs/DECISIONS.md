@@ -250,6 +250,28 @@
   - 활성 심볼 수/디스크 성장률이 예상보다 커져 `warn` 이상이 장기 지속될 때
   - 거래소 API가 earliest 구간 제공 정책을 변경해 full bootstrap 전략이 비효율적일 때
 
+### D-2026-02-17-37
+- Date: 2026-02-17
+- Status: Accepted
+- Topic: `C-008` RCA - `1h` underfill 원인 고정 및 guard 수명 결정
+- Context:
+  - `1h` canonical 데이터가 없을 때 `get_last_timestamp/get_first_timestamp`는 `PRIMARY_TIMEFRAME`에 한해 legacy fallback(타임프레임 미포함 스키마 호환)을 허용했다.
+  - 기존 fallback 쿼리가 `symbol`만으로 조회되어, `1d/1w/1M` 등 다른 timeframe row를 legacy row로 오인할 수 있었다.
+  - 이 경우 `since` 기준이 실제 `1h` 최초/최종 시각이 아닌 타 timeframe 시각으로 결정되어 `1h` underfill(예: lookback 기대치 대비 소량 row)로 이어질 수 있다.
+- Decision:
+  - legacy fallback은 `timeframe` 태그가 없는 row만 대상으로 제한한다(`not exists r["timeframe"]`).
+  - 즉, `PRIMARY_TIMEFRAME` 호환 fallback은 유지하되, cross-timeframe 오염 경로는 차단한다.
+  - `I-2026-02-13-01` underfill rebootstrap guard는 즉시 제거하지 않고 유지한다.
+  - 단, guard의 역할은 `최종 해결`이 아니라 `2차 안전장치`로 명시하며, 재트리거 추세를 관찰해 후속(운영 관찰 창 만료 시점)에 sunset 여부를 재결정한다.
+  - `C-008` 완료 기준은 원인 경로 차단 + 회귀 테스트 + 결정 문서화로 닫고, 7일 관찰은 차단 게이트가 아닌 운영 메모로 `C-002` 계측 트랙에서 병행 수행한다.
+- Consequence:
+  - `1h` 커버리지 기준 시각 계산의 오염 가능성이 줄어들어 underfill 재발 확률이 낮아진다.
+  - legacy 무타임프레임 데이터와의 호환성은 유지되며, multi-timeframe 데이터와의 혼선은 방지된다.
+  - guard 유지로 단기 안정성은 확보되지만, 불필요 rebootstrap 비용은 계속 관찰 대상이다.
+- Revisit Trigger:
+  - guard 재트리거가 7일 내 반복되거나, 재백필 비용/소요시간이 운영 허용치를 초과할 때
+  - 운영 관찰 메모(7일) 종료 시점에 guard 제거/완화 근거가 충분히 확보될 때
+
 ## 3. Decision Operation Policy
 1. Archive로 이동된 결정은 `Section 1`에 요약 형태로만 유지한다.
 2. 아직 archive로 이동하지 않은 결정은 `Section 2`에 상세 형태로 유지한다.

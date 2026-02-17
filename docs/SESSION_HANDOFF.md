@@ -1,6 +1,6 @@
 # Coin Predict Session Handoff
 
-- Last Updated: 2026-02-13
+- Last Updated: 2026-02-17
 - Branch: `dev`
 
 ## 1. Current Snapshot
@@ -17,17 +17,22 @@
 11. `D-2026-02-13-34` 반영: reconciliation mismatch semantics를 `internal_deterministic_mismatch`/`external_reconciliation_mismatch`로 분리하고, `1d/1w/1M` direct ingest 금지 경계를 정책으로 고정.
 12. `I-2026-02-13-01` 반영: `1h` canonical underfill 탐지 시 lookback 재부트스트랩 강제(`state/db cursor drift` 복구), 회귀 `83 passed`.
 13. `D-2026-02-13-35` 반영: 위 `I-2026-02-13-01`은 임시 방편(containment)이며 RCA 완료 전 최종 해결로 간주하지 않음.
+14. `B-001` 완료 (2026-02-17): worker full-first bootstrap(`exchange earliest`) + symbol activation(`registered/backfilling/ready_for_serving`) + manifest `visibility/is_full_backfilled/coverage_*` 반영, hidden 심볼 `serve_allowed=false`, 회귀 `87 passed`.
+15. FE 통합은 백엔드 우선 원칙으로 defer: FE가 `manifest.visibility=hidden_backfilling`를 소비해 심볼 비노출하는 작업은 신규 `B-008(P2)`로 등록.
+16. `C-008` 시작 (2026-02-17): `1h underfill` RCA 착수(temporary guard `I-2026-02-13-01`의 sunset/유지 결론 도출)
+17. `C-008` 완료 (2026-02-17): legacy fallback 오염 경로 차단(`not exists r["timeframe"]`) + 회귀 `89 passed` + `D-2026-02-17-37` 반영. guard 7일 관찰은 운영 병행 메모로 전환.
 
 ## 2. Next Priority Tasks
-1. `B-001`: timeframe tier 정책 매트릭스 잠금(1m 비대칭 + `latest closed 180` + `14d/30d` + Hard Gate+Accuracy + mismatch taxonomy + derived TF direct ingest 금지 경계)
-2. `C-002`: 실행시간/실패율/overrun/missed boundary 메트릭 수집
-3. `C-008`: `1h` underfill RCA + temporary guard(`I-2026-02-13-01`) sunset/유지 결정
-4. `C-006 -> C-007`: boundary scheduler + detection gate 하이브리드 전환
-5. `B-007`: admin/app.py timeframe 운영 대시보드 확장
-6. `B-005`: `/history`/`/predict` sunset 조건 충족 여부 재검증
+1. `C-002`: 실행시간/실패율/overrun/missed boundary 메트릭 수집
+2. `C-006 -> C-007`: boundary scheduler + detection gate 하이브리드 전환
+3. `C-005`: pipeline worker 역할 분리(게이트 충족 후)
+4. `B-007`: admin/app.py timeframe 운영 대시보드 확장
+5. `B-005`: `/history`/`/predict` sunset 조건 충족 여부 재검증
+6. `B-008`(P2): FE 심볼 노출 게이트 연동(`hidden_backfilling` 필터)
 
 ## 2.1 Runtime Note
 1. 로컬 `.env`는 참고용이며, 실제 서버 런타임 환경 변수는 `.env.prod` 기준으로 주입된다.
+2. `C-008` 후속 메모: guard(`I-2026-02-13-01`) 재트리거/재백필 비용은 7일간 개발 병행 관찰로 기록하고, 차기 판단 근거는 `C-002` runtime evidence에 누적한다.
 
 ## 3. Current Risks
 1. `TD-018`: API-SSG 운영 계약(필드/경로) 최종 확정 미완료

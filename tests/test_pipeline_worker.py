@@ -14,7 +14,9 @@ from scripts.pipeline_worker import (
     build_runtime_manifest,
     downsample_ohlcv_frame,
     enforce_1m_retention,
+    get_first_timestamp,
     get_disk_usage_percent,
+    get_last_timestamp,
     prediction_enabled_for_timeframe,
     resolve_ingest_since,
     resolve_disk_watermark_level,
@@ -589,6 +591,64 @@ def test_resolve_ingest_since_enforces_full_backfill_for_hidden_1h():
 
     assert source == "full_backfill_exchange_earliest"
     assert since == earliest
+
+
+def test_get_last_timestamp_legacy_fallback_filters_missing_timeframe(
+    monkeypatch,
+):
+    captured_queries = []
+    expected = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+    def fake_query_last_timestamp(query_api, query: str):
+        captured_queries.append(query)
+        if len(captured_queries) == 1:
+            return None
+        return expected
+
+    monkeypatch.setattr("scripts.pipeline_worker.PRIMARY_TIMEFRAME", "1h")
+    monkeypatch.setattr(
+        "scripts.pipeline_worker._query_last_timestamp",
+        fake_query_last_timestamp,
+    )
+
+    result = get_last_timestamp(
+        query_api=object(),
+        symbol="BTC/USDT",
+        timeframe="1h",
+    )
+
+    assert result == expected
+    assert len(captured_queries) == 2
+    assert 'not exists r["timeframe"]' in captured_queries[1]
+
+
+def test_get_first_timestamp_legacy_fallback_filters_missing_timeframe(
+    monkeypatch,
+):
+    captured_queries = []
+    expected = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+
+    def fake_query_first_timestamp(query_api, query: str):
+        captured_queries.append(query)
+        if len(captured_queries) == 1:
+            return None
+        return expected
+
+    monkeypatch.setattr("scripts.pipeline_worker.PRIMARY_TIMEFRAME", "1h")
+    monkeypatch.setattr(
+        "scripts.pipeline_worker._query_first_timestamp",
+        fake_query_first_timestamp,
+    )
+
+    result = get_first_timestamp(
+        query_api=object(),
+        symbol="BTC/USDT",
+        timeframe="1h",
+    )
+
+    assert result == expected
+    assert len(captured_queries) == 2
+    assert 'not exists r["timeframe"]' in captured_queries[1]
 
 
 def test_build_runtime_manifest_marks_hidden_symbol_unservable(tmp_path):
