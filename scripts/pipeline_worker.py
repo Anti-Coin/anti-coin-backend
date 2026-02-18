@@ -1,13 +1,26 @@
+"""
+Pipeline worker orchestrator.
+
+Why this file exists:
+- Runtime orchestration(역할 선택, 스케줄, 알림, 상태 저장)을 한곳에서 제어한다.
+- 실제 도메인 로직(ingest/predict/export)은 workers/*로 분리해 변경 폭을 줄인다.
+- 래퍼 함수를 유지하는 이유는 테스트가 `scripts.pipeline_worker.*` 심볼을
+  직접 monkeypatch하는 계약을 이미 사용하고 있기 때문이다.
+
+즉, 이 파일은 "비즈니스 계산"보다 "운영 제어면(control-plane)"에 집중한다.
+"""
+
 import ccxt
 import pandas as pd
 from influxdb_client import InfluxDBClient
 from influxdb_client.client.write_api import SYNCHRONOUS
-from prophet.serialize import model_from_json
 import json
 import os
 import shutil
+import sys
 import time
 import math
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import requests
@@ -16,6 +29,27 @@ from utils.logger import get_logger
 from utils.config import INGEST_TIMEFRAMES, PRIMARY_TIMEFRAME, TARGET_SYMBOLS
 from utils.file_io import atomic_write_json
 from utils.ingest_state import IngestStateStore
+from utils.pipeline_contracts import (
+    DetectionGateDecision,
+    IngestExecutionOutcome,
+    IngestExecutionResult,
+    IngestSinceSource,
+    PredictionExecutionOutcome,
+    PredictionExecutionResult,
+    PublishGateDecision,
+    PublishGateReason,
+    StorageGuardLevel,
+    SymbolActivationSnapshot,
+    SymbolVisibility,
+    WatermarkCursor,
+    format_utc_datetime,
+    is_rebootstrap_source,
+    parse_ingest_execution_result,
+    parse_ingest_since_source,
+    parse_prediction_execution_result,
+    parse_utc_datetime,
+)
+from utils.pipeline_runtime_state import SymbolActivationStore, WatermarkStore
 from utils.prediction_status import evaluate_prediction_status
 from utils.time_alignment import (
     detect_timeframe_gaps,
@@ -23,8 +57,29 @@ from utils.time_alignment import (
     next_timeframe_boundary,
     timeframe_to_pandas_freq,
 )
+from workers import export as export_ops
+from workers import ingest as ingest_ops
+from workers import predict as predict_ops
 
 logger = get_logger(__name__)
+
+
+def _ctx():
+    """
+    현재 모듈 객체를 workers/*에 전달하기 위한 컨텍스트 어댑터.
+
+    Called from:
+    - 거의 모든 wrapper 함수
+
+    Why:
+    - 구현은 workers/*로 이동했지만 테스트 monkeypatch 경로는
+      `scripts.pipeline_worker.*`를 유지해야 해서 ctx 패턴을 사용한다.
+    """
+    # workers/* 함수에 모듈 컨텍스트를 넘겨 주입점을 단일화한다.
+    # 이 패턴을 유지하면 테스트 monkeypatch 경로(scripts.pipeline_worker.*)를
+    # 깨지 않고도 구현 본체를 workers/*로 이동할 수 있다.
+    return sys.modules[__name__]
+
 
 INFLUXDB_URL = os.getenv("INFLUXDB_URL")
 INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN")
@@ -49,6 +104,9 @@ MANIFEST_FILE = STATIC_DIR / "manifest.json"
 DOWNSAMPLE_LINEAGE_FILE = STATIC_DIR / "downsample_lineage.json"
 RUNTIME_METRICS_FILE = STATIC_DIR / "runtime_metrics.json"
 SYMBOL_ACTIVATION_FILE = STATIC_DIR / "symbol_activation.json"
+INGEST_WATERMARK_FILE = STATIC_DIR / "ingest_watermarks.json"
+PREDICT_WATERMARK_FILE = STATIC_DIR / "predict_watermarks.json"
+EXPORT_WATERMARK_FILE = STATIC_DIR / "export_watermarks.json"
 PREDICTION_DISABLED_TIMEFRAMES = {
     value.strip()
     for value in os.getenv("PREDICTION_DISABLED_TIMEFRAMES", "1m").split(",")
@@ -67,18 +125,123 @@ DOWNSAMPLE_SOURCE_TIMEFRAME = "1h"
 DOWNSAMPLE_SOURCE_LOOKBACK_DAYS = 120
 FULL_BACKFILL_TOLERANCE_HOURS = 1
 CYCLE_TARGET_SECONDS = int(os.getenv("WORKER_CYCLE_SECONDS", "60"))
-RUNTIME_METRICS_WINDOW_SIZE = int(
-    os.getenv("RUNTIME_METRICS_WINDOW_SIZE", "240")
-)
+RUNTIME_METRICS_WINDOW_SIZE = int(os.getenv("RUNTIME_METRICS_WINDOW_SIZE", "240"))
 LOOKBACK_MIN_ROWS_RATIO = float(os.getenv("LOOKBACK_MIN_ROWS_RATIO", "0.8"))
 WORKER_SCHEDULER_MODE = os.getenv("WORKER_SCHEDULER_MODE", "boundary").strip().lower()
 VALID_WORKER_SCHEDULER_MODES = {"poll_loop", "boundary"}
+WORKER_EXECUTION_ROLE = os.getenv("WORKER_EXECUTION_ROLE", "all").strip().lower()
+VALID_WORKER_EXECUTION_ROLES = {"all", "ingest", "predict_export"}
+WORKER_PUBLISH_MODE = (
+    os.getenv("WORKER_PUBLISH_MODE", "predict_and_export").strip().lower()
+)
+VALID_WORKER_PUBLISH_MODES = {
+    "predict_and_export",
+    "predict_only",
+    "export_only",
+}
+
+
+def resolve_worker_execution_role(raw_role: str) -> str:
+    """
+    Worker 실행 역할 결정
+    VALID_WORKER_EXECUTION_ROLES = {"all", "ingest", "predict_export"}
+    - all: ingest, predict, export 모두 실행
+    - ingest: ingest만 실행
+    - predict_export: predict, export만 실행
+
+    Args:
+      - raw_role: WORKER_EXECUTION_ROLE 환경 변수 값
+    Returns:
+      - str: 결정된 worker 실행 역할
+    """
+    if raw_role in VALID_WORKER_EXECUTION_ROLES:
+        return raw_role
+    logger.warning(
+        "[Worker Role] unsupported WORKER_EXECUTION_ROLE=%s, fallback to all.",
+        raw_role,
+    )
+    return "all"
+
+
+def worker_role_runs_ingest(role: str) -> bool:
+    """
+    Worker 역할이 ingest를 실행하는지 확인한다.
+
+    Args:
+      - role: 결정된 worker 실행 역할
+    Returns:
+      - bool: ingest를 실행하는지 여부
+    """
+    return role in {"all", "ingest"}
+
+
+def worker_role_runs_publish(role: str) -> bool:
+    """
+    Worker 역할이 publish를 실행하는지 확인한다.
+
+    Args:
+      - role: 결정된 worker 실행 역할
+    Returns:
+      - bool: publish를 실행하는지 여부
+    """
+    return role in {"all", "predict_export"}
+
+
+def resolve_worker_publish_mode(raw_mode: str) -> str:
+    """
+    Publish 모드 결정
+    VALID_WORKER_PUBLISH_MODES = {"predict_and_export", "predict_only", "export_only"}
+    - predict_and_export: predict, export 모두 실행
+    - predict_only: predict만 실행
+    - export_only: export만 실행
+
+    Args:
+      - raw_mode: WORKER_PUBLISH_MODE 환경 변수 값
+    Returns:
+      - str: 결정된 publish 모드
+    """
+    if raw_mode in VALID_WORKER_PUBLISH_MODES:
+        return raw_mode
+    logger.warning(
+        "[Publish Mode] unsupported WORKER_PUBLISH_MODE=%s, "
+        "fallback to predict_and_export.",
+        raw_mode,
+    )
+    return "predict_and_export"
+
+
+def publish_mode_runs_predict(mode: str) -> bool:
+    """
+    Worker 역할이 predict를 실행하는 지 확인한다.
+
+    Args:
+      - mode: 결정된 worker publish 모드
+    Returns:
+      - bool: predict를 실행하는지 여부
+    """
+    return mode in {"predict_and_export", "predict_only"}
+
+
+def publish_mode_runs_export(mode: str) -> bool:
+    """
+    Worker 역할이 export를 실행하는 지 확인한다.
+
+    Args:
+      - mode: 결정된 worker publish 모드
+    Returns:
+      - bool: export를 실행하는지 여부
+    """
+    return mode in {"predict_and_export", "export_only"}
 
 
 def send_alert(message):
-    """디스코드/슬랙 등으로 알림 전송"""
+    """
+    디스코드/슬랙 등으로 알림 전송
+
+    TODO: Worker 기능(Ingest, predict, export)별로 분리된 알림 전송 기능 구현
+    """
     if not DISCORD_WEBHOOK_URL:
-        logger.info(f"[Alert Ignored] {message}")
+        logger.warning(f"[Alert Ignored] {message}")
         return
 
     try:
@@ -89,7 +252,15 @@ def send_alert(message):
 
 
 def _prediction_health_key(symbol: str, timeframe: str) -> str:
-    """prediction health 엔트리의 고유 키."""
+    """
+    prediction health 엔트리의 고유 키.
+
+    Args:
+      - symbol: 심볼
+      - timeframe: 타임프레임
+    Returns:
+      - str: prediction health 엔트리의 고유 키
+    """
     return f"{symbol}|{timeframe}"
 
 
@@ -103,6 +274,16 @@ def _static_export_paths(
     정적 산출물 파일 경로를 반환한다.
 
     Phase B 전환 기간에는 canonical(timeframe 포함) + legacy를 함께 유지한다.
+
+    TODO: Legacy 제거
+
+    Args:
+      - kind: 산출물 종류
+      - symbol: 심볼
+      - timeframe: 타임프레임 (1m, 1h, 1d, 1w, 1M)
+      - static_dir: 정적 산출물 디렉토리
+    Returns:
+      - tuple[Path, Path | None]: (canonical, legacy)
     """
     safe_symbol = symbol.replace("/", "_")
     resolved_static_dir = static_dir or STATIC_DIR
@@ -114,87 +295,299 @@ def _static_export_paths(
 
 
 def prediction_enabled_for_timeframe(timeframe: str) -> bool:
-    """timeframe별 prediction 생성 허용 여부."""
+    """
+    timeframe별 prediction 생성 허용 여부.
+    PREDICTION_DISABLED_TIMEFRAMES:
+      - 웬만하면 1m. 1m은 predict 데이터의 의미가 거의 없을 것이라 기대.
+
+    Args:
+      - timeframe: 타임프레임 (1m, 1h, 1d, 1w, 1M)
+    Returns:
+      - bool: prediction 생성 허용 여부
+    """
     return timeframe not in PREDICTION_DISABLED_TIMEFRAMES
 
 
 def _load_prediction_health(
     path: Path = PREDICTION_HEALTH_FILE,
-) -> dict[str, dict]:
+) -> dict[str, dict] | dict[None]:
     """
-    prediction 단계 health 상태 파일을 로드한다.
+    Prediction health 파일 로드.
+    Error 발생 시 빈 dict 반환.
 
-    실패 시 빈 dict를 반환한다. (worker 루프를 멈추지 않기 위한 fail-soft)
+    Args:
+      - path: Prediction health 파일 경로
+    Returns:
+      - dict[str, dict] | dict[None]: Prediction health 정보
+    Prediction_health.json 파일 구조:
+      {
+        "version": 1,
+        "updated_at": "2022-01-01T00:00:00Z",
+        "entries": {
+          "BTC/USDT_1h": {
+            "symbol": "BTC/USDT",
+            "timeframe": "1h",
+            "degraded": false,
+            "last_success_at": "2022-01-01T00:00:00Z",
+            "last_failure_at": "2022-01-01T00:00:00Z",
+            "consecutive_failures": 0,
+            "last_error": null,
+            "updated_at": "2022-01-01T00:00:00Z"
+          }
+        }, ...
+      }
     """
-    if not path.exists():
-        return {}
-
-    try:
-        with open(path, "r") as f:
-            payload = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        logger.error(f"Failed to load prediction health file: {e}")
-        return {}
-
-    entries = payload.get("entries")
-    if not isinstance(entries, dict):
-        logger.error("Invalid prediction health format: entries is not a dict.")
-        return {}
-    return entries
+    return predict_ops.load_prediction_health(_ctx(), path=path)
 
 
 def _save_prediction_health(
     entries: dict[str, dict], path: Path = PREDICTION_HEALTH_FILE
 ) -> None:
-    """prediction health 상태를 원자적으로 저장한다."""
-    payload = {
-        "version": 1,
-        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "entries": entries,
-    }
-    atomic_write_json(path, payload, indent=2)
+    """
+    Prediction health 파일 저장.
+
+    Args:
+      - entries: Prediction health 정보
+      - path: Prediction health 파일 경로
+    """
+    predict_ops.save_prediction_health(_ctx(), entries, path=path)
 
 
 def _format_utc(dt: datetime | None) -> str | None:
-    if dt is None:
-        return None
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    """
+    UTC datetime을 ISO 8601 형식의 문자열로 변환한다.
+
+    Args:
+      - dt: UTC datetime 객체
+    Returns:
+      - str: ISO 8601 형식의 문자열
+    """
+    return format_utc_datetime(dt)
 
 
 def _load_symbol_activation(
     path: Path = SYMBOL_ACTIVATION_FILE,
-) -> dict[str, dict]:
-    if not path.exists():
-        return {}
+) -> dict[str, SymbolActivationSnapshot]:
+    """
+    각 심볼의 활성화 여부를 담은 파일 로드.
+    Error 발생 시 빈 dict 반환.
 
-    try:
-        with open(path, "r") as f:
-            payload = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        logger.error(f"Failed to load symbol activation file: {e}")
-        return {}
-
-    entries = payload.get("entries")
-    if not isinstance(entries, dict):
-        logger.error("Invalid symbol activation format: entries is not a dict.")
-        return {}
-    return entries
+    Args:
+      - path: Symbol activation 파일 경로
+    Returns:
+      - dict[str, dict]: Symbol activation 정보
+    Symbol_activation.json 파일 구조:
+      {
+        "version": 1,
+        "updated_at": "2022-01-01T00:00:00Z",
+        "entries": {
+          "BTC/USDT": {
+            "symbol": "BTC/USDT",
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": true,
+            "coverage_start_at": "2017-08-17T04:00:00Z",
+            "coverage_end_at": "2026-02-17T08:00:00Z",
+            "exchange_earliest_at": "2017-08-17T04:00:00Z",
+            "ready_at": "2026-02-17T07:19:03Z",
+            "updated_at": "2026-02-17T10:00:00Z"
+          }
+        }, ...
+      }
+    """
+    store = SymbolActivationStore(path, logger)
+    return store.load()
 
 
 def _save_symbol_activation(
-    entries: dict[str, dict], path: Path = SYMBOL_ACTIVATION_FILE
+    entries: dict[str, SymbolActivationSnapshot | dict],
+    path: Path = SYMBOL_ACTIVATION_FILE,
 ) -> None:
-    payload = {
-        "version": 1,
-        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "entries": entries,
-    }
-    atomic_write_json(path, payload, indent=2)
+    """
+    symbol activation 스냅샷을 파일에 저장한다.
+
+    Called from:
+    - run_worker() ingest stage 후반
+    """
+    store = SymbolActivationStore(path, logger)
+    store.save(entries)
+
+
+def _load_watermark_entries(path: Path) -> dict[str, WatermarkCursor]:
+    """
+    watermark 파일을 로드하고 유효 엔트리만 정규화해 반환한다.
+
+    Called from:
+    - run_worker() 시작/주기 갱신
+
+    Why:
+    - 손상/잡음 엔트리를 무시해 gate 판단 안정성을 유지한다.
+    """
+    store = WatermarkStore(path, logger)
+    return store.load()
+
+
+def _save_watermark_entries(
+    entries: dict[str, WatermarkCursor | str], path: Path
+) -> None:
+    """
+    watermark 엔트리를 파일에 저장한다.
+
+    Called from:
+    - run_worker() stage 완료 후 cursor commit
+    """
+    store = WatermarkStore(path, logger)
+    store.save(entries)
+
+
+def _parse_utc(text: str | None) -> datetime | None:
+    """
+    UTC 문자열을 datetime으로 파싱한다.
+
+    Called from:
+    - should_run_publish_from_ingest_watermark
+    """
+    return parse_utc_datetime(text)
+
+
+def _resolve_watermark_datetime(
+    raw_entry: WatermarkCursor | str | None,
+) -> datetime | None:
+    """
+    watermark entry raw 값을 datetime으로 정규화한다.
+    """
+    if isinstance(raw_entry, WatermarkCursor):
+        return raw_entry.closed_at
+    if isinstance(raw_entry, str):
+        return _parse_utc(raw_entry)
+    return None
+
+
+def _upsert_watermark(
+    entries: dict[str, WatermarkCursor | str],
+    *,
+    symbol: str,
+    timeframe: str,
+    closed_at: datetime,
+) -> None:
+    """
+    Watermark에 새로운 closed_at을 기록한다.
+
+    XXX: entries를 직접 수정하는 방식이 적절한가?
+    Args:
+      - entries: Watermark entries
+      - symbol: 심볼
+      - timeframe: 타임프레임
+      - closed_at: closed_at
+    """
+    key = _prediction_health_key(symbol, timeframe)
+    entries[key] = WatermarkCursor(
+        symbol=symbol,
+        timeframe=timeframe,
+        closed_at=closed_at,
+    )
+
+
+def evaluate_publish_gate_from_ingest_watermark(
+    *,
+    symbol: str,
+    timeframe: str,
+    ingest_entries: dict[str, WatermarkCursor | str],
+    publish_entries: dict[str, WatermarkCursor | str],
+) -> PublishGateDecision:
+    """
+    ingest watermark 기준 publish 실행 여부를 DTO로 판단한다.
+    """
+    key = _prediction_health_key(symbol, timeframe)
+    ingest_dt = _resolve_watermark_datetime(ingest_entries.get(key))
+    if ingest_dt is None:
+        return PublishGateDecision(
+            should_run=False,
+            reason=PublishGateReason.NO_INGEST_WATERMARK,
+            ingest_closed_at=None,
+        )
+
+    publish_dt = _resolve_watermark_datetime(publish_entries.get(key))
+    if publish_dt is not None and publish_dt >= ingest_dt:
+        return PublishGateDecision(
+            should_run=False,
+            reason=PublishGateReason.UP_TO_DATE_INGEST_WATERMARK,
+            ingest_closed_at=ingest_dt,
+        )
+    return PublishGateDecision(
+        should_run=True,
+        reason=PublishGateReason.INGEST_WATERMARK_ADVANCED,
+        ingest_closed_at=ingest_dt,
+    )
+
+
+def should_run_publish_from_ingest_watermark(
+    *,
+    symbol: str,
+    timeframe: str,
+    ingest_entries: dict[str, WatermarkCursor | str],
+    publish_entries: dict[str, WatermarkCursor | str],
+) -> tuple[bool, str, datetime | None]:
+    """
+    Publish가 실행되어야 하는지 판단한다.
+
+    Args:
+      - symbol: 심볼
+      - timeframe: 타임프레임
+      - ingest_entries: Ingest watermark entries
+      - publish_entries: Publish watermark entries
+    Returns:
+      - tuple[bool, str, datetime | None]: (should_run, reason, ingest_dt)
+    """
+    decision = evaluate_publish_gate_from_ingest_watermark(
+        symbol=symbol,
+        timeframe=timeframe,
+        ingest_entries=ingest_entries,
+        publish_entries=publish_entries,
+    )
+    return (
+        decision.should_run,
+        decision.reason.value,
+        decision.ingest_closed_at,
+    )
+
+
+def _default_symbol_activation_entry(
+    symbol: str, now: datetime
+) -> SymbolActivationSnapshot:
+    """
+    Predict/export 전용 worker가 activation 파일을 아직 받지 못한 경우를
+    보수적으로 처리하기 위한 기본값(숨김) 엔트리.
+    """
+    return SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "registered",
+            "visibility": "hidden_backfilling",
+            "is_full_backfilled": False,
+            "coverage_start_at": None,
+            "coverage_end_at": None,
+            "exchange_earliest_at": None,
+            "ready_at": None,
+            "updated_at": _format_utc(now) or "",
+        },
+        fallback_now=now,
+    )
 
 
 def _remove_static_exports_for_symbol(
     symbol: str, timeframes: list[str], *, static_dir: Path = STATIC_DIR
 ) -> None:
+    """
+    심볼의 정적 산출물(history/prediction)을 제거한다.
+
+    Called from:
+    - run_worker()에서 hidden_backfilling 심볼 처리 시점
+
+    Why:
+    - full backfill 전 심볼의 오노출을 fail-closed로 차단하기 위함이다.
+    """
     for timeframe in timeframes:
         for kind in ("history", "prediction"):
             canonical_path, legacy_path = _static_export_paths(
@@ -204,8 +597,7 @@ def _remove_static_exports_for_symbol(
                 if path is None:
                     continue
                 try:
-                    if path.exists():
-                        path.unlink()
+                    path.unlink(missing_ok=True)
                 except OSError as e:
                     logger.warning(
                         f"[{symbol} {timeframe}] failed to remove static file {path}: {e}"
@@ -213,6 +605,26 @@ def _remove_static_exports_for_symbol(
 
 
 def _load_runtime_metrics(path: Path = RUNTIME_METRICS_FILE) -> list[dict]:
+    """
+    런타임 메트릭스를 리턴한다.
+
+    Args:
+      - path: 런타임 메트릭스 파일 경로
+    Returns:
+      - list[dict]: 런타임 메트릭스
+
+    Example:
+        recent_cycles: [
+            {
+                started_at: 2026-02-17T04:43:11Z,
+                elapsed_seconds: 8.96,
+                sleep_seconds: 51.04,
+                overrun: false,
+                result: ok,
+                error: null
+            }, ...
+        ]
+    """
     if not path.exists():
         return []
 
@@ -225,14 +637,19 @@ def _load_runtime_metrics(path: Path = RUNTIME_METRICS_FILE) -> list[dict]:
 
     entries = payload.get("recent_cycles")
     if not isinstance(entries, list):
-        logger.error(
-            "Invalid runtime metrics format: recent_cycles is not a list."
-        )
+        logger.error("Invalid runtime metrics format: recent_cycles is not a list.")
         return []
     return entries
 
 
 def _percentile(values: list[float], q: float) -> float | None:
+    """
+    Args:
+      - values: 값 리스트
+      - q: 백분위수
+    Returns:
+      - float | None: 백분위수 값
+    """
     if not values:
         return None
     if q <= 0:
@@ -246,7 +663,13 @@ def _percentile(values: list[float], q: float) -> float | None:
     return sorted_values[rank]
 
 
-def _normalize_source_counts(raw_counts: dict | None) -> dict[str, int]:
+def _normalize_source_counts(raw_counts: dict | None) -> dict[str, int] | dict[None]:
+    """
+    Args:
+      - raw_counts: 원시 소스 카운트
+    Returns:
+      - dict[str, int]: 정규화된 소스 카운트
+    """
     if not isinstance(raw_counts, dict):
         return {}
 
@@ -265,6 +688,12 @@ def _normalize_source_counts(raw_counts: dict | None) -> dict[str, int]:
 
 
 def _aggregate_ingest_source_metrics(entries: list[dict]) -> dict[str, int | dict]:
+    """
+    Args:
+      - entries: 런타임 메트릭스 (recent_cycles; _load_runtime_metrics)
+    Returns:
+      - dict[str, int | dict]: 집계된 소스 메트릭스
+    """
     source_counts: dict[str, int] = {}
     rebootstrap_cycles = 0
     rebootstrap_events = 0
@@ -299,6 +728,13 @@ def _aggregate_ingest_source_metrics(entries: list[dict]) -> dict[str, int | dic
 
 
 def _aggregate_reason_counts(entries: list[dict], field_name: str) -> dict[str, int]:
+    """
+    Args:
+      - entries: run_time_metrics; recent_cycles
+      - field_name: 집계할 필드 이름
+    Returns:
+      - dict[str, int]: 집계된 카운트
+    """
     merged: dict[str, int] = {}
     for item in entries:
         counts = _normalize_source_counts(item.get(field_name))
@@ -310,9 +746,17 @@ def _aggregate_reason_counts(entries: list[dict], field_name: str) -> dict[str, 
 def initialize_boundary_schedule(
     now: datetime, timeframes: list[str]
 ) -> dict[str, datetime]:
+    """
+    각 timeframe의 다음 경계를 초기 스케줄로 설정한다.
+
+    Called from:
+    - run_worker() 시작 시(경계 스케줄러 모드)
+    """
+    # 각 timeframe의 "다음 경계"를 기준점으로 잡는다.
+    # 시작 시각을 now 그대로 쓰지 않는 이유는 경계 정렬을 강제해
+    # poll drift(누적 시간 오차)를 줄이기 위함이다.
     return {
-        timeframe: next_timeframe_boundary(now, timeframe)
-        for timeframe in timeframes
+        timeframe: next_timeframe_boundary(now, timeframe) for timeframe in timeframes
     }
 
 
@@ -322,6 +766,12 @@ def resolve_boundary_due_timeframes(
     timeframes: list[str],
     next_boundary_by_timeframe: dict[str, datetime],
 ) -> tuple[list[str], int, datetime | None]:
+    """
+    현재 시각 기준으로 실행 due timeframe과 missed boundary 수를 계산한다.
+
+    Called from:
+    - run_worker() cycle 시작부
+    """
     due_timeframes: list[str] = []
     missed_boundary_count = 0
 
@@ -331,22 +781,25 @@ def resolve_boundary_due_timeframes(
             next_boundary = next_timeframe_boundary(now, timeframe)
             next_boundary_by_timeframe[timeframe] = next_boundary
 
+        # 봉 마감 미완료 된 데이터
         if now < next_boundary:
             continue
 
         due_timeframes.append(timeframe)
         boundary_advance_steps = 0
         while next_boundary <= now:
+            # 워커 중단/지연 후 복귀 시 경계를 여러 개 건너뛸 수 있다.
+            # while로 다음 경계까지 따라잡고, 몇 개를 놓쳤는지 계측해
+            # 운영자가 missed boundary를 관찰할 수 있게 한다.
             next_boundary = next_timeframe_boundary(next_boundary, timeframe)
             boundary_advance_steps += 1
 
+        # 원본 변경
         next_boundary_by_timeframe[timeframe] = next_boundary
         missed_boundary_count += max(0, boundary_advance_steps - 1)
 
     next_boundary_at = (
-        min(next_boundary_by_timeframe.values())
-        if next_boundary_by_timeframe
-        else None
+        min(next_boundary_by_timeframe.values()) if next_boundary_by_timeframe else None
     )
     return due_timeframes, missed_boundary_count, next_boundary_at
 
@@ -368,6 +821,15 @@ def append_runtime_cycle_metrics(
     target_cycle_seconds: int = CYCLE_TARGET_SECONDS,
     window_size: int = RUNTIME_METRICS_WINDOW_SIZE,
 ) -> dict:
+    """
+    cycle 메트릭을 recent window에 누적하고 요약 통계를 갱신한다.
+
+    Called from:
+    - run_worker() 정상/idle/실패 cycle 종료 시점
+
+    Why:
+    - scheduler/gate 변경 효과를 수치로 검증하기 위해 런타임 증거를 남긴다.
+    """
     resolved_boundary_mode = (
         boundary_tracking_mode
         if boundary_tracking_mode in {"poll_loop", "boundary_scheduler"}
@@ -405,20 +867,12 @@ def append_runtime_cycle_metrics(
     entries = entries[-effective_window:]
 
     samples = len(entries)
-    success_count = sum(
-        1 for item in entries if item.get("result") in {"ok", "idle"}
-    )
+    success_count = sum(1 for item in entries if item.get("result") in {"ok", "idle"})
     failure_count = samples - success_count
     overrun_count = sum(1 for item in entries if item.get("overrun") is True)
-    elapsed_values = [
-        float(item.get("elapsed_seconds", 0.0)) for item in entries
-    ]
-    sleep_values = [
-        float(item.get("sleep_seconds", 0.0)) for item in entries
-    ]
-    avg_elapsed = (
-        round(sum(elapsed_values) / samples, 2) if samples else None
-    )
+    elapsed_values = [float(item.get("elapsed_seconds", 0.0)) for item in entries]
+    sleep_values = [float(item.get("sleep_seconds", 0.0)) for item in entries]
+    avg_elapsed = round(sum(elapsed_values) / samples, 2) if samples else None
     avg_sleep = round(sum(sleep_values) / samples, 2) if samples else None
     p95_elapsed = _percentile(elapsed_values, 95)
     ingest_source_metrics = _aggregate_ingest_source_metrics(entries)
@@ -430,8 +884,7 @@ def append_runtime_cycle_metrics(
     )
     if resolved_boundary_mode == "boundary_scheduler":
         boundary_counts = [
-            max(0, int(item.get("missed_boundary_count") or 0))
-            for item in entries
+            max(0, int(item.get("missed_boundary_count") or 0)) for item in entries
         ]
         missed_boundary_total = sum(boundary_counts)
         missed_boundary_rate = (
@@ -445,18 +898,14 @@ def append_runtime_cycle_metrics(
         "samples": samples,
         "success_count": success_count,
         "failure_count": failure_count,
-        "success_rate": (
-            round(success_count / samples, 4) if samples else None
-        ),
+        "success_rate": (round(success_count / samples, 4) if samples else None),
         "avg_elapsed_seconds": avg_elapsed,
         "p95_elapsed_seconds": (
             round(p95_elapsed, 2) if p95_elapsed is not None else None
         ),
         "avg_sleep_seconds": avg_sleep,
         "overrun_count": overrun_count,
-        "overrun_rate": (
-            round(overrun_count / samples, 4) if samples else None
-        ),
+        "overrun_rate": (round(overrun_count / samples, 4) if samples else None),
         "missed_boundary_count": missed_boundary_total,
         "missed_boundary_rate": missed_boundary_rate,
         "ingest_since_source_counts": ingest_source_metrics["source_counts"],
@@ -476,9 +925,7 @@ def append_runtime_cycle_metrics(
 
     payload = {
         "version": 1,
-        "updated_at": datetime.now(timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        ),
+        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "target_cycle_seconds": target_cycle_seconds,
         "window_size": effective_window,
         "boundary_tracking": {
@@ -503,50 +950,19 @@ def upsert_prediction_health(
     path: Path = PREDICTION_HEALTH_FILE,
 ) -> tuple[dict, bool, bool]:
     """
-    prediction 성공/실패 결과를 health 파일에 반영한다.
+    prediction health 업데이트 래퍼.
 
-    반환값:
-    - entry: 반영된 최신 상태 엔트리
-    - previous_degraded: 반영 이전 degraded 여부
-    - current_degraded: 반영 이후 degraded 여부
+    Called from:
+    - run_worker() predict stage 결과 처리
     """
-    entries = _load_prediction_health(path=path)
-    key = _prediction_health_key(symbol, timeframe)
-    existing = entries.get(key, {})
-    previous_degraded = bool(existing.get("degraded", False))
-    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    if prediction_ok:
-        entry = {
-            "symbol": symbol,
-            "timeframe": timeframe,
-            "degraded": False,
-            "last_success_at": now_utc,
-            "last_failure_at": existing.get("last_failure_at"),
-            "last_error": None,
-            "consecutive_failures": 0,
-            "updated_at": now_utc,
-        }
-    else:
-        raw_failures = existing.get("consecutive_failures", 0)
-        try:
-            previous_failures = int(raw_failures)
-        except (TypeError, ValueError):
-            previous_failures = 0
-        entry = {
-            "symbol": symbol,
-            "timeframe": timeframe,
-            "degraded": True,
-            "last_success_at": existing.get("last_success_at"),
-            "last_failure_at": now_utc,
-            "last_error": error or "prediction_failed",
-            "consecutive_failures": previous_failures + 1,
-            "updated_at": now_utc,
-        }
-
-    entries[key] = entry
-    _save_prediction_health(entries, path=path)
-    return entry, previous_degraded, bool(entry["degraded"])
+    return predict_ops.upsert_prediction_health(
+        _ctx(),
+        symbol=symbol,
+        timeframe=timeframe,
+        prediction_ok=prediction_ok,
+        error=error,
+        path=path,
+    )
 
 
 def _lookback_days_for_timeframe(timeframe: str) -> int:
@@ -561,6 +977,12 @@ def _lookback_days_for_timeframe(timeframe: str) -> int:
 
 
 def get_disk_usage_percent(path: Path = DISK_USAGE_PATH) -> float:
+    """
+    디스크 사용률(%)을 계산한다.
+
+    Called from:
+    - run_worker() ingest stage의 storage guard
+    """
     usage = shutil.disk_usage(path)
     if usage.total <= 0:
         return 0.0
@@ -574,6 +996,12 @@ def resolve_disk_watermark_level(
     critical_percent: int = DISK_WATERMARK_CRITICAL_PERCENT,
     block_percent: int = DISK_WATERMARK_BLOCK_PERCENT,
 ) -> str:
+    """
+    사용률을 watermark level(normal/warn/critical/block)로 변환한다.
+
+    Called from:
+    - run_worker() storage guard
+    """
     if usage_percent >= block_percent:
         return "block"
     if usage_percent >= critical_percent:
@@ -589,6 +1017,12 @@ def should_enforce_1m_retention(
     *,
     interval_seconds: int = RETENTION_ENFORCE_INTERVAL_SECONDS,
 ) -> bool:
+    """
+    1m retention 실행 주기가 도래했는지 판단한다.
+
+    Called from:
+    - run_worker() cycle 초반
+    """
     if last_enforced_at is None:
         return True
     return (now - last_enforced_at).total_seconds() >= interval_seconds
@@ -601,6 +1035,12 @@ def should_block_initial_backfill(
     state_since: datetime | None,
     last_time: datetime | None,
 ) -> bool:
+    """
+    디스크 block 상태에서 1m 초기 백필 차단 여부를 반환한다.
+
+    Called from:
+    - resolve_ingest_since
+    """
     return (
         disk_level == "block"
         and timeframe == "1m"
@@ -622,122 +1062,47 @@ def resolve_ingest_since(
     now: datetime | None = None,
 ) -> tuple[datetime | None, str]:
     """
-    ingest 시작 시점을 결정한다.
+    ingest since 판정 래퍼.
 
-    우선순위:
-    1) DB last timestamp (SoT)
-    2) lookback bootstrap
-
-    state cursor가 존재해도 DB에서 last timestamp를 찾지 못하면 drift로 보고
-    lookback bootstrap을 다시 수행한다.
+    Called from:
+    - run_worker() 각 symbol/timeframe ingest 직전
     """
-    resolved_now = now or datetime.now(timezone.utc)
-    if (
-        enforce_full_backfill
-        and timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
-        and bootstrap_since is not None
-    ):
-        return bootstrap_since, "full_backfill_exchange_earliest"
-
-    if force_rebootstrap:
-        if should_block_initial_backfill(
-            disk_level=disk_level,
-            timeframe=timeframe,
-            state_since=None,
-            last_time=None,
-        ):
-            return None, "blocked_storage_guard"
-
-        lookback_days = _lookback_days_for_timeframe(timeframe)
-        return (
-            resolved_now - timedelta(days=lookback_days),
-            "underfilled_rebootstrap",
-        )
-
-    if last_time is not None:
-        if state_since is not None and state_since > last_time:
-            logger.warning(
-                f"[{symbol} {timeframe}] ingest cursor drift detected: "
-                f"state_since={state_since.strftime('%Y-%m-%dT%H:%M:%SZ')} "
-                f"> db_last={last_time.strftime('%Y-%m-%dT%H:%M:%SZ')}. "
-                "Using db_last as source of truth."
-            )
-        return last_time, "db_last"
-
-    # DB에 데이터가 없는데 state cursor가 남아 있는 경우(드리프트)는
-    # 초기 백필과 동일하게 취급해 lookback bootstrap을 재수행한다.
-    guard_state_since = state_since
-    source = "bootstrap_lookback"
-    if state_since is not None:
-        guard_state_since = None
-        source = "state_drift_rebootstrap"
-        logger.warning(
-            f"[{symbol} {timeframe}] state cursor exists but DB has no last timestamp. "
-            "Rebootstrapping from lookback window."
-        )
-
-    if should_block_initial_backfill(
-        disk_level=disk_level,
+    return ingest_ops.resolve_ingest_since(
+        _ctx(),
+        symbol=symbol,
         timeframe=timeframe,
-        state_since=guard_state_since,
+        state_since=state_since,
         last_time=last_time,
-    ):
-        return None, "blocked_storage_guard"
-
-    if timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME and bootstrap_since is not None:
-        if source == "state_drift_rebootstrap":
-            return (
-                bootstrap_since,
-                "state_drift_rebootstrap_exchange_earliest",
-            )
-        return bootstrap_since, "bootstrap_exchange_earliest"
-
-    lookback_days = _lookback_days_for_timeframe(timeframe)
-    return resolved_now - timedelta(days=lookback_days), source
+        disk_level=disk_level,
+        force_rebootstrap=force_rebootstrap,
+        bootstrap_since=bootstrap_since,
+        enforce_full_backfill=enforce_full_backfill,
+        now=now,
+    )
 
 
-def _minimum_required_lookback_rows(
-    timeframe: str, lookback_days: int
-) -> int | None:
-    # 현재 운영 기준에서 coverage 보정은 1h canonical에만 적용한다.
-    if timeframe != "1h":
-        return None
-    expected = lookback_days * 24
-    if expected <= 0:
-        return None
-    return max(1, int(expected * LOOKBACK_MIN_ROWS_RATIO))
+def _minimum_required_lookback_rows(timeframe: str, lookback_days: int) -> int | None:
+    """
+    coverage underfill 최소 row 기준 계산 래퍼.
+
+    Called from:
+    - run_worker() underfill guard
+    """
+    return ingest_ops.minimum_required_lookback_rows(_ctx(), timeframe, lookback_days)
 
 
 def get_lookback_close_count(
     query_api, symbol: str, timeframe: str, lookback_days: int
 ) -> int | None:
-    query = f"""
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -{lookback_days}d)
-      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
-      |> filter(fn: (r) => r["symbol"] == "{symbol}")
-      |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
-      |> filter(fn: (r) => r["_field"] == "close")
-      |> count(column: "_value")
     """
-    try:
-        result = query_api.query(query=query)
-    except Exception as e:
-        logger.error(f"[{symbol} {timeframe}] lookback count query failed: {e}")
-        return None
+    lookback close row count 조회 래퍼.
 
-    if not result:
-        return 0
-
-    for table in result:
-        if not table.records:
-            continue
-        value = table.records[0].get_value()
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-    return 0
+    Called from:
+    - run_worker() underfill guard
+    """
+    return ingest_ops.get_lookback_close_count(
+        _ctx(), query_api, symbol, timeframe, lookback_days
+    )
 
 
 def enforce_1m_retention(
@@ -757,15 +1122,11 @@ def enforce_1m_retention(
         RETENTION_1M_DEFAULT_DAYS,
         min(retention_days, RETENTION_1M_MAX_DAYS),
     )
-    cutoff = (resolved_now - timedelta(days=effective_days)).replace(
-        microsecond=0
-    )
+    cutoff = (resolved_now - timedelta(days=effective_days)).replace(microsecond=0)
     epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
     for symbol in symbols:
-        predicate = (
-            f'_measurement="ohlcv" AND symbol="{symbol}" AND timeframe="1m"'
-        )
+        predicate = f'_measurement="ohlcv" AND symbol="{symbol}" AND timeframe="1m"'
         delete_api.delete(
             start=epoch,
             stop=cutoff,
@@ -783,6 +1144,12 @@ def enforce_1m_retention(
 def _load_downsample_lineage(
     path: Path | None = None,
 ) -> dict[str, dict]:
+    """
+    downsample lineage 파일 로드.
+
+    Called from:
+    - upsert_downsample_lineage
+    """
     resolved_path = path or DOWNSAMPLE_LINEAGE_FILE
     if not resolved_path.exists():
         return {}
@@ -796,9 +1163,7 @@ def _load_downsample_lineage(
 
     entries = payload.get("entries")
     if not isinstance(entries, dict):
-        logger.error(
-            "Invalid downsample lineage format: entries is not a dict."
-        )
+        logger.error("Invalid downsample lineage format: entries is not a dict.")
         return {}
     return entries
 
@@ -807,6 +1172,12 @@ def _save_downsample_lineage(
     entries: dict[str, dict],
     path: Path | None = None,
 ) -> None:
+    """
+    downsample lineage 파일 저장.
+
+    Called from:
+    - upsert_downsample_lineage
+    """
     resolved_path = path or DOWNSAMPLE_LINEAGE_FILE
     payload = {
         "version": 1,
@@ -829,6 +1200,12 @@ def upsert_downsample_lineage(
     status: str,
     path: Path | None = None,
 ) -> None:
+    """
+    심볼/타임프레임별 downsample lineage 스냅샷을 갱신한다.
+
+    Called from:
+    - workers.ingest.run_downsample_and_save
+    """
     entries = _load_downsample_lineage(path=path)
     key = _prediction_health_key(symbol, target_timeframe)
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -858,64 +1235,19 @@ def _query_ohlcv_frame(
     timeframe: str,
     lookback_days: int,
 ) -> pd.DataFrame:
-    query = f"""
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -{lookback_days}d)
-      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
-      |> filter(fn: (r) => r["symbol"] == "{symbol}")
-      |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
-      |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-      |> sort(columns: ["_time"], desc: false)
     """
-    result = query_api.query_data_frame(query)
-    if isinstance(result, list):
-        frames = [
-            frame
-            for frame in result
-            if isinstance(frame, pd.DataFrame) and not frame.empty
-        ]
-        if not frames:
-            return pd.DataFrame()
-        df = pd.concat(frames, ignore_index=True)
-    else:
-        df = result
+    downsample source 조회 래퍼.
 
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return pd.DataFrame()
-
-    required = {"_time", "open", "high", "low", "close", "volume"}
-    if not required.issubset(df.columns):
-        missing = sorted(required - set(df.columns))
-        logger.error(
-            f"[{symbol} {timeframe}] Downsample source columns missing: {missing}"
-        )
-        return pd.DataFrame()
-
-    source = df[list(required)].copy()
-    source.rename(columns={"_time": "timestamp"}, inplace=True)
-    source["timestamp"] = pd.to_datetime(source["timestamp"], utc=True)
-    source.drop_duplicates(subset=["timestamp"], keep="last", inplace=True)
-    source.sort_values(by="timestamp", inplace=True)
-    source.set_index("timestamp", inplace=True)
-    return source[["open", "high", "low", "close", "volume"]]
-
-
-def _downsample_rule(timeframe: str) -> str:
-    if timeframe == "1d":
-        return "1D"
-    if timeframe == "1w":
-        return "1W-MON"
-    if timeframe == "1M":
-        return "1MS"
-    raise ValueError(f"Unsupported downsample target timeframe: {timeframe}")
-
-
-def _expected_source_count(bucket_open: datetime, target_timeframe: str) -> int:
-    next_boundary = next_timeframe_boundary(bucket_open, target_timeframe)
-    step_seconds = int((next_boundary - bucket_open).total_seconds())
-    if step_seconds <= 0:
-        return 0
-    return step_seconds // 3600
+    Called from:
+    - run_downsample_and_save wrapper 경유 테스트/호환 경로
+    """
+    return ingest_ops.query_ohlcv_frame(
+        _ctx(),
+        query_api,
+        symbol=symbol,
+        timeframe=timeframe,
+        lookback_days=lookback_days,
+    )
 
 
 def downsample_ohlcv_frame(
@@ -923,55 +1255,14 @@ def downsample_ohlcv_frame(
     *,
     target_timeframe: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if source_df.empty:
-        return pd.DataFrame(), pd.DataFrame()
+    """
+    downsample 집계 래퍼.
 
-    grouped = source_df.resample(
-        _downsample_rule(target_timeframe), label="left", closed="left"
-    )
-    aggregated = grouped.agg(
-        {
-            "open": "first",
-            "high": "max",
-            "low": "min",
-            "close": "last",
-            "volume": "sum",
-        }
-    )
-    counts = grouped["open"].count().rename("source_count")
-    aggregated = aggregated.join(counts)
-    aggregated.dropna(subset=["open", "high", "low", "close"], inplace=True)
-    if aggregated.empty:
-        return pd.DataFrame(), pd.DataFrame()
-
-    expected = [
-        _expected_source_count(
-            bucket_open.to_pydatetime().astimezone(timezone.utc),
-            target_timeframe,
-        )
-        for bucket_open in aggregated.index
-    ]
-    aggregated["expected_count"] = expected
-    complete = aggregated[
-        aggregated["source_count"] == aggregated["expected_count"]
-    ].copy()
-    incomplete = aggregated[
-        aggregated["source_count"] != aggregated["expected_count"]
-    ].copy()
-
-    return (
-        complete[["open", "high", "low", "close", "volume"]],
-        incomplete[
-            [
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-                "source_count",
-                "expected_count",
-            ]
-        ],
+    Called from:
+    - run_downsample_and_save wrapper 경유 테스트/호환 경로
+    """
+    return ingest_ops.downsample_ohlcv_frame(
+        _ctx(), source_df, target_timeframe=target_timeframe
     )
 
 
@@ -982,73 +1273,66 @@ def run_downsample_and_save(
     symbol: str,
     target_timeframe: str,
 ) -> tuple[datetime | None, str]:
-    if target_timeframe not in DOWNSAMPLE_TARGET_TIMEFRAMES:
-        return None, "unsupported"
+    """
+    derived timeframe materialization 래퍼.
 
-    source_df = _query_ohlcv_frame(
+    Called from:
+    - run_ingest_step
+    """
+    return ingest_ops.run_downsample_and_save(
+        _ctx(),
+        write_api,
         query_api,
         symbol=symbol,
-        timeframe=DOWNSAMPLE_SOURCE_TIMEFRAME,
-        lookback_days=DOWNSAMPLE_SOURCE_LOOKBACK_DAYS,
-    )
-    if source_df.empty:
-        upsert_downsample_lineage(
-            symbol=symbol,
-            target_timeframe=target_timeframe,
-            source_timeframe=DOWNSAMPLE_SOURCE_TIMEFRAME,
-            source_rows=0,
-            total_buckets=0,
-            complete_buckets=0,
-            incomplete_buckets=0,
-            last_bucket_open=None,
-            status="no_source_data",
-        )
-        return None, "no_data"
-
-    complete_df, incomplete_df = downsample_ohlcv_frame(
-        source_df, target_timeframe=target_timeframe
-    )
-    last_bucket_open = (
-        complete_df.index[-1].to_pydatetime().astimezone(timezone.utc)
-        if not complete_df.empty
-        else None
-    )
-
-    upsert_downsample_lineage(
-        symbol=symbol,
         target_timeframe=target_timeframe,
-        source_timeframe=DOWNSAMPLE_SOURCE_TIMEFRAME,
-        source_rows=len(source_df),
-        total_buckets=len(complete_df) + len(incomplete_df),
-        complete_buckets=len(complete_df),
-        incomplete_buckets=len(incomplete_df),
-        last_bucket_open=last_bucket_open,
-        status="ok" if not complete_df.empty else "incomplete_only",
     )
 
-    if not incomplete_df.empty:
-        logger.warning(
-            f"[{symbol} {target_timeframe}] Downsample incomplete buckets: {len(incomplete_df)}"
+
+def run_ingest_step(
+    write_api,
+    query_api,
+    *,
+    symbol: str,
+    timeframe: str,
+    since: datetime | None,
+) -> tuple[datetime | None, str]:
+    """
+    timeframe routing boundary:
+    - base timeframe(`1m`,`1h`): exchange ingest
+    - derived timeframe(`1d`,`1w`,`1M`): downsample materialization only
+    """
+    if timeframe in DOWNSAMPLE_TARGET_TIMEFRAMES:
+        return run_downsample_and_save(
+            write_api,
+            query_api,
+            symbol=symbol,
+            target_timeframe=timeframe,
         )
+    return fetch_and_save(write_api, symbol, since, timeframe)
 
-    if complete_df.empty:
-        return None, "no_data"
 
-    export_df = complete_df.copy()
-    export_df["symbol"] = symbol
-    export_df["timeframe"] = target_timeframe
-    write_api.write(
-        bucket=INFLUXDB_BUCKET,
-        org=INFLUXDB_ORG,
-        record=export_df,
-        data_frame_measurement_name="ohlcv",
-        data_frame_tag_columns=["symbol", "timeframe"],
+def run_ingest_step_outcome(
+    write_api,
+    query_api,
+    *,
+    symbol: str,
+    timeframe: str,
+    since: datetime | None,
+) -> IngestExecutionOutcome:
+    """
+    ingest 단계 문자열 결과를 Enum 상태로 정규화한다.
+    """
+    latest_saved_at, raw_result = run_ingest_step(
+        write_api,
+        query_api,
+        symbol=symbol,
+        timeframe=timeframe,
+        since=since,
     )
-    logger.info(
-        f"[{symbol} {target_timeframe}] Downsample saved "
-        f"(source_rows={len(source_df)}, complete={len(complete_df)}, incomplete={len(incomplete_df)})"
+    return IngestExecutionOutcome(
+        latest_saved_at=latest_saved_at,
+        result=parse_ingest_execution_result(raw_result),
     )
-    return last_bucket_open, "saved"
 
 
 def _static_export_candidates(
@@ -1057,37 +1341,31 @@ def _static_export_candidates(
     timeframe: str,
     static_dir: Path | None = None,
 ) -> list[Path]:
-    canonical, legacy = _static_export_paths(
-        kind, symbol, timeframe, static_dir=static_dir
+    """
+    정적 export 후보(canonical/legacy) 경로 반환 래퍼.
+
+    Called from:
+    - build_runtime_manifest wrapper 경유
+    """
+    return export_ops.static_export_candidates(
+        _ctx(),
+        kind=kind,
+        symbol=symbol,
+        timeframe=timeframe,
+        static_dir=static_dir,
     )
-    candidates = [canonical]
-    if legacy is not None:
-        candidates.append(legacy)
-    return candidates
 
 
 def _extract_updated_at_from_files(
     candidates: list[Path],
 ) -> tuple[str | None, str | None]:
-    for path in candidates:
-        if not path.exists():
-            continue
+    """
+    후보 파일의 updated_at 추출 래퍼.
 
-        try:
-            with open(path, "r") as f:
-                payload = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to read static export file {path.name}: {e}")
-            return None, path.name
-
-        updated_at = payload.get("updated_at")
-        if isinstance(updated_at, str) and updated_at:
-            return updated_at, path.name
-
-        logger.warning(f"Invalid updated_at in static export file: {path.name}")
-        return None, path.name
-
-    return None, None
+    Called from:
+    - build_runtime_manifest wrapper 경유
+    """
+    return export_ops.extract_updated_at_from_files(_ctx(), candidates)
 
 
 def build_runtime_manifest(
@@ -1097,121 +1375,35 @@ def build_runtime_manifest(
     now: datetime | None = None,
     static_dir: Path | None = None,
     prediction_health_path: Path | None = None,
-    symbol_activation_entries: dict[str, dict] | None = None,
+    symbol_activation_entries: dict[
+        str, SymbolActivationSnapshot | dict
+    ]
+    | None = None,
 ) -> dict:
     """
-    심볼/타임프레임별 정적 산출물 상태(manifest) 페이로드를 생성한다.
+    runtime manifest 생성 래퍼.
+
+    Called from:
+    - write_runtime_manifest
     """
-    resolved_now = now or datetime.now(timezone.utc)
-    generated_at = resolved_now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    resolved_static_dir = static_dir or STATIC_DIR
-    resolved_prediction_health_path = (
-        prediction_health_path or PREDICTION_HEALTH_FILE
+    serialized_activation_entries: dict[str, dict] | None = None
+    if symbol_activation_entries is not None:
+        serialized_activation_entries = {}
+        for symbol, entry in symbol_activation_entries.items():
+            if isinstance(entry, SymbolActivationSnapshot):
+                serialized_activation_entries[symbol] = entry.to_payload()
+            elif isinstance(entry, dict):
+                serialized_activation_entries[symbol] = entry
+
+    return export_ops.build_runtime_manifest(
+        _ctx(),
+        symbols,
+        timeframes,
+        now=now,
+        static_dir=static_dir,
+        prediction_health_path=prediction_health_path,
+        symbol_activation_entries=serialized_activation_entries,
     )
-    health_entries = _load_prediction_health(
-        path=resolved_prediction_health_path
-    )
-
-    entries: list[dict] = []
-    status_counts: dict[str, int] = {}
-    degraded_count = 0
-    activation_entries = symbol_activation_entries or {}
-    symbol_state_counts: dict[str, int] = {}
-    visible_symbols: set[str] = set()
-
-    for symbol in symbols:
-        activation = activation_entries.get(symbol, {})
-        visibility = (
-            "visible"
-            if activation.get("visibility") != "hidden_backfilling"
-            else "hidden_backfilling"
-        )
-        symbol_state = activation.get("state", "ready_for_serving")
-        is_full_backfilled = bool(
-            activation.get("is_full_backfilled", visibility == "visible")
-        )
-        if visibility == "visible":
-            visible_symbols.add(symbol)
-        symbol_state_counts[symbol_state] = (
-            symbol_state_counts.get(symbol_state, 0) + 1
-        )
-
-        for timeframe in timeframes:
-            history_updated_at, history_file = _extract_updated_at_from_files(
-                _static_export_candidates(
-                    "history", symbol, timeframe, static_dir=resolved_static_dir
-                )
-            )
-            snapshot = evaluate_prediction_status(
-                symbol=symbol,
-                timeframe=timeframe,
-                now=resolved_now,
-                static_dir=resolved_static_dir,
-            )
-            health = health_entries.get(
-                _prediction_health_key(symbol, timeframe), {}
-            )
-            degraded = bool(health.get("degraded", False))
-            raw_failures = health.get("consecutive_failures", 0)
-            try:
-                failure_count = int(raw_failures)
-            except (TypeError, ValueError):
-                failure_count = 0
-            if degraded:
-                degraded_count += 1
-
-            status_counts[snapshot.status] = (
-                status_counts.get(snapshot.status, 0) + 1
-            )
-            entries.append(
-                {
-                    "key": _prediction_health_key(symbol, timeframe),
-                    "symbol": symbol,
-                    "timeframe": timeframe,
-                    "history": {
-                        "updated_at": history_updated_at,
-                        "source_file": history_file,
-                    },
-                    "prediction": {
-                        "status": snapshot.status,
-                        "updated_at": snapshot.updated_at,
-                        "age_minutes": snapshot.age_minutes,
-                        "threshold_minutes": {
-                            "soft": snapshot.soft_limit_minutes,
-                            "hard": snapshot.hard_limit_minutes,
-                        },
-                        "source_detail": snapshot.detail,
-                    },
-                    "degraded": degraded,
-                    "last_prediction_success_at": health.get("last_success_at"),
-                    "last_prediction_failure_at": health.get("last_failure_at"),
-                    "prediction_failure_count": failure_count,
-                    "visibility": visibility,
-                    "symbol_state": symbol_state,
-                    "is_full_backfilled": is_full_backfilled,
-                    "coverage_start_at": activation.get("coverage_start_at"),
-                    "coverage_end_at": activation.get("coverage_end_at"),
-                    "exchange_earliest_at": activation.get("exchange_earliest_at"),
-                    "serve_allowed": (
-                        visibility == "visible"
-                        and snapshot.status in SERVE_ALLOWED_STATUSES
-                    ),
-                }
-            )
-
-    return {
-        "version": 1,
-        "generated_at": generated_at,
-        "entries": entries,
-        "summary": {
-            "entry_count": len(entries),
-            "status_counts": status_counts,
-            "degraded_count": degraded_count,
-            "visible_symbol_count": len(visible_symbols),
-            "hidden_symbol_count": max(0, len(symbols) - len(visible_symbols)),
-            "symbol_state_counts": symbol_state_counts,
-        },
-    }
 
 
 def write_runtime_manifest(
@@ -1221,107 +1413,79 @@ def write_runtime_manifest(
     now: datetime | None = None,
     static_dir: Path | None = None,
     prediction_health_path: Path | None = None,
-    symbol_activation_entries: dict[str, dict] | None = None,
+    symbol_activation_entries: dict[
+        str, SymbolActivationSnapshot | dict
+    ]
+    | None = None,
     path: Path | None = None,
 ) -> None:
-    resolved_path = path or MANIFEST_FILE
-    payload = build_runtime_manifest(
+    """
+    runtime manifest 저장 래퍼.
+
+    Called from:
+    - run_worker() export stage 완료 시점
+    """
+    serialized_activation_entries: dict[str, dict] | None = None
+    if symbol_activation_entries is not None:
+        serialized_activation_entries = {}
+        for symbol, entry in symbol_activation_entries.items():
+            if isinstance(entry, SymbolActivationSnapshot):
+                serialized_activation_entries[symbol] = entry.to_payload()
+            elif isinstance(entry, dict):
+                serialized_activation_entries[symbol] = entry
+
+    export_ops.write_runtime_manifest(
+        _ctx(),
         symbols,
         timeframes,
         now=now,
         static_dir=static_dir,
         prediction_health_path=prediction_health_path,
-        symbol_activation_entries=symbol_activation_entries,
+        symbol_activation_entries=serialized_activation_entries,
+        path=path,
     )
-    atomic_write_json(resolved_path, payload, indent=2)
-    logger.info(f"Runtime manifest updated: {resolved_path}")
 
 
 def _query_last_timestamp(query_api, query: str) -> datetime | None:
-    result = query_api.query(query=query)
-    if len(result) == 0 or len(result[0].records) == 0:
-        return None
-    return result[0].records[0].get_time()
+    """
+    last timestamp 쿼리 래퍼.
+
+    Called from:
+    - get_last_timestamp wrapper
+    """
+    return ingest_ops.query_last_timestamp(query_api, query)
 
 
 def _query_first_timestamp(query_api, query: str) -> datetime | None:
-    result = query_api.query(query=query)
-    if len(result) == 0 or len(result[0].records) == 0:
-        return None
-    return result[0].records[0].get_time()
-
-
-def get_first_timestamp(
-    query_api, symbol: str, timeframe: str
-) -> datetime | None:
-    query = f"""
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: 0)
-      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
-      |> filter(fn: (r) => r["symbol"] == "{symbol}")
-      |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
-      |> first(column: "_time")
     """
-    legacy_query = f"""
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: 0)
-      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
-      |> filter(fn: (r) => r["symbol"] == "{symbol}")
-      |> filter(fn: (r) => not exists r["timeframe"])
-      |> first(column: "_time")
-    """
+    first timestamp 쿼리 래퍼.
 
-    try:
-        first_time = _query_first_timestamp(query_api, query)
-        if first_time is None and timeframe == PRIMARY_TIMEFRAME:
-            first_time = _query_first_timestamp(query_api, legacy_query)
-        return first_time
-    except Exception as e:
-        logger.error(
-            f"[{symbol} {timeframe}] DB earliest 조회 중 에러: {e}"
-        )
-        return None
+    Called from:
+    - get_first_timestamp wrapper
+    """
+    return ingest_ops.query_first_timestamp(query_api, query)
 
 
-def get_last_timestamp(
-    query_api, symbol, timeframe, *, full_range: bool = False
-):
+def get_first_timestamp(query_api, symbol: str, timeframe: str) -> datetime | None:
     """
-    InfluxDB에서 해당 코인/타임프레임의 가장 마지막 데이터 시간(Timestamp)을 조회
-    """
-    lookback_days = _lookback_days_for_timeframe(timeframe)
-    range_start = "0" if full_range else f"-{lookback_days}d"
-    query = f"""
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: {range_start})
-      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
-      |> filter(fn: (r) => r["symbol"] == "{symbol}")
-      |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
-      |> last(column: "_time")
-    """
-    legacy_query = f"""
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: {range_start})
-      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
-      |> filter(fn: (r) => r["symbol"] == "{symbol}")
-      |> filter(fn: (r) => not exists r["timeframe"])
-      |> last(column: "_time")
-    """
+    DB earliest 조회 래퍼.
 
-    try:
-        last_time = _query_last_timestamp(query_api, query)
-        # B-003 전환 직후(legacy row만 존재)에도 과도한 초기 백필을 피하기 위한 fallback.
-        if last_time is None and timeframe == PRIMARY_TIMEFRAME:
-            last_time = _query_last_timestamp(query_api, legacy_query)
-        if last_time is not None:
-            # InfluxDB 시간은 UTC timezone이 포함됨.
-            return last_time
-    except Exception as e:
-        logger.error(
-            f"[{symbol} {timeframe}] DB 조회 중 에러 (아마 데이터 없음): {e}"
-        )
+    Called from:
+    - build_symbol_activation_entry
+    """
+    return ingest_ops.get_first_timestamp(_ctx(), query_api, symbol, timeframe)
 
-    return None
+
+def get_last_timestamp(query_api, symbol, timeframe, *, full_range: bool = False):
+    """
+    DB latest 조회 래퍼.
+
+    Called from:
+    - run_worker() ingest/detection/activation 판단
+    """
+    return ingest_ops.get_last_timestamp(
+        _ctx(), query_api, symbol, timeframe, full_range=full_range
+    )
 
 
 def get_exchange_earliest_closed_timestamp(
@@ -1331,29 +1495,19 @@ def get_exchange_earliest_closed_timestamp(
     *,
     now: datetime | None = None,
 ) -> datetime | None:
-    try:
-        rows = exchange.fetch_ohlcv(symbol, timeframe, since=0, limit=1)
-    except Exception as e:
-        logger.warning(
-            f"[{symbol} {timeframe}] failed to fetch exchange earliest candle: {e}"
-        )
-        return None
+    """
+    거래소 earliest closed 조회 래퍼.
 
-    if not rows:
-        return None
-
-    try:
-        first_open = datetime.fromtimestamp(
-            int(rows[0][0]) / 1000, tz=timezone.utc
-        )
-    except (TypeError, ValueError):
-        return None
-
-    resolved_now = now or datetime.now(timezone.utc)
-    last_closed = last_closed_candle_open(resolved_now, timeframe)
-    if first_open > last_closed:
-        return None
-    return first_open
+    Called from:
+    - run_worker() symbol activation 계산
+    """
+    return ingest_ops.get_exchange_earliest_closed_timestamp(
+        _ctx(),
+        exchange,
+        symbol,
+        timeframe,
+        now=now,
+    )
 
 
 def get_exchange_latest_closed_timestamp(
@@ -1363,29 +1517,19 @@ def get_exchange_latest_closed_timestamp(
     *,
     now: datetime | None = None,
 ) -> datetime | None:
-    resolved_now = now or datetime.now(timezone.utc)
-    expected_latest_closed = last_closed_candle_open(resolved_now, timeframe)
-    try:
-        rows = exchange.fetch_ohlcv(symbol, timeframe, limit=3)
-    except Exception as e:
-        logger.warning(
-            f"[{symbol} {timeframe}] failed to fetch exchange latest candle: {e}"
-        )
-        return None
+    """
+    거래소 latest closed 조회 래퍼.
 
-    latest_closed: datetime | None = None
-    for row in rows:
-        try:
-            open_at = datetime.fromtimestamp(int(row[0]) / 1000, tz=timezone.utc)
-        except (TypeError, ValueError, IndexError):
-            continue
-
-        if open_at > expected_latest_closed:
-            continue
-        if latest_closed is None or open_at > latest_closed:
-            latest_closed = open_at
-
-    return latest_closed
+    Called from:
+    - evaluate_detection_gate
+    """
+    return ingest_ops.get_exchange_latest_closed_timestamp(
+        _ctx(),
+        exchange,
+        symbol,
+        timeframe,
+        now=now,
+    )
 
 
 def evaluate_detection_gate(
@@ -1397,36 +1541,45 @@ def evaluate_detection_gate(
     now: datetime,
     last_saved: datetime | None = None,
 ) -> tuple[bool, str]:
-    if timeframe in DOWNSAMPLE_TARGET_TIMEFRAMES:
-        expected_latest_closed = last_closed_candle_open(now, timeframe)
-        target_last = get_last_timestamp(
-            query_api,
-            symbol,
-            timeframe,
-            full_range=True,
-        )
-        if target_last is not None and target_last >= expected_latest_closed:
-            return False, "already_materialized"
-        return True, "materialization_due"
+    """
+    boundary+detection gate 판단 래퍼.
 
-    latest_closed = get_exchange_latest_closed_timestamp(
+    Called from:
+    - run_worker() scheduler_mode=boundary
+    """
+    decision = ingest_ops.evaluate_detection_gate(
+        _ctx(),
+        query_api,
         detection_exchange,
-        symbol,
-        timeframe,
+        symbol=symbol,
+        timeframe=timeframe,
         now=now,
+        last_saved=last_saved,
     )
-    if latest_closed is None:
-        # 탐지 실패 시 skip 대신 실행 경로로 보수적으로 처리한다.
-        return True, "detection_unavailable_fallback_run"
+    return decision.should_run, decision.reason.value
 
-    reference_last = (
-        last_saved
-        if last_saved is not None
-        else get_last_timestamp(query_api, symbol, timeframe)
+
+def evaluate_detection_gate_decision(
+    query_api,
+    detection_exchange,
+    *,
+    symbol: str,
+    timeframe: str,
+    now: datetime,
+    last_saved: datetime | None = None,
+) -> DetectionGateDecision:
+    """
+    detection gate 결과를 DTO로 반환한다.
+    """
+    return ingest_ops.evaluate_detection_gate(
+        _ctx(),
+        query_api,
+        detection_exchange,
+        symbol=symbol,
+        timeframe=timeframe,
+        now=now,
+        last_saved=last_saved,
     )
-    if reference_last is not None and reference_last >= latest_closed:
-        return False, "no_new_closed_candle"
-    return True, "new_closed_candle"
 
 
 def build_symbol_activation_entry(
@@ -1435,271 +1588,75 @@ def build_symbol_activation_entry(
     symbol: str,
     now: datetime,
     exchange_earliest: datetime | None,
-    existing_entry: dict | None = None,
-) -> dict:
-    canonical_tf = DOWNSAMPLE_SOURCE_TIMEFRAME
-    db_first = get_first_timestamp(query_api, symbol, canonical_tf)
-    db_last = get_last_timestamp(
-        query_api, symbol, canonical_tf, full_range=True
+    existing_entry: SymbolActivationSnapshot | dict | None = None,
+) -> SymbolActivationSnapshot:
+    """
+    symbol activation 상태 계산 래퍼.
+
+    Called from:
+    - run_worker() per symbol
+    """
+    return ingest_ops.build_symbol_activation_entry(
+        _ctx(),
+        query_api=query_api,
+        symbol=symbol,
+        now=now,
+        exchange_earliest=exchange_earliest,
+        existing_entry=existing_entry,
     )
-
-    prev_entry = existing_entry if isinstance(existing_entry, dict) else {}
-    prev_ready = bool(prev_entry.get("is_full_backfilled", False))
-    tolerance = timedelta(hours=max(0, FULL_BACKFILL_TOLERANCE_HOURS))
-
-    if prev_ready and db_first is not None:
-        state = "ready_for_serving"
-        visibility = "visible"
-        is_full_backfilled = True
-    elif db_first is None:
-        state = "registered"
-        visibility = "hidden_backfilling"
-        is_full_backfilled = False
-    elif exchange_earliest is None:
-        state = "backfilling"
-        visibility = "hidden_backfilling"
-        is_full_backfilled = False
-    else:
-        starts_covered = db_first <= (exchange_earliest + tolerance)
-        is_full_backfilled = starts_covered
-        if starts_covered:
-            state = "ready_for_serving"
-            visibility = "visible"
-        else:
-            state = "backfilling"
-            visibility = "hidden_backfilling"
-
-    ready_at = prev_entry.get("ready_at")
-    if is_full_backfilled and not ready_at:
-        ready_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    return {
-        "symbol": symbol,
-        "state": state,
-        "visibility": visibility,
-        "is_full_backfilled": is_full_backfilled,
-        "coverage_start_at": _format_utc(db_first),
-        "coverage_end_at": _format_utc(db_last),
-        "exchange_earliest_at": _format_utc(exchange_earliest),
-        "ready_at": ready_at,
-        "updated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }
 
 
 def save_history_to_json(df, symbol, timeframe):
     """
-    과거 데이터 정적 파일 생성.
+    history JSON 저장 래퍼.
+
+    Called from:
+    - update_full_history_file wrapper 경유
     """
-    try:
-        export_df = df.copy()
-        export_df["timestamp"] = export_df.index.strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )  # UTC Aware 가정
-
-        json_output = {
-            "symbol": symbol,
-            "data": export_df[
-                ["timestamp", "open", "high", "low", "close", "volume"]
-            ].to_dict(orient="records"),
-            "updated_at": datetime.now(timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            ),
-            "timeframe": timeframe,
-            "type": f"history_{timeframe}",
-        }
-
-        canonical_path, legacy_path = _static_export_paths(
-            "history", symbol, timeframe
-        )
-        atomic_write_json(canonical_path, json_output)
-        if legacy_path is not None:
-            atomic_write_json(legacy_path, json_output)
-
-        logger.info(
-            f"[{symbol} {timeframe}] 정적 파일 생성 완료: "
-            f"canonical={canonical_path}, legacy={legacy_path}"
-        )
-    except Exception as e:
-        logger.error(f"[{symbol} {timeframe}] 정적 파일 생성 실패: {e}")
+    export_ops.save_history_to_json(_ctx(), df, symbol, timeframe)
 
 
 def fetch_and_save(
     write_api, symbol, since_ts, timeframe
 ) -> tuple[datetime | None, str]:
     """
-    ccxt로 데이터 가져와서 InfluxDB에 저장
+    base ingest 실행 래퍼.
+
+    Called from:
+    - run_ingest_step
     """
-    exchange = ccxt.binance()
-    exchange.enableRateLimit = True
-
-    # since_ts가 datetime 객체라면 밀리초(int)로 변환 필요
-    if isinstance(since_ts, datetime):
-        since_ms = int(since_ts.timestamp() * 1000)
-    else:
-        since_ms = int(since_ts)  # 이미 int면 그대로
-
-    try:
-        now = datetime.now(timezone.utc)
-        now_ms = int(now.timestamp() * 1000)
-        last_closed_open = last_closed_candle_open(now, timeframe)
-        last_closed_ms = int(last_closed_open.timestamp() * 1000)
-
-        df, page_count = _fetch_ohlcv_paginated(
-            exchange=exchange,
-            symbol=symbol,
-            timeframe=timeframe,
-            since_ms=since_ms,
-            until_ms=now_ms,
-        )
-        if df.empty:
-            logger.info(f"[{symbol} {timeframe}] 새로운 데이터 없음.")
-            return None, "no_data"
-
-        # 미완료 캔들은 저장하지 않는다.
-        before_filter = len(df)
-        df = df[df["timestamp"] <= last_closed_ms]
-        dropped = before_filter - len(df)
-        if dropped > 0:
-            logger.info(
-                f"[{symbol} {timeframe}] 미완료 캔들 {dropped}개 제외 "
-                f"(last_closed_open={last_closed_open.strftime('%Y-%m-%dT%H:%M:%SZ')})"
-            )
-        if df.empty:
-            logger.info(
-                f"[{symbol} {timeframe}] 저장 가능한 closed candle 없음 "
-                f"(last_closed_open={last_closed_open.strftime('%Y-%m-%dT%H:%M:%SZ')})."
-            )
-            return None, "no_data"
-
-        gaps = _detect_gaps_from_ms_timestamps(
-            timestamps_ms=df["timestamp"].tolist(), timeframe=timeframe
-        )
-        if gaps:
-            total_missing = sum(gap.missing_count for gap in gaps)
-            first_gap = gaps[0]
-            logger.warning(
-                f"[{symbol} {timeframe}] Gap 감지: windows={len(gaps)}, missing={total_missing}, "
-                f"first={first_gap.start_open.strftime('%Y-%m-%dT%H:%M:%SZ')}~"
-                f"{first_gap.end_open.strftime('%Y-%m-%dT%H:%M:%SZ')}"
-            )
-            df, refill_pages = _refill_detected_gaps(
-                exchange=exchange,
-                symbol=symbol,
-                timeframe=timeframe,
-                source_df=df,
-                gaps=gaps,
-                last_closed_ms=last_closed_ms,
-            )
-            if refill_pages > 0:
-                logger.info(
-                    f"[{symbol} {timeframe}] Gap refill 시도 완료 (pages={refill_pages})"
-                )
-
-            remaining_gaps = _detect_gaps_from_ms_timestamps(
-                timestamps_ms=df["timestamp"].tolist(),
-                timeframe=timeframe,
-            )
-            if remaining_gaps:
-                remaining_missing = sum(
-                    gap.missing_count for gap in remaining_gaps
-                )
-                logger.warning(
-                    f"[{symbol} {timeframe}] Gap 잔존: windows={len(remaining_gaps)}, missing={remaining_missing}"
-                )
-            else:
-                logger.info(f"[{symbol} {timeframe}] Gap refill 완료.")
-
-        df["timestamp"] = pd.to_datetime(
-            df["timestamp"], unit="ms"
-        ).dt.tz_localize("UTC")
-        df.set_index("timestamp", inplace=True)
-
-        # 태그 추가
-        df["symbol"] = symbol
-        df["timeframe"] = timeframe
-
-        # 저장
-        write_api.write(
-            bucket=INFLUXDB_BUCKET,
-            org=INFLUXDB_ORG,
-            record=df,
-            data_frame_measurement_name="ohlcv",
-            data_frame_tag_columns=["symbol", "timeframe"],
-        )
-        logger.info(
-            f"[{symbol} {timeframe}] {len(df)}개 봉 저장 완료 (pages={page_count}, Last={df.index[-1]})"
-        )
-        latest_saved_at = df.index[-1].to_pydatetime().astimezone(timezone.utc)
-
-        # TODO: SSG 파일 생성을 DB 조회 후 덮어쓰기로 구현?
-        return latest_saved_at, "saved"
-
-    except Exception as e:
-        logger.error(f"[{symbol} {timeframe}] 수집 실패: {e}")
-        return None, "failed"
+    return ingest_ops.fetch_and_save(_ctx(), write_api, symbol, since_ts, timeframe)
 
 
 def _fetch_ohlcv_paginated(
     exchange, symbol: str, timeframe: str, since_ms: int, until_ms: int
 ) -> tuple[pd.DataFrame, int]:
-    fetch_limit = 1000
-    timeframe_ms = exchange.parse_timeframe(timeframe) * 1000
-    cursor = int(since_ms)
-    page_count = 0
-    chunks: list[pd.DataFrame] = []
+    """
+    거래소 페이지 조회 래퍼.
 
-    while cursor <= until_ms:
-        ohlcv = exchange.fetch_ohlcv(
-            symbol, timeframe, since=cursor, limit=fetch_limit
-        )
-        if not ohlcv:
-            break
-
-        page_count += 1
-        chunk = pd.DataFrame(
-            ohlcv,
-            columns=[
-                "timestamp",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-            ],
-        )
-        chunk = chunk[chunk["timestamp"] <= until_ms]
-        if chunk.empty:
-            break
-        chunks.append(chunk)
-
-        last_ts = int(chunk.iloc[-1]["timestamp"])
-        if last_ts < cursor:
-            break
-
-        next_cursor = last_ts + timeframe_ms
-        if len(ohlcv) < fetch_limit or next_cursor <= cursor:
-            break
-
-        cursor = next_cursor
-
-    if not chunks:
-        empty_df = pd.DataFrame(
-            columns=["timestamp", "open", "high", "low", "close", "volume"]
-        )
-        return empty_df, page_count
-
-    merged = pd.concat(chunks, ignore_index=True)
-    merged.drop_duplicates(subset=["timestamp"], keep="last", inplace=True)
-    merged.sort_values(by="timestamp", inplace=True)
-    return merged, page_count
+    Called from:
+    - tests/호환 코드 경유
+    """
+    return ingest_ops.fetch_ohlcv_paginated(
+        _ctx(),
+        exchange=exchange,
+        symbol=symbol,
+        timeframe=timeframe,
+        since_ms=since_ms,
+        until_ms=until_ms,
+    )
 
 
 def _detect_gaps_from_ms_timestamps(timestamps_ms: list[int], timeframe: str):
-    candle_opens = [
-        datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc)
-        for ts in timestamps_ms
-    ]
-    return detect_timeframe_gaps(candle_opens, timeframe)
+    """
+    gap 탐지 래퍼.
+
+    Called from:
+    - tests/호환 코드 경유
+    """
+    return ingest_ops.detect_gaps_from_ms_timestamps(
+        _ctx(), timestamps_ms=timestamps_ms, timeframe=timeframe
+    )
 
 
 def _refill_detected_gaps(
@@ -1710,171 +1667,577 @@ def _refill_detected_gaps(
     gaps,
     last_closed_ms: int,
 ) -> tuple[pd.DataFrame, int]:
-    if not gaps:
-        return source_df, 0
+    """
+    gap refill 래퍼.
 
-    refill_since_ms = int(gaps[0].start_open.timestamp() * 1000)
-    refill_df, refill_pages = _fetch_ohlcv_paginated(
+    Called from:
+    - tests/호환 코드 경유
+    """
+    return ingest_ops.refill_detected_gaps(
+        _ctx(),
         exchange=exchange,
         symbol=symbol,
         timeframe=timeframe,
-        since_ms=refill_since_ms,
-        until_ms=last_closed_ms,
+        source_df=source_df,
+        gaps=gaps,
+        last_closed_ms=last_closed_ms,
     )
-    if refill_df.empty:
-        return source_df, refill_pages
-
-    merged = pd.concat([source_df, refill_df], ignore_index=True)
-    merged.drop_duplicates(subset=["timestamp"], keep="last", inplace=True)
-    merged.sort_values(by="timestamp", inplace=True)
-    return merged, refill_pages
 
 
-def run_prediction_and_save(
-    write_api, symbol, timeframe
-) -> tuple[str, str | None]:
-    """모델 로드 -> 예측 -> 저장"""
-    if not prediction_enabled_for_timeframe(timeframe):
-        logger.info(
-            f"[{symbol} {timeframe}] prediction disabled by policy. "
-            "Skipping prediction artifact generation."
-        )
-        return "skipped", None
+def run_prediction_and_save(write_api, symbol, timeframe) -> tuple[str, str | None]:
+    """
+    prediction 실행 래퍼.
 
-    safe_symbol = symbol.replace("/", "_")
-    model_candidates = [
-        MODELS_DIR / f"model_{safe_symbol}_{timeframe}.json",
-        MODELS_DIR / f"model_{safe_symbol}.json",
-    ]
-    model_file = next(
-        (candidate for candidate in model_candidates if candidate.exists()),
-        None,
+    Called from:
+    - run_worker() predict stage
+    """
+    return predict_ops.run_prediction_and_save(_ctx(), write_api, symbol, timeframe)
+
+
+def run_prediction_and_save_outcome(
+    write_api,
+    symbol: str,
+    timeframe: str,
+) -> PredictionExecutionOutcome:
+    """
+    prediction 단계 문자열 결과를 Enum 상태로 정규화한다.
+    """
+    raw_result, prediction_error = run_prediction_and_save(
+        write_api,
+        symbol,
+        timeframe,
     )
-    if model_file is None:
-        logger.warning(f"[{symbol} {timeframe}] 모델 없음")
-        return "failed", "model_missing"
-
-    try:
-        with open(model_file, "r") as fin:
-            model = model_from_json(fin.read())
-
-        # 예측 시작 시점을 "다음 캔들 경계"로 정렬한다.
-        # 예: 10:37 + 1h -> 11:00 시작
-        now = datetime.now(timezone.utc)
-        prediction_start = next_timeframe_boundary(now, timeframe)
-        prediction_freq = timeframe_to_pandas_freq(timeframe)
-        future = pd.DataFrame(
-            {
-                "ds": pd.date_range(
-                    start=prediction_start, periods=24, freq=prediction_freq
-                )
-            }
-        )
-        future["ds"] = future["ds"].dt.tz_localize(None)  # prophet은 tz-naive
-
-        # As-Is: 여기서는 과거 데이터 없이 모델이 기억하는 패턴으로만 예측
-        # To-Do: Training Worker 구축
-        forecast = model.predict(future)
-
-        # 필요한 데이터만 추출 (경계 기준으로 생성했으므로 head만 사용)
-        next_forecast = forecast.head(24).copy()
-
-        if next_forecast.empty:
-            logger.warning(f"[{symbol} {timeframe}] 예측 범위 생성 실패.")
-            return "failed", "empty_forecast"
-
-        # 저장 (SSG)
-        export_data = next_forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]]
-        export_data["ds"] = pd.to_datetime(export_data["ds"]).dt.strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
-
-        export_data.rename(
-            columns={
-                "ds": "timestamp",
-                "yhat": "price",
-                "yhat_lower": "lower_bound",
-                "yhat_upper": "upper_bound",
-            },
-            inplace=True,
-        )
-
-        json_output = {
-            "symbol": symbol,
-            "timeframe": timeframe,
-            "updated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),  # 생성 시점 기록
-            "forecast": export_data.to_dict(orient="records"),
-        }
-
-        # 파일 저장 (전환 기간: canonical + legacy 동시 유지)
-        canonical_path, legacy_path = _static_export_paths(
-            "prediction", symbol, timeframe
-        )
-        atomic_write_json(canonical_path, json_output, indent=2)
-        if legacy_path is not None:
-            atomic_write_json(legacy_path, json_output, indent=2)
-
-        logger.info(
-            f"[{symbol} {timeframe}] SSG 파일 생성 완료: canonical={canonical_path}, legacy={legacy_path} "
-            f"(start={prediction_start.strftime('%Y-%m-%dT%H:%M:%SZ')}, freq={timeframe})"
-        )
-
-        # 저장(DB)
-        next_forecast["ds"] = pd.to_datetime(
-            next_forecast["ds"]
-        ).dt.tz_localize(
-            "UTC"
-        )  # 불필요한 연산 같기는 한데,,, 방어용???
-        next_forecast = next_forecast[
-            ["ds", "yhat", "yhat_lower", "yhat_upper"]
-        ]
-        next_forecast.rename(columns={"ds": "timestamp"}, inplace=True)
-        next_forecast.set_index(
-            "timestamp", inplace=True
-        )  # InfluxDB는 index가 timestamp
-        next_forecast["symbol"] = symbol
-        next_forecast["timeframe"] = timeframe
-
-        write_api.write(
-            bucket=INFLUXDB_BUCKET,
-            org=INFLUXDB_ORG,
-            record=next_forecast,
-            data_frame_measurement_name="prediction",
-            data_frame_tag_columns=["symbol", "timeframe"],
-        )
-        logger.info(
-            f"[{symbol} {timeframe}] {len(next_forecast)}개 예측 저장 완료"
-        )
-        return "ok", None
-
-    except Exception as e:
-        logger.error(f"[{symbol} {timeframe}] 예측 에러: {e}")
-        return "failed", f"prediction_error: {e}"
+    return PredictionExecutionOutcome(
+        result=parse_prediction_execution_result(raw_result),
+        error=prediction_error,
+    )
 
 
-def update_full_history_file(query_api, symbol, timeframe):
-    """DB에서 최근 30일치 데이터를 긁어와서 history json 파일 갱신"""
-    lookback_days = _lookback_days_for_timeframe(timeframe)
-    query = f"""
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -{lookback_days}d)
-      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
-      |> filter(fn: (r) => r["symbol"] == "{symbol}")
-      |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
-      |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-      |> sort(columns: ["_time"], desc: false)
+def update_full_history_file(query_api, symbol, timeframe) -> bool:
+    """
+    history export 실행 래퍼.
+
+    Called from:
+    - run_worker() export stage
+    """
+    return export_ops.update_full_history_file(_ctx(), query_api, symbol, timeframe)
+
+
+@dataclass
+class WorkerPersistentState:
+    """
+    cycle 간 유지되는 runtime 상태 집합.
+    """
+
+    symbol_activation_entries: dict[str, SymbolActivationSnapshot]
+    ingest_watermarks: dict[str, WatermarkCursor | str]
+    predict_watermarks: dict[str, WatermarkCursor | str]
+    export_watermarks: dict[str, WatermarkCursor | str]
+
+
+def _coerce_storage_guard_level(raw_level: str) -> StorageGuardLevel:
+    """
+    문자열 storage level을 Enum으로 정규화한다.
     """
     try:
-        df = query_api.query_data_frame(query)
-        if not df.empty:
-            df.rename(columns={"_time": "timestamp"}, inplace=True)  # UTC Aware
-            df.set_index("timestamp", inplace=True)
-            save_history_to_json(df, symbol, timeframe)
-    except Exception as e:
-        logger.error(f"[{symbol} {timeframe}] History 갱신 중 에러: {e}")
+        return StorageGuardLevel(raw_level)
+    except ValueError:
+        logger.warning(
+            "[Storage Guard] unknown level=%s, fallback to normal.",
+            raw_level,
+        )
+        return StorageGuardLevel.NORMAL
+
+
+def _log_stage_failure_context(
+    stage: str,
+    *,
+    symbol: str,
+    timeframe: str,
+    now: datetime,
+    last_closed_ts: datetime | None,
+    error: str,
+    extra: dict | None = None,
+) -> None:
+    """
+    단계 실패 시 공통 컨텍스트 로그를 남긴다.
+    """
+    context = {
+        "stage": stage,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "now": _format_utc(now),
+        "last_closed_ts": _format_utc(last_closed_ts),
+    }
+    if isinstance(extra, dict) and extra:
+        context.update(extra)
+    logger.error("Stage failure context=%s error=%s", context, error)
+
+
+def _prepare_symbol_activation_for_cycle(
+    *,
+    run_ingest_stage: bool,
+    query_api,
+    activation_exchange,
+    symbol: str,
+    cycle_now: datetime,
+    state: WorkerPersistentState,
+) -> tuple[SymbolActivationSnapshot, datetime | None, bool]:
+    """
+    심볼 activation 상태를 현재 cycle 기준으로 준비한다.
+    """
+    exchange_earliest: datetime | None = None
+    activation_loaded = False
+
+    if run_ingest_stage:
+        exchange_earliest = get_exchange_earliest_closed_timestamp(
+            activation_exchange,
+            symbol,
+            DOWNSAMPLE_SOURCE_TIMEFRAME,
+            now=cycle_now,
+        )
+        activation = build_symbol_activation_entry(
+            query_api=query_api,
+            symbol=symbol,
+            now=cycle_now,
+            exchange_earliest=exchange_earliest,
+            existing_entry=state.symbol_activation_entries.get(symbol),
+        )
+        state.symbol_activation_entries[symbol] = activation
+        activation_loaded = True
+        return activation, exchange_earliest, activation_loaded
+
+    loaded_activation = state.symbol_activation_entries.get(symbol)
+    if isinstance(loaded_activation, SymbolActivationSnapshot):
+        activation_loaded = True
+        return loaded_activation, exchange_earliest, activation_loaded
+
+    if isinstance(loaded_activation, dict):
+        normalized = SymbolActivationSnapshot.from_payload(
+            symbol=symbol,
+            payload=loaded_activation,
+            fallback_now=cycle_now,
+        )
+        state.symbol_activation_entries[symbol] = normalized
+        activation_loaded = True
+        return normalized, exchange_earliest, activation_loaded
+
+    default_activation = _default_symbol_activation_entry(symbol, cycle_now)
+    state.symbol_activation_entries[symbol] = default_activation
+    return default_activation, exchange_earliest, activation_loaded
+
+
+def _run_ingest_timeframe_step(
+    *,
+    write_api,
+    query_api,
+    activation_exchange,
+    ingest_state_store: IngestStateStore,
+    symbol: str,
+    timeframe: str,
+    cycle_now: datetime,
+    scheduler_mode: str,
+    symbol_activation: SymbolActivationSnapshot,
+    exchange_earliest: datetime | None,
+    disk_level: StorageGuardLevel,
+    disk_usage_percent: float | None,
+    state: WorkerPersistentState,
+    cycle_since_source_counts: dict[str, int],
+    cycle_detection_skip_counts: dict[str, int],
+    cycle_detection_run_counts: dict[str, int],
+) -> tuple[bool, SymbolActivationSnapshot]:
+    """
+    ingest 단계의 symbol+timeframe 처리를 수행한다.
+
+    Returns:
+      - tuple[bool, SymbolActivationSnapshot]
+        1) publish 단계 진행 여부
+        2) 최신 symbol activation 스냅샷
+    """
+    state_since = ingest_state_store.get_last_closed(symbol, timeframe)
+    last_time = get_last_timestamp(query_api, symbol, timeframe)
+
+    if scheduler_mode == "boundary":
+        gate_decision = evaluate_detection_gate_decision(
+            query_api,
+            activation_exchange,
+            symbol=symbol,
+            timeframe=timeframe,
+            now=cycle_now,
+            last_saved=last_time,
+        )
+        gate_reason = gate_decision.reason.value
+        if not gate_decision.should_run:
+            cycle_detection_skip_counts[gate_reason] = (
+                cycle_detection_skip_counts.get(gate_reason, 0) + 1
+            )
+            logger.info(
+                f"[{symbol} {timeframe}] detection gate skip "
+                f"(reason={gate_reason})"
+            )
+            return False, symbol_activation
+        cycle_detection_run_counts[gate_reason] = (
+            cycle_detection_run_counts.get(gate_reason, 0) + 1
+        )
+
+    lookback_days = _lookback_days_for_timeframe(timeframe)
+    force_rebootstrap = False
+    min_required_rows = _minimum_required_lookback_rows(
+        timeframe,
+        lookback_days,
+    )
+    if min_required_rows is not None:
+        close_count = get_lookback_close_count(
+            query_api,
+            symbol,
+            timeframe,
+            lookback_days,
+        )
+        if close_count is not None and close_count < min_required_rows:
+            force_rebootstrap = True
+            logger.warning(
+                f"[{symbol} {timeframe}] canonical coverage underfilled: "
+                f"close_count={close_count} < min_required={min_required_rows}. "
+                "Rebootstrapping from lookback."
+            )
+
+    since, since_source_text = resolve_ingest_since(
+        symbol=symbol,
+        timeframe=timeframe,
+        state_since=state_since,
+        last_time=last_time,
+        disk_level=disk_level.value,
+        force_rebootstrap=force_rebootstrap,
+        bootstrap_since=(
+            exchange_earliest
+            if timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
+            else None
+        ),
+        enforce_full_backfill=(
+            timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
+            and symbol_activation.visibility == SymbolVisibility.HIDDEN_BACKFILLING
+        ),
+        now=cycle_now,
+    )
+    cycle_since_source_counts[since_source_text] = (
+        cycle_since_source_counts.get(since_source_text, 0) + 1
+    )
+    since_source = parse_ingest_since_source(since_source_text)
+
+    if since_source == IngestSinceSource.BLOCKED_STORAGE_GUARD:
+        logger.warning(
+            f"[{symbol} {timeframe}] initial backfill blocked "
+            f"by storage guard (usage={disk_usage_percent}%)."
+        )
+        ingest_state_store.upsert(
+            symbol,
+            timeframe,
+            last_closed_ts=state_since,
+            status=IngestSinceSource.BLOCKED_STORAGE_GUARD.value,
+        )
+        return False, symbol_activation
+
+    if is_rebootstrap_source(since_source):
+        if (
+            since_source == IngestSinceSource.BOOTSTRAP_EXCHANGE_EARLIEST
+            or since_source
+            == IngestSinceSource.FULL_BACKFILL_EXCHANGE_EARLIEST
+            or since_source
+            == IngestSinceSource.STATE_DRIFT_REBOOTSTRAP_EXCHANGE_EARLIEST
+        ):
+            logger.info(
+                f"[{symbol} {timeframe}] 초기 데이터 수집 시작 "
+                f"(source={since_source_text}, since={_format_utc(since)})"
+            )
+        else:
+            logger.info(
+                f"[{symbol} {timeframe}] 초기 데이터 수집 시작 "
+                f"({lookback_days}일 전부터, source={since_source_text})"
+            )
+
+    ingest_outcome = run_ingest_step_outcome(
+        write_api,
+        query_api,
+        symbol=symbol,
+        timeframe=timeframe,
+        since=since,
+    )
+    if ingest_outcome.result == IngestExecutionResult.SAVED:
+        ingest_state_store.upsert(
+            symbol,
+            timeframe,
+            last_closed_ts=ingest_outcome.latest_saved_at,
+            status="ok",
+        )
+        if ingest_outcome.latest_saved_at is not None:
+            _upsert_watermark(
+                state.ingest_watermarks,
+                symbol=symbol,
+                timeframe=timeframe,
+                closed_at=ingest_outcome.latest_saved_at,
+            )
+    elif ingest_outcome.result == IngestExecutionResult.FAILED:
+        ingest_state_store.upsert(
+            symbol,
+            timeframe,
+            last_closed_ts=state_since,
+            status="failed",
+        )
+        _log_stage_failure_context(
+            "ingest",
+            symbol=symbol,
+            timeframe=timeframe,
+            now=cycle_now,
+            last_closed_ts=state_since,
+            error="ingest_result_failed",
+            extra={
+                "since_source": since_source_text,
+                "requested_since": _format_utc(since),
+            },
+        )
+    elif ingest_outcome.result == IngestExecutionResult.UNSUPPORTED:
+        ingest_state_store.upsert(
+            symbol,
+            timeframe,
+            last_closed_ts=state_since,
+            status="failed",
+        )
+        _log_stage_failure_context(
+            "ingest",
+            symbol=symbol,
+            timeframe=timeframe,
+            now=cycle_now,
+            last_closed_ts=state_since,
+            error="unsupported_timeframe",
+            extra={"requested_since": _format_utc(since)},
+        )
+
+    if (
+        timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
+        and symbol_activation.visibility == SymbolVisibility.HIDDEN_BACKFILLING
+    ):
+        refreshed_activation = build_symbol_activation_entry(
+            query_api=query_api,
+            symbol=symbol,
+            now=cycle_now,
+            exchange_earliest=exchange_earliest,
+            existing_entry=state.symbol_activation_entries.get(symbol),
+        )
+        state.symbol_activation_entries[symbol] = refreshed_activation
+        if (
+            refreshed_activation.visibility
+            == SymbolVisibility.HIDDEN_BACKFILLING
+        ):
+            _remove_static_exports_for_symbol(
+                symbol,
+                TIMEFRAMES,
+                static_dir=STATIC_DIR,
+            )
+        return True, refreshed_activation
+
+    return True, symbol_activation
+
+
+def _run_publish_timeframe_step(
+    *,
+    write_api,
+    query_api,
+    symbol: str,
+    timeframe: str,
+    cycle_now: datetime,
+    symbol_activation: SymbolActivationSnapshot,
+    run_export_stage: bool,
+    run_predict_stage: bool,
+    state: WorkerPersistentState,
+    cycle_export_gate_skip_counts: dict[str, int],
+    cycle_predict_gate_skip_counts: dict[str, int],
+) -> None:
+    """
+    publish 단계의 symbol+timeframe 처리를 수행한다.
+    """
+    if symbol_activation.visibility == SymbolVisibility.HIDDEN_BACKFILLING:
+        logger.info(
+            f"[{symbol}] activation state={symbol_activation.state.value} "
+            "-> skip static export/prediction for FE hide policy."
+        )
+        _remove_static_exports_for_symbol(
+            symbol,
+            [timeframe],
+            static_dir=STATIC_DIR,
+        )
+        return
+
+    if run_export_stage:
+        export_decision = evaluate_publish_gate_from_ingest_watermark(
+            symbol=symbol,
+            timeframe=timeframe,
+            ingest_entries=state.ingest_watermarks,
+            publish_entries=state.export_watermarks,
+        )
+        export_gate_reason = export_decision.reason.value
+        if not export_decision.should_run:
+            cycle_export_gate_skip_counts[export_gate_reason] = (
+                cycle_export_gate_skip_counts.get(export_gate_reason, 0) + 1
+            )
+        else:
+            export_ok = update_full_history_file(query_api, symbol, timeframe)
+            if export_ok and export_decision.ingest_closed_at is not None:
+                _upsert_watermark(
+                    state.export_watermarks,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    closed_at=export_decision.ingest_closed_at,
+                )
+            elif not export_ok:
+                _log_stage_failure_context(
+                    "export",
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    now=cycle_now,
+                    last_closed_ts=export_decision.ingest_closed_at,
+                    error="export_result_failed",
+                    extra={"gate_reason": export_gate_reason},
+                )
+                logger.warning(
+                    f"[{symbol} {timeframe}] export failed. "
+                    "watermark cursor is not advanced."
+                )
+
+    if run_predict_stage:
+        predict_decision = evaluate_publish_gate_from_ingest_watermark(
+            symbol=symbol,
+            timeframe=timeframe,
+            ingest_entries=state.ingest_watermarks,
+            publish_entries=state.predict_watermarks,
+        )
+        predict_gate_reason = predict_decision.reason.value
+        if not predict_decision.should_run:
+            cycle_predict_gate_skip_counts[predict_gate_reason] = (
+                cycle_predict_gate_skip_counts.get(predict_gate_reason, 0) + 1
+            )
+            return
+
+        prediction_outcome = run_prediction_and_save_outcome(
+            write_api,
+            symbol,
+            timeframe,
+        )
+        if prediction_outcome.result == PredictionExecutionResult.FAILED:
+            _log_stage_failure_context(
+                "predict",
+                symbol=symbol,
+                timeframe=timeframe,
+                now=cycle_now,
+                last_closed_ts=predict_decision.ingest_closed_at,
+                error=prediction_outcome.error or "prediction_failed",
+                extra={"gate_reason": predict_gate_reason},
+            )
+            logger.warning(
+                f"[{symbol} {timeframe}] prediction failed. "
+                "watermark cursor is not advanced."
+            )
+            return
+
+        if predict_decision.ingest_closed_at is not None:
+            _upsert_watermark(
+                state.predict_watermarks,
+                symbol=symbol,
+                timeframe=timeframe,
+                closed_at=predict_decision.ingest_closed_at,
+            )
+
+        if prediction_outcome.result == PredictionExecutionResult.SKIPPED:
+            return
+
+        prediction_ok = prediction_outcome.result == PredictionExecutionResult.OK
+        health, was_degraded, is_degraded = upsert_prediction_health(
+            symbol,
+            timeframe,
+            prediction_ok=prediction_ok,
+            error=prediction_outcome.error,
+        )
+        if is_degraded and not was_degraded:
+            logger.warning(
+                f"[{symbol} {timeframe}] prediction degraded: "
+                f"reason={health.get('last_error')}"
+            )
+            send_alert(
+                "[Predict Degraded] "
+                f"{symbol} {timeframe}\n"
+                f"reason={health.get('last_error')}\n"
+                f"last_success_at={health.get('last_success_at')}"
+            )
+        elif prediction_ok and was_degraded:
+            logger.info(f"[{symbol} {timeframe}] prediction recovered.")
+            send_alert(
+                "[Predict Recovery] "
+                f"{symbol} {timeframe}\n"
+                f"last_success_at={health.get('last_success_at')}"
+            )
+        elif is_degraded:
+            logger.info(
+                f"[{symbol} {timeframe}] prediction still degraded "
+                f"(consecutive_failures={health.get('consecutive_failures')})"
+            )
+
+
+def _persist_cycle_runtime_state(
+    *,
+    run_ingest_stage: bool,
+    run_predict_stage: bool,
+    run_export_stage: bool,
+    state: WorkerPersistentState,
+) -> None:
+    """
+    cycle 종료 시 runtime state 파일을 저장한다.
+    """
+    if run_ingest_stage:
+        try:
+            _save_symbol_activation(state.symbol_activation_entries)
+            _save_watermark_entries(
+                state.ingest_watermarks,
+                INGEST_WATERMARK_FILE,
+            )
+        except Exception as e:
+            logger.error(f"Symbol activation update failed: {e}")
+            send_alert(f"[Symbol Activation Error] {e}")
+
+    if run_predict_stage:
+        try:
+            _save_watermark_entries(
+                state.predict_watermarks,
+                PREDICT_WATERMARK_FILE,
+            )
+        except Exception as e:
+            logger.error(f"Predict watermark update failed: {e}")
+            send_alert(f"[Predict Watermark Error] {e}")
+
+    if run_export_stage:
+        try:
+            _save_watermark_entries(
+                state.export_watermarks,
+                EXPORT_WATERMARK_FILE,
+            )
+            write_runtime_manifest(
+                TARGET_COINS,
+                TIMEFRAMES,
+                symbol_activation_entries=state.symbol_activation_entries,
+            )
+        except Exception as e:
+            logger.error(f"Runtime manifest update failed: {e}")
+            send_alert(f"[Manifest Error] {e}")
 
 
 def run_worker():
+    """
+    worker 메인 루프.
+
+    Stage order (per cycle):
+    1) scheduler(due timeframe 계산)
+    2) ingest stage(수집/retention/activation/watermark)
+    3) publish stage(export/predict + watermark gate)
+    4) runtime metrics 기록 및 sleep/overrun 처리
+    """
     scheduler_mode = WORKER_SCHEDULER_MODE
     if scheduler_mode not in VALID_WORKER_SCHEDULER_MODES:
         logger.warning(
@@ -1883,27 +2246,52 @@ def run_worker():
         )
         scheduler_mode = "poll_loop"
 
+    worker_role = resolve_worker_execution_role(WORKER_EXECUTION_ROLE)
+    run_ingest_stage = worker_role_runs_ingest(worker_role)
+    run_publish_stage = worker_role_runs_publish(worker_role)
+    publish_mode = resolve_worker_publish_mode(WORKER_PUBLISH_MODE)
+    run_predict_stage = run_publish_stage and publish_mode_runs_predict(
+        publish_mode
+    )
+    run_export_stage = run_publish_stage and publish_mode_runs_export(
+        publish_mode
+    )
+    write_runtime_metrics = run_ingest_stage
+
     logger.info(
         f"[Pipeline Worker] Started. Target: {TARGET_COINS}, Timeframes: {TIMEFRAMES}, "
-        f"SchedulerMode: {scheduler_mode}"
+        f"SchedulerMode: {scheduler_mode}, WorkerRole: {worker_role}, "
+        f"PublishMode: {publish_mode}"
     )
 
     client = InfluxDBClient(
-        url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG
+        url=INFLUXDB_URL,
+        token=INFLUXDB_TOKEN,
+        org=INFLUXDB_ORG,
     )
     write_api = client.write_api(write_options=SYNCHRONOUS)
     query_api = client.query_api()
     delete_api = client.delete_api()
     ingest_state_store = IngestStateStore(INGEST_STATE_FILE)
-    symbol_activation_entries = _load_symbol_activation()
-    previous_disk_level: str | None = None
+
+    state = WorkerPersistentState(
+        symbol_activation_entries=_load_symbol_activation(),
+        ingest_watermarks=_load_watermark_entries(INGEST_WATERMARK_FILE),
+        predict_watermarks=_load_watermark_entries(PREDICT_WATERMARK_FILE),
+        export_watermarks=_load_watermark_entries(EXPORT_WATERMARK_FILE),
+    )
+    previous_disk_level: StorageGuardLevel | None = None
     last_retention_enforced_at: datetime | None = None
-    activation_exchange = ccxt.binance()
-    activation_exchange.enableRateLimit = True
+    activation_exchange = None
+    if run_ingest_stage:
+        activation_exchange = ccxt.binance()
+        activation_exchange.enableRateLimit = True
+
     next_boundary_by_timeframe: dict[str, datetime] = {}
     if scheduler_mode == "boundary":
         next_boundary_by_timeframe = initialize_boundary_schedule(
-            datetime.now(timezone.utc), TIMEFRAMES
+            datetime.now(timezone.utc),
+            TIMEFRAMES,
         )
 
     send_alert("Worker Started.")
@@ -1915,12 +2303,25 @@ def run_worker():
         cycle_detection_skip_counts: dict[str, int] = {}
         cycle_detection_run_counts: dict[str, int] = {}
         cycle_missed_boundary_count: int | None = None
+        cycle_predict_gate_skip_counts: dict[str, int] = {}
+        cycle_export_gate_skip_counts: dict[str, int] = {}
+
+        if run_publish_stage and not run_ingest_stage:
+            # publish 전용 프로세스는 ingest와 메모리를 공유하지 않는다.
+            # 따라서 매 cycle 파일에서 최신 activation/watermark를 다시 읽어
+            # 프로세스 간 eventual consistency를 맞춘다.
+            state.symbol_activation_entries = _load_symbol_activation()
+            state.ingest_watermarks = _load_watermark_entries(
+                INGEST_WATERMARK_FILE
+            )
+
         try:
             logger.info(
                 f"\n[Cycle] 작업 시작: {cycle_started_at.strftime('%Y-%m-%d %H:%M:%S')}"
             )
             cycle_now = cycle_started_at
             active_timeframes = TIMEFRAMES
+
             if scheduler_mode == "boundary":
                 (
                     active_timeframes,
@@ -1939,18 +2340,19 @@ def run_worker():
                     )
                     sleep_time = max(1.0, sleep_until_boundary)
                     elapsed = time.time() - start_time
-                    append_runtime_cycle_metrics(
-                        started_at=cycle_started_at,
-                        elapsed_seconds=elapsed,
-                        sleep_seconds=sleep_time,
-                        overrun=False,
-                        cycle_result="idle",
-                        ingest_since_source_counts=cycle_since_source_counts,
-                        detection_gate_skip_counts=cycle_detection_skip_counts,
-                        detection_gate_run_counts=cycle_detection_run_counts,
-                        boundary_tracking_mode="boundary_scheduler",
-                        missed_boundary_count=cycle_missed_boundary_count,
-                    )
+                    if write_runtime_metrics:
+                        append_runtime_cycle_metrics(
+                            started_at=cycle_started_at,
+                            elapsed_seconds=elapsed,
+                            sleep_seconds=sleep_time,
+                            overrun=False,
+                            cycle_result="idle",
+                            ingest_since_source_counts=cycle_since_source_counts,
+                            detection_gate_skip_counts=cycle_detection_skip_counts,
+                            detection_gate_run_counts=cycle_detection_run_counts,
+                            boundary_tracking_mode="boundary_scheduler",
+                            missed_boundary_count=cycle_missed_boundary_count,
+                        )
                     logger.info(
                         "[Scheduler] no due timeframe at boundary cycle. "
                         f"sleep={sleep_time:.2f}s until next boundary."
@@ -1958,31 +2360,38 @@ def run_worker():
                     time.sleep(sleep_time)
                     continue
 
-            disk_level = "normal"
+            disk_level = StorageGuardLevel.NORMAL
             disk_usage_percent: float | None = None
-
-            try:
-                disk_usage_percent = get_disk_usage_percent()
-                disk_level = resolve_disk_watermark_level(disk_usage_percent)
-                if previous_disk_level != disk_level:
-                    msg = (
-                        "[Storage Guard] "
-                        f"usage={disk_usage_percent:.2f}% level={disk_level} "
-                        f"(warn={DISK_WATERMARK_WARN_PERCENT}%, "
-                        f"critical={DISK_WATERMARK_CRITICAL_PERCENT}%, "
-                        f"block={DISK_WATERMARK_BLOCK_PERCENT}%)"
+            if run_ingest_stage:
+                try:
+                    disk_usage_percent = get_disk_usage_percent()
+                    disk_level = _coerce_storage_guard_level(
+                        resolve_disk_watermark_level(disk_usage_percent)
                     )
-                    if disk_level == "normal":
-                        logger.info(msg)
-                    else:
-                        logger.warning(msg)
-                        send_alert(msg)
-                previous_disk_level = disk_level
-            except OSError as e:
-                logger.error(f"[Storage Guard] disk usage check failed: {e}")
+                    if previous_disk_level != disk_level:
+                        msg = (
+                            "[Storage Guard] "
+                            f"usage={disk_usage_percent:.2f}% level={disk_level.value} "
+                            f"(warn={DISK_WATERMARK_WARN_PERCENT}%, "
+                            f"critical={DISK_WATERMARK_CRITICAL_PERCENT}%, "
+                            f"block={DISK_WATERMARK_BLOCK_PERCENT}%)"
+                        )
+                        if disk_level == StorageGuardLevel.NORMAL:
+                            logger.info(msg)
+                        else:
+                            logger.warning(msg)
+                            send_alert(msg)
+                    previous_disk_level = disk_level
+                except OSError as e:
+                    logger.error(f"[Storage Guard] disk usage check failed: {e}")
 
-            if "1m" in TIMEFRAMES and should_enforce_1m_retention(
-                last_retention_enforced_at, cycle_now
+            if (
+                run_ingest_stage
+                and "1m" in TIMEFRAMES
+                and should_enforce_1m_retention(
+                    last_retention_enforced_at,
+                    cycle_now,
+                )
             ):
                 try:
                     enforce_1m_retention(
@@ -1996,267 +2405,117 @@ def run_worker():
                     send_alert(f"[Retention Error] {e}")
 
             for symbol in TARGET_COINS:
-                exchange_earliest = get_exchange_earliest_closed_timestamp(
-                    activation_exchange,
-                    symbol,
-                    DOWNSAMPLE_SOURCE_TIMEFRAME,
-                    now=cycle_now,
-                )
-                symbol_activation = build_symbol_activation_entry(
+                (
+                    symbol_activation,
+                    exchange_earliest,
+                    activation_loaded,
+                ) = _prepare_symbol_activation_for_cycle(
+                    run_ingest_stage=run_ingest_stage,
                     query_api=query_api,
+                    activation_exchange=activation_exchange,
                     symbol=symbol,
-                    now=cycle_now,
-                    exchange_earliest=exchange_earliest,
-                    existing_entry=symbol_activation_entries.get(symbol),
+                    cycle_now=cycle_now,
+                    state=state,
                 )
-                symbol_activation_entries[symbol] = symbol_activation
-                if symbol_activation["visibility"] == "hidden_backfilling":
+
+                if (
+                    symbol_activation.visibility
+                    == SymbolVisibility.HIDDEN_BACKFILLING
+                    and (run_ingest_stage or activation_loaded)
+                ):
                     _remove_static_exports_for_symbol(
-                        symbol, TIMEFRAMES, static_dir=STATIC_DIR
+                        symbol,
+                        TIMEFRAMES,
+                        static_dir=STATIC_DIR,
                     )
 
                 for timeframe in active_timeframes:
-                    state_since = ingest_state_store.get_last_closed(
-                        symbol, timeframe
-                    )
-                    last_time = get_last_timestamp(query_api, symbol, timeframe)
-                    if scheduler_mode == "boundary":
-                        should_run, gate_reason = evaluate_detection_gate(
-                            query_api,
-                            activation_exchange,
+                    if run_ingest_stage:
+                        (
+                            should_continue_publish,
+                            symbol_activation,
+                        ) = _run_ingest_timeframe_step(
+                            write_api=write_api,
+                            query_api=query_api,
+                            activation_exchange=activation_exchange,
+                            ingest_state_store=ingest_state_store,
                             symbol=symbol,
                             timeframe=timeframe,
-                            now=cycle_now,
-                            last_saved=last_time,
+                            cycle_now=cycle_now,
+                            scheduler_mode=scheduler_mode,
+                            symbol_activation=symbol_activation,
+                            exchange_earliest=exchange_earliest,
+                            disk_level=disk_level,
+                            disk_usage_percent=disk_usage_percent,
+                            state=state,
+                            cycle_since_source_counts=cycle_since_source_counts,
+                            cycle_detection_skip_counts=cycle_detection_skip_counts,
+                            cycle_detection_run_counts=cycle_detection_run_counts,
                         )
-                        if not should_run:
-                            cycle_detection_skip_counts[gate_reason] = (
-                                cycle_detection_skip_counts.get(gate_reason, 0)
-                                + 1
-                            )
-                            logger.info(
-                                f"[{symbol} {timeframe}] detection gate skip "
-                                f"(reason={gate_reason})"
-                            )
+                        state.symbol_activation_entries[symbol] = symbol_activation
+                        if not should_continue_publish:
                             continue
-                        cycle_detection_run_counts[gate_reason] = (
-                            cycle_detection_run_counts.get(gate_reason, 0) + 1
-                        )
 
-                    lookback_days = _lookback_days_for_timeframe(timeframe)
-                    force_rebootstrap = False
-                    min_required_rows = _minimum_required_lookback_rows(
-                        timeframe, lookback_days
-                    )
-                    if min_required_rows is not None:
-                        close_count = get_lookback_close_count(
-                            query_api, symbol, timeframe, lookback_days
-                        )
-                        if (
-                            close_count is not None
-                            and close_count < min_required_rows
-                        ):
-                            force_rebootstrap = True
-                            logger.warning(
-                                f"[{symbol} {timeframe}] canonical coverage underfilled: "
-                                f"close_count={close_count} < min_required={min_required_rows}. "
-                                "Rebootstrapping from lookback."
-                            )
-                    since, since_source = resolve_ingest_since(
+                    if not run_publish_stage:
+                        continue
+
+                    _run_publish_timeframe_step(
+                        write_api=write_api,
+                        query_api=query_api,
                         symbol=symbol,
                         timeframe=timeframe,
-                        state_since=state_since,
-                        last_time=last_time,
-                        disk_level=disk_level,
-                        force_rebootstrap=force_rebootstrap,
-                        bootstrap_since=(
-                            exchange_earliest
-                            if timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
-                            else None
-                        ),
-                        enforce_full_backfill=(
-                            timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
-                            and symbol_activation["visibility"]
-                            == "hidden_backfilling"
-                        ),
-                        now=cycle_now,
-                    )
-                    cycle_since_source_counts[since_source] = (
-                        cycle_since_source_counts.get(since_source, 0) + 1
+                        cycle_now=cycle_now,
+                        symbol_activation=symbol_activation,
+                        run_export_stage=run_export_stage,
+                        run_predict_stage=run_predict_stage,
+                        state=state,
+                        cycle_export_gate_skip_counts=cycle_export_gate_skip_counts,
+                        cycle_predict_gate_skip_counts=cycle_predict_gate_skip_counts,
                     )
 
-                    if since_source == "blocked_storage_guard":
-                        logger.warning(
-                            f"[{symbol} {timeframe}] initial backfill blocked "
-                            f"by storage guard (usage={disk_usage_percent}%)."
-                        )
-                        ingest_state_store.upsert(
-                            symbol,
-                            timeframe,
-                            last_closed_ts=state_since,
-                            status="blocked_storage_guard",
-                        )
-                        continue
+            _persist_cycle_runtime_state(
+                run_ingest_stage=run_ingest_stage,
+                run_predict_stage=run_predict_stage,
+                run_export_stage=run_export_stage,
+                state=state,
+            )
 
-                    if since_source in {
-                        "bootstrap_lookback",
-                        "bootstrap_exchange_earliest",
-                        "full_backfill_exchange_earliest",
-                        "state_drift_rebootstrap",
-                        "state_drift_rebootstrap_exchange_earliest",
-                    }:
-                        if since_source.endswith("exchange_earliest"):
-                            logger.info(
-                                f"[{symbol} {timeframe}] 초기 데이터 수집 시작 "
-                                f"(source={since_source}, since={_format_utc(since)})"
-                            )
-                        else:
-                            lookback_days = _lookback_days_for_timeframe(timeframe)
-                            logger.info(
-                                f"[{symbol} {timeframe}] 초기 데이터 수집 시작 "
-                                f"({lookback_days}일 전부터, source={since_source})"
-                            )
-
-                    # 수집
-                    if timeframe in DOWNSAMPLE_TARGET_TIMEFRAMES:
-                        latest_saved_at, ingest_result = (
-                            run_downsample_and_save(
-                                write_api,
-                                query_api,
-                                symbol=symbol,
-                                target_timeframe=timeframe,
-                            )
-                        )
-                    else:
-                        latest_saved_at, ingest_result = fetch_and_save(
-                            write_api, symbol, since, timeframe
-                        )
-                    if ingest_result == "saved":
-                        ingest_state_store.upsert(
-                            symbol,
-                            timeframe,
-                            last_closed_ts=latest_saved_at,
-                            status="ok",
-                        )
-                    elif ingest_result == "failed":
-                        ingest_state_store.upsert(
-                            symbol,
-                            timeframe,
-                            last_closed_ts=state_since,
-                            status="failed",
-                        )
-
-                    if (
-                        timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
-                        and symbol_activation["visibility"]
-                        == "hidden_backfilling"
-                    ):
-                        symbol_activation = build_symbol_activation_entry(
-                            query_api=query_api,
-                            symbol=symbol,
-                            now=cycle_now,
-                            exchange_earliest=exchange_earliest,
-                            existing_entry=symbol_activation_entries.get(
-                                symbol
-                            ),
-                        )
-                        symbol_activation_entries[symbol] = symbol_activation
-                        if (
-                            symbol_activation["visibility"]
-                            == "hidden_backfilling"
-                        ):
-                            _remove_static_exports_for_symbol(
-                                symbol, TIMEFRAMES, static_dir=STATIC_DIR
-                            )
-
-                    if symbol_activation["visibility"] == "hidden_backfilling":
-                        logger.info(
-                            f"[{symbol}] activation state={symbol_activation['state']} "
-                            "-> skip static export/prediction for FE hide policy."
-                        )
-                        continue
-
-                    # History 파일 갱신
-                    update_full_history_file(query_api, symbol, timeframe)
-
-                    # 예측
-                    prediction_result, prediction_error = (
-                        run_prediction_and_save(write_api, symbol, timeframe)
+            if run_publish_stage:
+                if cycle_predict_gate_skip_counts:
+                    logger.info(
+                        "[Publish Gate] predict skips=%s",
+                        cycle_predict_gate_skip_counts,
                     )
-                    if prediction_result == "skipped":
-                        continue
-
-                    prediction_ok = prediction_result == "ok"
-                    health, was_degraded, is_degraded = (
-                        upsert_prediction_health(
-                            symbol,
-                            timeframe,
-                            prediction_ok=prediction_ok,
-                            error=prediction_error,
-                        )
+                if cycle_export_gate_skip_counts:
+                    logger.info(
+                        "[Publish Gate] export skips=%s",
+                        cycle_export_gate_skip_counts,
                     )
-                    if is_degraded and not was_degraded:
-                        logger.warning(
-                            f"[{symbol} {timeframe}] prediction degraded: "
-                            f"reason={health.get('last_error')}"
-                        )
-                        send_alert(
-                            "[Predict Degraded] "
-                            f"{symbol} {timeframe}\n"
-                            f"reason={health.get('last_error')}\n"
-                            f"last_success_at={health.get('last_success_at')}"
-                        )
-                    elif prediction_ok and was_degraded:
-                        logger.info(
-                            f"[{symbol} {timeframe}] prediction recovered."
-                        )
-                        send_alert(
-                            "[Predict Recovery] "
-                            f"{symbol} {timeframe}\n"
-                            f"last_success_at={health.get('last_success_at')}"
-                        )
-                    elif is_degraded:
-                        # degraded 유지 중에는 재알림 대신 누적 실패 횟수만 로그로 남긴다.
-                        logger.info(
-                            f"[{symbol} {timeframe}] prediction still degraded "
-                            f"(consecutive_failures={health.get('consecutive_failures')})"
-                        )
 
-            try:
-                _save_symbol_activation(symbol_activation_entries)
-                write_runtime_manifest(
-                    TARGET_COINS,
-                    TIMEFRAMES,
-                    symbol_activation_entries=symbol_activation_entries,
-                )
-            except Exception as e:
-                logger.error(f"Runtime manifest update failed: {e}")
-                send_alert(f"[Manifest Error] {e}")
-
-            # Cycle Overrun 감지 및 주기 보정
             elapsed = time.time() - start_time
             sleep_time = CYCLE_TARGET_SECONDS - elapsed
             overrun = sleep_time <= 0
 
-            try:
-                append_runtime_cycle_metrics(
-                    started_at=cycle_started_at,
-                    elapsed_seconds=elapsed,
-                    sleep_seconds=max(sleep_time, 0.0),
-                    overrun=overrun,
-                    cycle_result="ok",
-                    ingest_since_source_counts=cycle_since_source_counts,
-                    detection_gate_skip_counts=cycle_detection_skip_counts,
-                    detection_gate_run_counts=cycle_detection_run_counts,
-                    boundary_tracking_mode=(
-                        "boundary_scheduler"
-                        if scheduler_mode == "boundary"
-                        else "poll_loop"
-                    ),
-                    missed_boundary_count=cycle_missed_boundary_count,
-                )
-            except Exception as e:
-                logger.error(f"Runtime metrics update failed: {e}")
+            if write_runtime_metrics:
+                try:
+                    append_runtime_cycle_metrics(
+                        started_at=cycle_started_at,
+                        elapsed_seconds=elapsed,
+                        sleep_seconds=max(sleep_time, 0.0),
+                        overrun=overrun,
+                        cycle_result="ok",
+                        ingest_since_source_counts=cycle_since_source_counts,
+                        detection_gate_skip_counts=cycle_detection_skip_counts,
+                        detection_gate_run_counts=cycle_detection_run_counts,
+                        boundary_tracking_mode=(
+                            "boundary_scheduler"
+                            if scheduler_mode == "boundary"
+                            else "poll_loop"
+                        ),
+                        missed_boundary_count=cycle_missed_boundary_count,
+                    )
+                except Exception as e:
+                    logger.error(f"Runtime metrics update failed: {e}")
 
             if sleep_time > 0:
                 logger.info(
@@ -2271,34 +2530,35 @@ def run_worker():
                 send_alert(warning_msg)
 
         except Exception as e:
-            # Worker가 죽지 않도록 잡지만, 운영자에게는 알림
             error_msg = f"Worker Critical Error:\n{traceback.format_exc()}"
             logger.error(error_msg)
             send_alert(error_msg)
             elapsed = time.time() - start_time
-            try:
-                append_runtime_cycle_metrics(
-                    started_at=cycle_started_at,
-                    elapsed_seconds=elapsed,
-                    sleep_seconds=10.0,
-                    overrun=elapsed > CYCLE_TARGET_SECONDS,
-                    cycle_result="failed",
-                    error=str(e),
-                    ingest_since_source_counts=cycle_since_source_counts,
-                    detection_gate_skip_counts=cycle_detection_skip_counts,
-                    detection_gate_run_counts=cycle_detection_run_counts,
-                    boundary_tracking_mode=(
-                        "boundary_scheduler"
-                        if scheduler_mode == "boundary"
-                        else "poll_loop"
-                    ),
-                    missed_boundary_count=cycle_missed_boundary_count,
-                )
-            except Exception as metrics_error:
-                logger.error(
-                    f"Runtime metrics update failed after worker error: {metrics_error}"
-                )
-            time.sleep(10)  # 에러 루프 방지용 대기
+            if write_runtime_metrics:
+                try:
+                    append_runtime_cycle_metrics(
+                        started_at=cycle_started_at,
+                        elapsed_seconds=elapsed,
+                        sleep_seconds=10.0,
+                        overrun=elapsed > CYCLE_TARGET_SECONDS,
+                        cycle_result="failed",
+                        error=str(e),
+                        ingest_since_source_counts=cycle_since_source_counts,
+                        detection_gate_skip_counts=cycle_detection_skip_counts,
+                        detection_gate_run_counts=cycle_detection_run_counts,
+                        boundary_tracking_mode=(
+                            "boundary_scheduler"
+                            if scheduler_mode == "boundary"
+                            else "poll_loop"
+                        ),
+                        missed_boundary_count=cycle_missed_boundary_count,
+                    )
+                except Exception as metrics_error:
+                    logger.error(
+                        "Runtime metrics update failed after worker error: "
+                        f"{metrics_error}"
+                    )
+            time.sleep(10)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Coin Predict Context (Minimum)
 
-- Last Updated: 2026-02-13
+- Last Updated: 2026-02-17
 - Purpose: 새 세션에서 최소 토큰으로 현재 상태를 정렬하기 위한 요약
 
 ## 1. Snapshot
@@ -39,7 +39,7 @@
 
 ## 5. Current Risk Focus
 1. `TD-018`: API-SSG 운영 계약(필드/경로) 최종 확정 미완료
-2. `TD-019`: ingest/predict/export 단일 worker 결합으로 장애 전파 리스크
+2. `TD-019`: `worker-ingest`/`worker-publish` 분리로 완화됐으나 publish 내부(predict/export) 결합 리스크 잔존
 3. `TD-020`: 고정 poll loop 기반 스케줄링으로 비용/정합성 리스크
 4. `TD-027`: `1m` hybrid API 경계 미준수 시 오버런/계약 혼선 리스크
 

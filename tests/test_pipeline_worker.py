@@ -21,15 +21,23 @@ from scripts.pipeline_worker import (
     get_last_timestamp,
     initialize_boundary_schedule,
     prediction_enabled_for_timeframe,
+    publish_mode_runs_export,
+    publish_mode_runs_predict,
     resolve_boundary_due_timeframes,
+    resolve_worker_publish_mode,
+    resolve_worker_execution_role,
     resolve_ingest_since,
     resolve_disk_watermark_level,
     run_downsample_and_save,
+    run_ingest_step,
     run_prediction_and_save,
     save_history_to_json,
+    should_run_publish_from_ingest_watermark,
     should_block_initial_backfill,
     should_enforce_1m_retention,
     upsert_prediction_health,
+    worker_role_runs_ingest,
+    worker_role_runs_publish,
     write_runtime_manifest,
 )
 
@@ -395,7 +403,10 @@ def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
     assert payload["summary"]["rebootstrap_events"] == 2
     assert payload["summary"]["underfill_guard_retrigger_cycles"] == 1
     assert payload["summary"]["underfill_guard_retrigger_events"] == 2
-    assert payload["summary"]["detection_gate_run_counts"]["new_closed_candle"] == 2
+    assert (
+        payload["summary"]["detection_gate_run_counts"]["new_closed_candle"]
+        == 2
+    )
     assert payload["summary"]["detection_gate_run_events"] == 2
     assert (
         payload["summary"]["detection_gate_skip_counts"]["no_new_closed_candle"]
@@ -545,9 +556,7 @@ def test_resolve_boundary_due_timeframes_counts_missed_boundaries():
     assert due == ["1h"]
     assert missed == 1
     assert schedule["1h"] == datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
-    assert next_boundary_at == datetime(
-        2026, 2, 13, 11, 0, tzinfo=timezone.utc
-    )
+    assert next_boundary_at == datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
 
 
 def test_resolve_boundary_due_timeframes_without_missed_boundary():
@@ -596,8 +605,22 @@ def test_evaluate_detection_gate_skips_when_no_new_closed_candle():
     now = datetime(2026, 2, 13, 10, 37, tzinfo=timezone.utc)
     last_saved = datetime(2026, 2, 13, 9, 0, tzinfo=timezone.utc)
     candles = [
-        [_to_ms(datetime(2026, 2, 13, 9, 0, tzinfo=timezone.utc)), 1, 1, 1, 1, 1],
-        [_to_ms(datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)), 1, 1, 1, 1, 1],
+        [
+            _to_ms(datetime(2026, 2, 13, 9, 0, tzinfo=timezone.utc)),
+            1,
+            1,
+            1,
+            1,
+            1,
+        ],
+        [
+            _to_ms(datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)),
+            1,
+            1,
+            1,
+            1,
+            1,
+        ],
     ]
     exchange = FakeExchange(candles)
 
@@ -1070,3 +1093,133 @@ def test_run_downsample_and_save_writes_ohlcv_and_lineage(
     assert entry["complete_buckets"] == 2
     assert entry["incomplete_buckets"] == 0
     assert entry["status"] == "ok"
+
+
+def test_resolve_worker_execution_role_falls_back_to_all():
+    assert resolve_worker_execution_role("all") == "all"
+    assert resolve_worker_execution_role("ingest") == "ingest"
+    assert resolve_worker_execution_role("predict_export") == "predict_export"
+    assert resolve_worker_execution_role("invalid_role") == "all"
+
+
+def test_worker_execution_role_stage_flags():
+    assert worker_role_runs_ingest("all") is True
+    assert worker_role_runs_ingest("ingest") is True
+    assert worker_role_runs_ingest("predict_export") is False
+    assert worker_role_runs_publish("all") is True
+    assert worker_role_runs_publish("predict_export") is True
+    assert worker_role_runs_publish("ingest") is False
+
+
+def test_resolve_worker_publish_mode_falls_back_to_predict_and_export():
+    assert (
+        resolve_worker_publish_mode("predict_and_export")
+        == "predict_and_export"
+    )
+    assert resolve_worker_publish_mode("predict_only") == "predict_only"
+    assert resolve_worker_publish_mode("export_only") == "export_only"
+    assert resolve_worker_publish_mode("invalid_mode") == "predict_and_export"
+
+
+def test_worker_publish_mode_stage_flags():
+    assert publish_mode_runs_predict("predict_and_export") is True
+    assert publish_mode_runs_predict("predict_only") is True
+    assert publish_mode_runs_predict("export_only") is False
+    assert publish_mode_runs_export("predict_and_export") is True
+    assert publish_mode_runs_export("export_only") is True
+    assert publish_mode_runs_export("predict_only") is False
+
+
+def test_should_run_publish_from_ingest_watermark():
+    key = "BTC/USDT|1h"
+    ingest_entries = {key: "2026-02-17T10:00:00Z"}
+
+    should_run, reason, ingest_dt = should_run_publish_from_ingest_watermark(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        ingest_entries=ingest_entries,
+        publish_entries={},
+    )
+    assert should_run is True
+    assert reason == "ingest_watermark_advanced"
+    assert ingest_dt == datetime(2026, 2, 17, 10, 0, tzinfo=timezone.utc)
+
+    should_run, reason, ingest_dt = should_run_publish_from_ingest_watermark(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        ingest_entries=ingest_entries,
+        publish_entries={key: "2026-02-17T10:00:00Z"},
+    )
+    assert should_run is False
+    assert reason == "up_to_date_ingest_watermark"
+    assert ingest_dt == datetime(2026, 2, 17, 10, 0, tzinfo=timezone.utc)
+
+    should_run, reason, ingest_dt = should_run_publish_from_ingest_watermark(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        ingest_entries={},
+        publish_entries={},
+    )
+    assert should_run is False
+    assert reason == "no_ingest_watermark"
+    assert ingest_dt is None
+
+
+def test_run_ingest_step_routes_derived_to_downsample(monkeypatch):
+    expected_latest = datetime(2026, 2, 12, 0, 0, tzinfo=timezone.utc)
+
+    def fake_downsample(write_api, query_api, *, symbol, target_timeframe):
+        assert symbol == "BTC/USDT"
+        assert target_timeframe == "1d"
+        return expected_latest, "saved"
+
+    def fail_fetch(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("fetch_and_save should not run for derived tf")
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.run_downsample_and_save", fake_downsample
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.fetch_and_save", fail_fetch)
+
+    latest, result = run_ingest_step(
+        write_api=object(),
+        query_api=object(),
+        symbol="BTC/USDT",
+        timeframe="1d",
+        since=datetime(2026, 2, 1, tzinfo=timezone.utc),
+    )
+
+    assert latest == expected_latest
+    assert result == "saved"
+
+
+def test_run_ingest_step_routes_base_to_exchange_fetch(monkeypatch):
+    expected_latest = datetime(2026, 2, 12, 1, 0, tzinfo=timezone.utc)
+    expected_since = datetime(2026, 2, 1, 0, 0, tzinfo=timezone.utc)
+
+    def fail_downsample(*args, **kwargs):  # pragma: no cover
+        raise AssertionError(
+            "run_downsample_and_save should not run for base tf"
+        )
+
+    def fake_fetch(write_api, symbol, since, timeframe):
+        assert symbol == "BTC/USDT"
+        assert since == expected_since
+        assert timeframe == "1h"
+        return expected_latest, "saved"
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.run_downsample_and_save", fail_downsample
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.fetch_and_save", fake_fetch)
+
+    latest, result = run_ingest_step(
+        write_api=object(),
+        query_api=object(),
+        symbol="BTC/USDT",
+        timeframe="1h",
+        since=expected_since,
+    )
+
+    assert latest == expected_latest
+    assert result == "saved"

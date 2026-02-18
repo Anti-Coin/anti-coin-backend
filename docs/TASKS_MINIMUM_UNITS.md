@@ -39,6 +39,9 @@
 27. `C-002` 완료 (2026-02-17): `runtime_metrics.json`에 `ingest_since_source_counts`/`rebootstrap`/`underfill_guard_retrigger` 집계를 추가해 `C-008` 후속 7일 관찰 근거를 메트릭 경로로 고정, 회귀 `90 passed`
 28. `C-006` 완료 (2026-02-17): boundary scheduler(`WORKER_SCHEDULER_MODE=boundary` 기본) 도입으로 timeframe 경계 시점에만 실행하도록 전환, `runtime_metrics.json`에 `missed_boundary_count/rate` 실측 반영, 회귀 `93 passed`
 29. `C-007` 완료 (2026-02-17): boundary 직전 detection gate(run/skip) 결합, `runtime_metrics.json`에 `detection_gate_{run,skip}_counts/events` 집계 반영 + `missed_boundary=0` 경계 시나리오 회귀 추가, 회귀 `99 passed`
+30. `C-005` 완료 (2026-02-17): `WORKER_EXECUTION_ROLE`(`all`/`ingest`/`predict_export`) 분리, `run_ingest_step`으로 base ingest(`1m`,`1h`) vs derived materialization(`1d/1w/1M`) 경계 강제, ingest-only는 `runtime_metrics/symbol_activation`, publish-only는 `manifest` 갱신 책임으로 분리, 회귀 `103 passed`
+31. `C-005` 확장 완료 (2026-02-17): 전용 엔트리포인트(`worker_ingest.py`, `worker_predict.py`, `worker_export.py`, `worker_publish.py`) 추가 + ingest watermark 기반 publish gate(`ingest/predict/export watermarks`) 적용 + compose 2-service(`worker-ingest`, `worker-publish`) 전환, 회귀 `106 passed`
+32. `C-005` 코드 구조 정리 완료 (2026-02-17): `workers/ingest.py`, `workers/predict.py`, `workers/export.py`로 도메인 로직을 이동하고 `scripts/pipeline_worker.py`는 orchestrator + runtime glue 래퍼 중심으로 축소, 회귀 `106 passed`
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -69,7 +72,7 @@
 | C-002 | P1 | 실행시간/실패율 메트릭 수집 | done (2026-02-17) | `static_data/runtime_metrics.json`에 cycle 실행시간/실패율/overrun 추세가 누적되고, poll-loop 기준 `missed_boundary` 미지원이 명시되며, `ingest_since_source_counts`/`rebootstrap_events`/`underfill_guard_retrigger_*`가 함께 집계되어 `C-008` 후속 관찰 근거를 제공한다 |
 | C-003 | P2 | 부하 테스트 시나리오 업데이트 | open | 정적/상태 경로 부하 테스트 가능 |
 | C-004 | P2 | 모델 학습 잡 분리 초안 | open | 수집/예측과 독립 실행 가능 |
-| C-005 | P1 | pipeline worker 역할 분리 | open (gated) | `B-003` 검증 증거 확보 후 착수, 완료 시 ingest 지연/장애가 predict/export에 즉시 전파되지 않으며 base ingest(`1m`,`1h`)와 derived materialization(`1d/1w/1M`) 경계가 코드 레벨로 분리됨 |
+| C-005 | P1 | pipeline worker 역할 분리 | done (2026-02-17) | `WORKER_EXECUTION_ROLE` + `WORKER_PUBLISH_MODE`로 ingest/predict/export 실행 경계를 분리했고, 전용 엔트리포인트(`worker_ingest.py`, `worker_predict.py`, `worker_export.py`)를 추가했다. 운영 기본은 compose 2-service(`worker-ingest`,`worker-publish`)이며, publish는 ingest watermark gate를 통해 신규 데이터 감지 시에만 predict/export를 수행한다. base ingest(`1m`,`1h`)와 derived materialization(`1d/1w/1M`) 경계는 `run_ingest_step` 라우팅으로 코드 레벨 고정된다. 도메인 로직은 `workers/ingest.py`, `workers/predict.py`, `workers/export.py`로 분리되어 `pipeline_worker.py`는 orchestrator/runtime glue 중심으로 유지한다 |
 | C-006 | P1 | timeframe 경계 기반 scheduler 전환 | done (2026-02-17) | `WORKER_SCHEDULER_MODE=boundary` 기준으로 UTC candle boundary에서 due timeframe만 실행되며, 경계 미도래 시 idle sleep으로 불필요 cycle을 억제한다. `runtime_metrics.json`에 `boundary_tracking.mode=boundary_scheduler`와 `missed_boundary_count/rate`가 기록된다 |
 | C-007 | P1 | 신규 candle 감지 게이트 결합 | done (2026-02-17) | boundary 모드에서 `symbol+timeframe`별 detection gate가 `run/skip`를 분기하고(`new_closed_candle`/`no_new_closed_candle` 등), `runtime_metrics.json`에 `detection_gate_{run,skip}_counts/events`와 `missed_boundary_count/rate`가 함께 기록된다. 단위 회귀에서 경계 정상 시나리오 `missed_boundary=0`을 검증한다 |
 | C-008 | P1 | `1h` underfill RCA + temporary guard sunset 결정 | done (2026-02-17) | legacy fallback 오염 경로(`timeframe` 미존재 row만 허용) 차단 + 회귀 테스트 반영 + `D-2026-02-17-37` 문서화 완료. guard 7일 관찰은 블로킹 조건이 아닌 운영 메모로 `C-002` 계측 트랙에서 병행 추적 |
@@ -90,9 +93,9 @@
 | D-011 | P1 | Model Coverage Matrix + Fallback Resolver 구현 | open | 기본 `timeframe-shared`/조건부 `symbol+timeframe dedicated` 정책과 `dedicated -> shared -> insufficient_data` fallback 체인이 코드/메타데이터/테스트로 검증됨 |
 
 ## 3. Immediate Bundle
-1. `C-005`
-2. `R-005`
-3. `B-007`
+1. `R-005`
+2. `B-007`
+3. `B-005`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
@@ -155,7 +158,7 @@
 1. 현재 우선순위(`Stability > Cost > Performance`)에 따라 Option A를 기준선으로 채택한다.
 2. `B-005`는 사용자 의견에 따라 P2를 유지한다.
 3. Option B는 `C-002`에서 비용 압력이 즉시 심각하다는 증거가 나올 때 fallback 후보로만 유지한다.
-4. `D-2026-02-13-33`/`D-2026-02-13-35`/`D-2026-02-17-36`/`D-2026-02-17-37` 반영 후 활성 실행 순서는 `C-005 -> R-005 -> B-007(P2) -> B-005(P2)`다.
+4. `D-2026-02-13-33`/`D-2026-02-13-35`/`D-2026-02-17-36`/`D-2026-02-17-37` 반영 후 활성 실행 순서는 `R-005 -> B-007(P2) -> B-005(P2)`다.
 
 ## 8. R-004 Kickoff Contract (Accepted)
 1. Kickoff 구현 묶음은 `B-002`, `B-003` 2개로 고정한다.

@@ -21,14 +21,14 @@
 15. FE 통합은 백엔드 우선 원칙으로 defer: FE가 `manifest.visibility=hidden_backfilling`를 소비해 심볼 비노출하는 작업은 신규 `B-008(P2)`로 등록.
 16. `C-008` 시작 (2026-02-17): `1h underfill` RCA 착수(temporary guard `I-2026-02-13-01`의 sunset/유지 결론 도출)
 17. `C-008` 완료 (2026-02-17): legacy fallback 오염 경로 차단(`not exists r["timeframe"]`) + 회귀 `89 passed` + `D-2026-02-17-37` 반영. guard 7일 관찰은 운영 병행 메모로 전환.
+18. `C-005` 확장 완료 (2026-02-17): 엔트리포인트 분리(`worker_ingest.py`, `worker_predict.py`, `worker_export.py`, `worker_publish.py`) + `worker-ingest`/`worker-publish` 2-service 전환 + ingest watermark 기반 publish gate(`ingest/predict/export watermarks`) 적용, 회귀 `106 passed`.
+19. `C-005` 코드 구조 정리 완료 (2026-02-17): domain 로직을 `workers/ingest.py`, `workers/predict.py`, `workers/export.py`로 분리하고 `scripts/pipeline_worker.py`를 orchestrator/runtime glue 래퍼 중심으로 정리, 회귀 `106 passed`.
 
 ## 2. Next Priority Tasks
-1. `C-002`: 실행시간/실패율/overrun/missed boundary 메트릭 수집
-2. `C-006 -> C-007`: boundary scheduler + detection gate 하이브리드 전환
-3. `C-005`: pipeline worker 역할 분리(게이트 충족 후)
-4. `B-007`: admin/app.py timeframe 운영 대시보드 확장
-5. `B-005`: `/history`/`/predict` sunset 조건 충족 여부 재검증
-6. `B-008`(P2): FE 심볼 노출 게이트 연동(`hidden_backfilling` 필터)
+1. `R-005`: SLA-lite 지표 baseline(공식/데이터 소스/산출 주기) 확정
+2. `B-007`: admin/app.py timeframe 운영 대시보드 확장
+3. `B-005`: `/history`/`/predict` sunset 조건 충족 여부 재검증
+4. `B-008`(P2): FE 심볼 노출 게이트 연동(`hidden_backfilling` 필터)
 
 ## 2.1 Runtime Note
 1. 로컬 `.env`는 참고용이며, 실제 서버 런타임 환경 변수는 `.env.prod` 기준으로 주입된다.
@@ -37,7 +37,7 @@
 ## 3. Current Risks
 1. `TD-018`: API-SSG 운영 계약(필드/경로) 최종 확정 미완료
 2. `TD-027`: `1m` hybrid API 경계(`latest closed 180`) 미준수 시 오버런/계약 혼선
-3. `TD-019`: ingest/predict/export 단일 worker 결합으로 장애 전파 리스크
+3. `TD-019`: 단일 worker 결합 리스크는 2-service 분리로 완화됐으나, publish 내부 predict/export 완전 분리는 미적용
 4. `TD-020`: 고정 poll loop 기반 스케줄링으로 비용/정합성 리스크
 5. `1h` underfill guard가 임시 방편으로 장기 고착될 경우, 근본 원인 은닉/불필요 재백필 비용 리스크
 

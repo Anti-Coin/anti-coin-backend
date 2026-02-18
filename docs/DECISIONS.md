@@ -272,6 +272,39 @@
   - guard 재트리거가 7일 내 반복되거나, 재백필 비용/소요시간이 운영 허용치를 초과할 때
   - 운영 관찰 메모(7일) 종료 시점에 guard 제거/완화 근거가 충분히 확보될 때
 
+### D-2026-02-17-38
+- Date: 2026-02-17
+- Status: Accepted
+- Topic: `C-005B` Worker File Split + 2-Service Deployment + Ingest-Watermark Publish Gate
+- Context:
+  - 기존 `pipeline_worker.py` 단일 엔트리 구조는 역할(R&R) 경계가 코드/운영 양쪽에서 불명확해 가독성과 장애 격리성 모두에 한계가 있었다.
+  - 사용자 요구는 ingest/predict/export를 파일 단위로 분리해 책임을 명확히 하는 것이며, 동시에 운영 비용을 과도하게 늘리지 않는 구성이 필요했다.
+  - predict/export 트리거를 고정 주기만으로 두면 불필요 실행이 발생하므로, "ingest로 신규 데이터가 들어왔을 때만 실행" 경계가 필요했다.
+- Decision:
+  - 엔트리포인트를 아래 4개로 분리한다.
+    - `scripts/worker_ingest.py`
+    - `scripts/worker_predict.py`
+    - `scripts/worker_export.py`
+    - `scripts/worker_publish.py`(운영 기본용 `predict+export` 통합 엔트리)
+  - 배포 기본은 compose 2-service로 고정한다.
+    - `worker-ingest`: ingest/downsample/activation 담당
+    - `worker-publish`: predict/export/manifest 담당
+  - publish 실행 게이트는 ingest watermark 기반으로 고정한다.
+    - ingest writer: `static_data/ingest_watermarks.json`
+    - predict cursor: `static_data/predict_watermarks.json`
+    - export cursor: `static_data/export_watermarks.json`
+  - publish는 ingest watermark가 advance된 `symbol+timeframe`에 대해서만 실행한다.
+  - Source of Truth는 기존처럼 InfluxDB이며, watermark 파일은 inter-worker trigger cursor로 한정한다.
+- Consequence:
+  - 코드/운영 책임 경계가 명확해져 원인 추적 및 변경 영향 분석이 쉬워진다.
+  - ingest 지연/장애가 publish 단계 전체를 즉시 멈추는 결합이 완화된다.
+  - 3-service 완전 분리보다 운영 비용을 낮추면서도 대부분의 격리 이득을 확보한다.
+  - watermark 파일 손상/누락 시 publish skip이 증가할 수 있으므로 파일 무결성 관측이 필요하다.
+- Revisit Trigger:
+  - publish backlog(ingest 대비 지연)가 7일 기준 임계치를 초과할 때
+  - CPU/RAM 압력으로 `worker-publish` 내부 predict/export 결합이 병목으로 확인될 때
+  - watermark 파일 경합/오염이 반복되어 Influx state 저장으로 승격이 필요할 때
+
 ## 3. Decision Operation Policy
 1. Archive로 이동된 결정은 `Section 1`에 요약 형태로만 유지한다.
 2. 아직 archive로 이동하지 않은 결정은 `Section 2`에 상세 형태로 유지한다.

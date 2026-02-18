@@ -29,7 +29,7 @@ services:
       - ./static_data:/usr/share/nginx/html/static:ro
     restart: always
     depends_on:
-      - worker  # 워커가 파일을 만들어야 의미가 있으므로
+      - worker-publish  # publish worker가 정적 산출물을 갱신
 
   fastapi:
     image: ghcr.io/anti-coin/anti-coin-backend-fastapi:latest
@@ -54,9 +54,9 @@ services:
       - "8501:8501"
     restart: always
 
-  worker:
+  worker-ingest:
     image: ghcr.io/anti-coin/anti-coin-backend-worker:latest
-    container_name: coin-worker
+    container_name: coin-worker-ingest
     environment:
       INFLUXDB_URL: ${INFLUXDB_URL}
       INFLUXDB_TOKEN: ${INFLUXDB_TOKEN}
@@ -74,6 +74,29 @@ services:
     volumes:
       - ./models:/app/models
       - ./static_data:/app/static_data
+    command: ["python", "-u", "-m", "scripts.worker_ingest"]
+
+  worker-publish:
+    image: ghcr.io/anti-coin/anti-coin-backend-worker:latest
+    container_name: coin-worker-publish
+    environment:
+      INFLUXDB_URL: ${INFLUXDB_URL}
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN}
+      INFLUXDB_ORG: ${INFLUXDB_ORG}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL}
+      TARGET_SYMBOLS: ${TARGET_SYMBOLS}
+      INGEST_TIMEFRAMES: ${INGEST_TIMEFRAMES}
+      ENABLE_MULTI_TIMEFRAMES: ${ENABLE_MULTI_TIMEFRAMES}
+      PREDICTION_DISABLED_TIMEFRAMES: ${PREDICTION_DISABLED_TIMEFRAMES}
+      DISK_USAGE_PATH: ${DISK_USAGE_PATH}
+    depends_on:
+      - worker-ingest
+    restart: always
+    volumes:
+      - ./models:/app/models
+      - ./static_data:/app/static_data
+    command: ["python", "-u", "-m", "scripts.worker_publish"]
 
   monitor:
     image: ghcr.io/anti-coin/anti-coin-backend-worker:latest
@@ -92,7 +115,8 @@ services:
       MONITOR_POLL_SECONDS: ${MONITOR_POLL_SECONDS}
       MONITOR_RE_ALERT_CYCLES: ${MONITOR_RE_ALERT_CYCLES}
     depends_on:
-      - worker
+      - worker-ingest
+      - worker-publish
     restart: always
     volumes:
       - ./static_data:/app/static_data

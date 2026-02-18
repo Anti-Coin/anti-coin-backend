@@ -4,7 +4,11 @@ Authoritative for: repository structure and ownership boundaries.
 ## As-Is (Current Implemented Structure)
 ### Core app paths
 - `api/main.py`: API and freshness/status endpoints.
-- `scripts/pipeline_worker.py`: long-running ingest + prediction + static export worker.
+- `scripts/pipeline_worker.py`: orchestrator + shared worker runtime glue.
+- `workers/ingest.py`: ingest/downsample domain logic.
+- `workers/predict.py`: prediction/health domain logic.
+- `workers/export.py`: static export/manifest domain logic.
+- `scripts/worker_ingest.py`, `scripts/worker_publish.py`, `scripts/worker_predict.py`, `scripts/worker_export.py`: role-specific worker entrypoints.
 - `admin/app.py`: Streamlit dashboard for monitoring and visualization.
 
 ### Infra and runtime
@@ -21,7 +25,7 @@ Authoritative for: repository structure and ownership boundaries.
 - `docs/`: living plan, task board, decisions, debt register, handoff.
 
 ## Current Data Flow
-`ccxt/binance -> worker -> InfluxDB + static JSON -> nginx/static + fastapi -> streamlit`
+`ccxt/binance -> worker-ingest -> InfluxDB -> worker-publish -> static JSON -> nginx/static + fastapi -> streamlit`
 
 ## To-Be (Planned, Not Implemented Yet)
 Planned modular structure may include:

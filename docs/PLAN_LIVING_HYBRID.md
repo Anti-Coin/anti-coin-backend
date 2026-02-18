@@ -1,6 +1,6 @@
 # Coin Predict Living Plan (Hybrid)
 
-- Last Updated: 2026-02-13
+- Last Updated: 2026-02-17
 - Owner: Backend/Platform
 - Status: Active
 - Full Phase A History: `docs/archive/phase_a/PLAN_LIVING_HYBRID_PHASE_A_FULL_2026-02-12.md`
@@ -87,7 +87,7 @@
 
 ## 9. Current Risk Register (Top)
 1. `TD-018`: API-SSG 운영 계약 최종 확정 전까지 경계 혼선 가능
-2. `TD-019`: 단일 worker 결합으로 장애 전파 가능
+2. `TD-019`: `worker-ingest`/`worker-publish` 분리로 완화됐으나 publish 내부(predict/export) 결합 리스크는 잔존
 3. `TD-020`: 고정 poll loop로 비용/정합성 리스크
 4. `TD-024`: 단계별 부분 실패 알림 세분화 미완료
 5. `1m` 예측 경로를 그대로 확장할 경우 candle 경계 내 완료 실패(오버런) 리스크
