@@ -399,7 +399,9 @@ def parse_prediction_execution_result(
         return PredictionExecutionResult.FAILED
 
 
-def parse_ingest_since_source(raw_source: str | None) -> IngestSinceSource | None:
+def parse_ingest_since_source(
+    raw_source: str | None,
+) -> IngestSinceSource | None:
     """
     since source 문자열을 Enum으로 정규화한다.
     """

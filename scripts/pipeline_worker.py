@@ -125,11 +125,17 @@ DOWNSAMPLE_SOURCE_TIMEFRAME = "1h"
 DOWNSAMPLE_SOURCE_LOOKBACK_DAYS = 120
 FULL_BACKFILL_TOLERANCE_HOURS = 1
 CYCLE_TARGET_SECONDS = int(os.getenv("WORKER_CYCLE_SECONDS", "60"))
-RUNTIME_METRICS_WINDOW_SIZE = int(os.getenv("RUNTIME_METRICS_WINDOW_SIZE", "240"))
+RUNTIME_METRICS_WINDOW_SIZE = int(
+    os.getenv("RUNTIME_METRICS_WINDOW_SIZE", "240")
+)
 LOOKBACK_MIN_ROWS_RATIO = float(os.getenv("LOOKBACK_MIN_ROWS_RATIO", "0.8"))
-WORKER_SCHEDULER_MODE = os.getenv("WORKER_SCHEDULER_MODE", "boundary").strip().lower()
+WORKER_SCHEDULER_MODE = (
+    os.getenv("WORKER_SCHEDULER_MODE", "boundary").strip().lower()
+)
 VALID_WORKER_SCHEDULER_MODES = {"poll_loop", "boundary"}
-WORKER_EXECUTION_ROLE = os.getenv("WORKER_EXECUTION_ROLE", "all").strip().lower()
+WORKER_EXECUTION_ROLE = (
+    os.getenv("WORKER_EXECUTION_ROLE", "all").strip().lower()
+)
 VALID_WORKER_EXECUTION_ROLES = {"all", "ingest", "predict_export"}
 WORKER_PUBLISH_MODE = (
     os.getenv("WORKER_PUBLISH_MODE", "predict_and_export").strip().lower()
@@ -637,7 +643,9 @@ def _load_runtime_metrics(path: Path = RUNTIME_METRICS_FILE) -> list[dict]:
 
     entries = payload.get("recent_cycles")
     if not isinstance(entries, list):
-        logger.error("Invalid runtime metrics format: recent_cycles is not a list.")
+        logger.error(
+            "Invalid runtime metrics format: recent_cycles is not a list."
+        )
         return []
     return entries
 
@@ -663,7 +671,9 @@ def _percentile(values: list[float], q: float) -> float | None:
     return sorted_values[rank]
 
 
-def _normalize_source_counts(raw_counts: dict | None) -> dict[str, int] | dict[None]:
+def _normalize_source_counts(
+    raw_counts: dict | None,
+) -> dict[str, int] | dict[None]:
     """
     Args:
       - raw_counts: 원시 소스 카운트
@@ -687,7 +697,9 @@ def _normalize_source_counts(raw_counts: dict | None) -> dict[str, int] | dict[N
     return normalized
 
 
-def _aggregate_ingest_source_metrics(entries: list[dict]) -> dict[str, int | dict]:
+def _aggregate_ingest_source_metrics(
+    entries: list[dict],
+) -> dict[str, int | dict]:
     """
     Args:
       - entries: 런타임 메트릭스 (recent_cycles; _load_runtime_metrics)
@@ -701,7 +713,9 @@ def _aggregate_ingest_source_metrics(entries: list[dict]) -> dict[str, int | dic
     underfill_guard_retrigger_events = 0
 
     for item in entries:
-        counts = _normalize_source_counts(item.get("ingest_since_source_counts"))
+        counts = _normalize_source_counts(
+            item.get("ingest_since_source_counts")
+        )
         cycle_has_rebootstrap = False
 
         for source, count in counts.items():
@@ -727,7 +741,9 @@ def _aggregate_ingest_source_metrics(entries: list[dict]) -> dict[str, int | dic
     }
 
 
-def _aggregate_reason_counts(entries: list[dict], field_name: str) -> dict[str, int]:
+def _aggregate_reason_counts(
+    entries: list[dict], field_name: str
+) -> dict[str, int]:
     """
     Args:
       - entries: run_time_metrics; recent_cycles
@@ -756,7 +772,8 @@ def initialize_boundary_schedule(
     # 시작 시각을 now 그대로 쓰지 않는 이유는 경계 정렬을 강제해
     # poll drift(누적 시간 오차)를 줄이기 위함이다.
     return {
-        timeframe: next_timeframe_boundary(now, timeframe) for timeframe in timeframes
+        timeframe: next_timeframe_boundary(now, timeframe)
+        for timeframe in timeframes
     }
 
 
@@ -799,7 +816,9 @@ def resolve_boundary_due_timeframes(
         missed_boundary_count += max(0, boundary_advance_steps - 1)
 
     next_boundary_at = (
-        min(next_boundary_by_timeframe.values()) if next_boundary_by_timeframe else None
+        min(next_boundary_by_timeframe.values())
+        if next_boundary_by_timeframe
+        else None
     )
     return due_timeframes, missed_boundary_count, next_boundary_at
 
@@ -867,10 +886,14 @@ def append_runtime_cycle_metrics(
     entries = entries[-effective_window:]
 
     samples = len(entries)
-    success_count = sum(1 for item in entries if item.get("result") in {"ok", "idle"})
+    success_count = sum(
+        1 for item in entries if item.get("result") in {"ok", "idle"}
+    )
     failure_count = samples - success_count
     overrun_count = sum(1 for item in entries if item.get("overrun") is True)
-    elapsed_values = [float(item.get("elapsed_seconds", 0.0)) for item in entries]
+    elapsed_values = [
+        float(item.get("elapsed_seconds", 0.0)) for item in entries
+    ]
     sleep_values = [float(item.get("sleep_seconds", 0.0)) for item in entries]
     avg_elapsed = round(sum(elapsed_values) / samples, 2) if samples else None
     avg_sleep = round(sum(sleep_values) / samples, 2) if samples else None
@@ -884,7 +907,8 @@ def append_runtime_cycle_metrics(
     )
     if resolved_boundary_mode == "boundary_scheduler":
         boundary_counts = [
-            max(0, int(item.get("missed_boundary_count") or 0)) for item in entries
+            max(0, int(item.get("missed_boundary_count") or 0))
+            for item in entries
         ]
         missed_boundary_total = sum(boundary_counts)
         missed_boundary_rate = (
@@ -898,14 +922,18 @@ def append_runtime_cycle_metrics(
         "samples": samples,
         "success_count": success_count,
         "failure_count": failure_count,
-        "success_rate": (round(success_count / samples, 4) if samples else None),
+        "success_rate": (
+            round(success_count / samples, 4) if samples else None
+        ),
         "avg_elapsed_seconds": avg_elapsed,
         "p95_elapsed_seconds": (
             round(p95_elapsed, 2) if p95_elapsed is not None else None
         ),
         "avg_sleep_seconds": avg_sleep,
         "overrun_count": overrun_count,
-        "overrun_rate": (round(overrun_count / samples, 4) if samples else None),
+        "overrun_rate": (
+            round(overrun_count / samples, 4) if samples else None
+        ),
         "missed_boundary_count": missed_boundary_total,
         "missed_boundary_rate": missed_boundary_rate,
         "ingest_since_source_counts": ingest_source_metrics["source_counts"],
@@ -1081,14 +1109,18 @@ def resolve_ingest_since(
     )
 
 
-def _minimum_required_lookback_rows(timeframe: str, lookback_days: int) -> int | None:
+def _minimum_required_lookback_rows(
+    timeframe: str, lookback_days: int
+) -> int | None:
     """
     coverage underfill 최소 row 기준 계산 래퍼.
 
     Called from:
     - run_worker() underfill guard
     """
-    return ingest_ops.minimum_required_lookback_rows(_ctx(), timeframe, lookback_days)
+    return ingest_ops.minimum_required_lookback_rows(
+        _ctx(), timeframe, lookback_days
+    )
 
 
 def get_lookback_close_count(
@@ -1122,11 +1154,15 @@ def enforce_1m_retention(
         RETENTION_1M_DEFAULT_DAYS,
         min(retention_days, RETENTION_1M_MAX_DAYS),
     )
-    cutoff = (resolved_now - timedelta(days=effective_days)).replace(microsecond=0)
+    cutoff = (resolved_now - timedelta(days=effective_days)).replace(
+        microsecond=0
+    )
     epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
     for symbol in symbols:
-        predicate = f'_measurement="ohlcv" AND symbol="{symbol}" AND timeframe="1m"'
+        predicate = (
+            f'_measurement="ohlcv" AND symbol="{symbol}" AND timeframe="1m"'
+        )
         delete_api.delete(
             start=epoch,
             stop=cutoff,
@@ -1163,7 +1199,9 @@ def _load_downsample_lineage(
 
     entries = payload.get("entries")
     if not isinstance(entries, dict):
-        logger.error("Invalid downsample lineage format: entries is not a dict.")
+        logger.error(
+            "Invalid downsample lineage format: entries is not a dict."
+        )
         return {}
     return entries
 
@@ -1375,10 +1413,9 @@ def build_runtime_manifest(
     now: datetime | None = None,
     static_dir: Path | None = None,
     prediction_health_path: Path | None = None,
-    symbol_activation_entries: dict[
-        str, SymbolActivationSnapshot | dict
-    ]
-    | None = None,
+    symbol_activation_entries: (
+        dict[str, SymbolActivationSnapshot | dict] | None
+    ) = None,
 ) -> dict:
     """
     runtime manifest 생성 래퍼.
@@ -1413,10 +1450,9 @@ def write_runtime_manifest(
     now: datetime | None = None,
     static_dir: Path | None = None,
     prediction_health_path: Path | None = None,
-    symbol_activation_entries: dict[
-        str, SymbolActivationSnapshot | dict
-    ]
-    | None = None,
+    symbol_activation_entries: (
+        dict[str, SymbolActivationSnapshot | dict] | None
+    ) = None,
     path: Path | None = None,
 ) -> None:
     """
@@ -1466,7 +1502,9 @@ def _query_first_timestamp(query_api, query: str) -> datetime | None:
     return ingest_ops.query_first_timestamp(query_api, query)
 
 
-def get_first_timestamp(query_api, symbol: str, timeframe: str) -> datetime | None:
+def get_first_timestamp(
+    query_api, symbol: str, timeframe: str
+) -> datetime | None:
     """
     DB earliest 조회 래퍼.
 
@@ -1476,7 +1514,9 @@ def get_first_timestamp(query_api, symbol: str, timeframe: str) -> datetime | No
     return ingest_ops.get_first_timestamp(_ctx(), query_api, symbol, timeframe)
 
 
-def get_last_timestamp(query_api, symbol, timeframe, *, full_range: bool = False):
+def get_last_timestamp(
+    query_api, symbol, timeframe, *, full_range: bool = False
+):
     """
     DB latest 조회 래퍼.
 
@@ -1625,7 +1665,9 @@ def fetch_and_save(
     Called from:
     - run_ingest_step
     """
-    return ingest_ops.fetch_and_save(_ctx(), write_api, symbol, since_ts, timeframe)
+    return ingest_ops.fetch_and_save(
+        _ctx(), write_api, symbol, since_ts, timeframe
+    )
 
 
 def _fetch_ohlcv_paginated(
@@ -1684,14 +1726,18 @@ def _refill_detected_gaps(
     )
 
 
-def run_prediction_and_save(write_api, symbol, timeframe) -> tuple[str, str | None]:
+def run_prediction_and_save(
+    write_api, symbol, timeframe
+) -> tuple[str, str | None]:
     """
     prediction 실행 래퍼.
 
     Called from:
     - run_worker() predict stage
     """
-    return predict_ops.run_prediction_and_save(_ctx(), write_api, symbol, timeframe)
+    return predict_ops.run_prediction_and_save(
+        _ctx(), write_api, symbol, timeframe
+    )
 
 
 def run_prediction_and_save_outcome(
@@ -1720,7 +1766,9 @@ def update_full_history_file(query_api, symbol, timeframe) -> bool:
     Called from:
     - run_worker() export stage
     """
-    return export_ops.update_full_history_file(_ctx(), query_api, symbol, timeframe)
+    return export_ops.update_full_history_file(
+        _ctx(), query_api, symbol, timeframe
+    )
 
 
 @dataclass
@@ -1915,7 +1963,8 @@ def _run_ingest_timeframe_step(
         ),
         enforce_full_backfill=(
             timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
-            and symbol_activation.visibility == SymbolVisibility.HIDDEN_BACKFILLING
+            and symbol_activation.visibility
+            == SymbolVisibility.HIDDEN_BACKFILLING
         ),
         now=cycle_now,
     )
@@ -1940,8 +1989,7 @@ def _run_ingest_timeframe_step(
     if is_rebootstrap_source(since_source):
         if (
             since_source == IngestSinceSource.BOOTSTRAP_EXCHANGE_EARLIEST
-            or since_source
-            == IngestSinceSource.FULL_BACKFILL_EXCHANGE_EARLIEST
+            or since_source == IngestSinceSource.FULL_BACKFILL_EXCHANGE_EARLIEST
             or since_source
             == IngestSinceSource.STATE_DRIFT_REBOOTSTRAP_EXCHANGE_EARLIEST
         ):
@@ -2149,7 +2197,9 @@ def _run_publish_timeframe_step(
         if prediction_outcome.result == PredictionExecutionResult.SKIPPED:
             return
 
-        prediction_ok = prediction_outcome.result == PredictionExecutionResult.OK
+        prediction_ok = (
+            prediction_outcome.result == PredictionExecutionResult.OK
+        )
         health, was_degraded, is_degraded = upsert_prediction_health(
             symbol,
             timeframe,
@@ -2383,7 +2433,9 @@ def run_worker():
                             send_alert(msg)
                     previous_disk_level = disk_level
                 except OSError as e:
-                    logger.error(f"[Storage Guard] disk usage check failed: {e}")
+                    logger.error(
+                        f"[Storage Guard] disk usage check failed: {e}"
+                    )
 
             if (
                 run_ingest_stage
@@ -2452,7 +2504,9 @@ def run_worker():
                             cycle_detection_skip_counts=cycle_detection_skip_counts,
                             cycle_detection_run_counts=cycle_detection_run_counts,
                         )
-                        state.symbol_activation_entries[symbol] = symbol_activation
+                        state.symbol_activation_entries[symbol] = (
+                            symbol_activation
+                        )
                         if not should_continue_publish:
                             continue
 
