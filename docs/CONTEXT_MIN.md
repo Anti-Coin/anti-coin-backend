@@ -20,13 +20,13 @@
 2. worker 경계: `worker-ingest`/`worker-publish` 2-service + ingest watermark 기반 publish gate 유지(`D-2026-02-17-38`).
 3. 대사 기준: monitor Influx-JSON consistency는 `symbol+timeframe` 고정, `PRIMARY_TIMEFRAME`에만 legacy fallback 허용(`D-2026-02-19-40`).
 4. 현재 핵심 태스크:
-   - `C-010`: orchestrator 제어면 책임 경계 정리(동작 불변)
    - `C-001`: 심볼 확장 자동화 경계 확정
    - `C-003`: 정적/상태 경로 부하 테스트 시나리오 정비
-5. `C-010` 진행 근거(2026-02-19):
+   - `C-012`: 디렉토리/파일 재배치 계획 수립(런타임 계약 보존 전제)
+5. `C-010` 완료 근거(2026-02-19):
    - ingest_state 즉시 커밋 vs ingest watermark 지연 커밋 경계를 코드 helper로 명시화.
    - characterization test(커밋 경계/blocked_storage_guard/실패 시 watermark 비전진) 추가.
-   - 기준선 회귀: `PYENV_VERSION=coin pytest -q` 통과(`118 passed`).
+   - 기준선 회귀: `PYENV_VERSION=coin pytest -q` 통과(`118 passed`) + 운영 smoke 확인.
 
 ## 4. Phase D Detailed Strategy
 1. 기본 모델 커버리지는 `timeframe-shared champion`으로 시작한다(`D-2026-02-13-32`).

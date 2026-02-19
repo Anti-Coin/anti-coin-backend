@@ -67,9 +67,9 @@
 4. Phase B 상세 이력은 `docs/archive/phase_b/*`를 단일 출처로 사용한다.
 
 ## 6. Next Cycle (Recommended)
-1. `C-010` 수행: orchestrator 제어면 가독성 정리(동작 불변)
-2. `C-001` 수행: 심볼 확장 자동화 착수 조건/경계 확정
-3. `C-003` 수행: 정적/상태 경로 부하 테스트 시나리오 정비
+1. `C-001` 수행: 심볼 확장 자동화 착수 조건/경계 확정
+2. `C-003` 수행: 정적/상태 경로 부하 테스트 시나리오 정비
+3. `C-012` 수행: 디렉토리/파일 재배치 계획 수립(런타임 계약 보존 전제)
 
 ## 7. Portfolio Capability Matrix (Current vs Next)
 | Capability | Current Evidence | Next Strengthening |

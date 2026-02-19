@@ -17,6 +17,7 @@
 4. `B-007` 완료 (2026-02-19): admin 대시보드 manifest-first 전환 및 회귀 검증 완료
 5. `B-005` 완료 (2026-02-19): `/history`/`/predict` sunset(`410`) + 오너 확인 기반 fallback 비의존 운영 확인
 6. `B-008` 완료 (2026-02-19, sunset scope close): FE 미구축 상태에서 종료, FE 재개 시 재오픈 조건으로 전환
+7. `C-010` 완료 (2026-02-19): orchestrator 제어면 책임 경계 분리(pass1+pass2) + smoke/회귀 검증 완료
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -53,7 +54,7 @@
 | C-008 | P1 | `1h` underfill RCA + temporary guard sunset 결정 | done (2026-02-17) | legacy fallback 오염 경로 차단(`not exists r["timeframe"]`) + 회귀/문서화 완료 |
 | C-009 | P1 | monitor Influx-JSON consistency timeframe-aware 보강 | done (2026-02-19) | Influx latest 조회를 `symbol+timeframe` 기준으로 고정 + `PRIMARY_TIMEFRAME` legacy fallback 유지 |
 | C-011 | P1 | boundary scheduler 재시작 catch-up 보강 | done (2026-02-19) | 재시작 직후 `1d/1w/1M` missed boundary를 첫 cycle에서 따라잡도록 초기화 경계 조정 |
-| C-010 | P2 | orchestrator 가독성 정리(`pipeline_worker.py` 제어면 경계 단순화) | in_progress (2026-02-19, pass1+pass2) | cycle commit/state 저장 책임(ingest_state vs watermark commit) 분리 + 동작 불변 회귀 검증 |
+| C-010 | P2 | orchestrator 가독성 정리(`pipeline_worker.py` 제어면 경계 단순화) | done (2026-02-19) | cycle commit/state 저장 책임(ingest_state vs watermark commit) 분리 + 동작 불변 회귀/운영 smoke 검증 |
 | C-012 | P2 | 디렉토리/파일 재배치(런타임 계약 보존 전제) | open | docker/compose 엔트리포인트/빌드 컨텍스트 계약 유지 하에 구조 재배치 계획 + 단계별 롤백/검증 절차 확정 |
 
 ### Phase D (Model Evolution)
@@ -72,9 +73,9 @@
 | D-011 | P1 | Model Coverage Matrix + Fallback Resolver 구현 | open | `dedicated -> shared -> insufficient_data` fallback 체인이 코드/메타데이터/테스트로 검증됨 |
 
 ## 3. Immediate Bundle
-1. `C-010`
-2. `C-001`
-3. `C-003`
+1. `C-001`
+2. `C-003`
+3. `C-012`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
@@ -127,7 +128,7 @@
 1. 현재 우선순위(`Stability > Cost > Performance`)에 따라 Option A를 기준선으로 채택한다.
 2. `B-005`는 사용자 의견에 따라 P2를 유지했다.
 3. Option B는 `C-002`에서 비용 압력이 즉시 심각하다는 증거가 나올 때 fallback 후보로만 유지한다.
-4. Phase B 종료 이후 활성 실행 순서는 `C-010 -> C-001 -> C-003`이다.
+4. `C-010` 완료 이후 활성 실행 순서는 `C-001 -> C-003 -> C-012`이다.
 
 ## 8. R-004 Kickoff Contract (Accepted)
 1. Kickoff 구현 묶음은 `B-002`, `B-003` 2개로 고정했다.
