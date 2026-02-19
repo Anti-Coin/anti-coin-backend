@@ -157,59 +157,41 @@ def query_influx(symbol: str, measurement: str, days: int = 30):
 @app.get("/history/{symbol:path}")
 def get_history(symbol: str):
     """
-    과거 30일치 차트 데이터 반환
+    Sunset tombstone endpoint.
+
+    Why:
+    - 사용자 데이터 플레인은 static JSON(SSG) + `/status`로 고정되었다.
+    - legacy fallback 호출을 조용히 성공시키지 않고, 명시적으로 종료를 알린다.
     """
-    start_time = time.time()
-    df = query_influx(symbol, "ohlcv", days=30)
-
-    if df is None:
-        raise HTTPException(
-            status_code=404, detail=f"No history data for {symbol}"
-        )
-
-    # 필요한 컬럼만 추출
-    cols = ["timestamp", "open", "high", "low", "close", "volume"]
-    available_cols = [c for c in cols if c in df.columns]
-
-    return {
-        "symbol": symbol,
-        "count": len(df),
-        "execution_time": round(time.time() - start_time, 4),
-        "data": df[available_cols].to_dict(orient="records"),
-    }
+    safe_symbol = symbol.replace("/", "_")
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Endpoint sunset: /history is no longer served. "
+            f"Use /static/history_{safe_symbol}_<timeframe>.json and "
+            f"/status/{symbol}."
+        ),
+    )
 
 
 @app.get("/predict/{symbol:path}")
 def predict_price(symbol: str):
     """
-    'prediction' 테이블에서 미리 계산된 데이터를 가져옴
+    Sunset tombstone endpoint.
+
+    Why:
+    - 사용자 데이터 플레인은 static JSON(SSG) + `/status`로 고정되었다.
+    - legacy fallback 호출을 조용히 성공시키지 않고, 명시적으로 종료를 알린다.
     """
-    start_time = time.time()
-
-    # DB에서 예측 결과 조회 (최근 24시간 내 생성된 데이터 중 미래값)
-    df = query_influx(symbol, "prediction", days=2)
-
-    if df is None or df.empty:
-        # DB에 아직 예측값이 없을 경우 (Worker가 안 돌았거나 모델이 없을 때)
-        raise HTTPException(status_code=404, detail="No prediction data found.")
-
-    now = datetime.now(timezone.utc)
-    df = df[df["timestamp"] > now]
-
-    if df is None or df.empty:
-        raise HTTPException(
-            status_code=503, detail="System outdated. Worker is down."
-        )
-
-    cols = ["timestamp", "yhat", "yhat_lower", "yhat_upper"]
-    available_cols = [c for c in cols if c in df.columns]
-
-    return {
-        "symbol": symbol,
-        "source": "InfluxDB (Pre-computed)",
-        "execution_time": round(time.time() - start_time, 4),
-        "forecast": df[available_cols].to_dict(orient="records"),
-    }
+    safe_symbol = symbol.replace("/", "_")
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Endpoint sunset: /predict is no longer served. "
+            f"Use /static/prediction_{safe_symbol}_<timeframe>.json and "
+            f"/status/{symbol}."
+        ),
+    )
 
 
 @app.get("/status/{symbol:path}")

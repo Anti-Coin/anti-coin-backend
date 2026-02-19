@@ -373,6 +373,25 @@
   - monitor 이벤트 영속화가 도입되어 alert miss/MTTR 자동 집계가 가능해질 때
   - 운영 트래픽/사고 빈도가 증가해 current cadence가 대응에 부족할 때
 
+### D-2026-02-19-42
+- Date: 2026-02-19
+- Status: Accepted
+- Topic: `B-005` Endpoint Sunset Execution (`/history`, `/predict` -> `410 Gone`)
+- Context:
+  - 사용자 플레인은 이미 static JSON(SSG) + `/status`로 고정돼 있고, FE는 `/history`/`/predict`를 사용하지 않는다.
+  - fallback endpoint를 계속 열어두면 경계 혼선과 숨은 의존성이 장기 부채로 남을 수 있다.
+- Decision:
+  - `/history/{symbol}`와 `/predict/{symbol}`는 sunset tombstone으로 전환한다.
+  - 두 endpoint는 `410 Gone`을 반환하고, 대체 경로(`/static/*`, `/status`)를 응답 메시지에 명시한다.
+  - `B-005` 완료는 코드 전환만으로 닫지 않고, 배포 후 fallback 비의존 운영 1 cycle 관측 증거를 필수로 요구한다.
+  - rollback은 API 핸들러 복구 -> 테스트 -> fastapi 재배포 순서로 runbook에 문서화한다.
+- Consequence:
+  - API-SSG 경계가 명확해지고, 운영자가 의도치 않게 fallback을 정상 경로로 오해할 가능성이 줄어든다.
+  - 기존에 fallback을 호출하던 외부 소비자는 즉시 실패(410)를 보게 되므로, 배포 직후 호출 로그 관측이 필요하다.
+- Revisit Trigger:
+  - 운영 점검 과정에서 `/status` + static 조합으로 대체되지 않는 필수 진단 시나리오가 확인될 때
+  - 배포 후 410 호출이 지속적으로 발생해 실제 숨은 의존성이 확인될 때
+
 ## 3. Decision Operation Policy
 1. Archive로 이동된 결정은 `Section 1`에 요약 형태로만 유지한다.
 2. 아직 archive로 이동하지 않은 결정은 `Section 2`에 상세 형태로 유지한다.

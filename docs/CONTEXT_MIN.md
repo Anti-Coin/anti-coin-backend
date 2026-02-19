@@ -6,7 +6,7 @@
 ## 1. Snapshot
 1. Phase A(Reliability Baseline)는 2026-02-12에 완료했다.
 2. `R-005`(SLA-lite baseline)와 `B-007`(admin timeframe 대시보드 확장)은 완료되었다.
-3. 현재 우선 작업은 `B-005`(fallback endpoint sunset), `C-010`(orchestrator 가독성 정리), `B-008`(FE visibility gate)이다.
+3. 현재 우선 작업은 `B-005`(sunset 배포 검증), `C-010`(orchestrator 가독성 정리), `B-008`(FE visibility gate)이다.
 4. `B-006`(저장소 예산 가드 + retention/downsample)은 완료되었다.
 5. `1d/1w/1M`은 `1h` downsample 파생 경로로 고정되며 direct ingest는 정책상 금지다.
 6. `B-005`(endpoint sunset)는 P2 트랙으로 유지한다.
@@ -21,12 +21,12 @@
 1. Source of Truth는 InfluxDB다.
 2. 사용자 데이터 플레인은 SSG(static JSON)다.
 3. `/status`는 운영 신호 및 프론트 경고 노출에 사용 가능하다.
-4. `/history`, `/predict`는 fallback/디버그 경로이며 `B-005`에서 sunset 정리한다.
+4. `/history`, `/predict`는 `B-005`에서 sunset tombstone(`410`)으로 전환됐고, fallback 정상 경로로 사용하지 않는다.
 
 ## 4. Active Decision Set
 1. `D-2026-02-10-09`: InfluxDB를 SoT로 고정
 2. `D-2026-02-12-13`: Phase B 전 `INGEST_TIMEFRAMES=1h` 고정
-3. `D-2026-02-12-14`: SSG primary + fallback endpoint 유지
+3. `D-2026-02-12-14`: SSG primary + fallback endpoint 유지(`D-2026-02-19-42`로 superseded)
 4. `D-2026-02-12-18`: prediction 저장 유지 + 실패 시 last-good + degraded
 5. `D-2026-02-12-19`: `soft stale`와 `degraded` 분리
 6. `D-2026-02-12-24`: soft/hard 상태 3사이클 재알림
@@ -40,6 +40,7 @@
 14. `D-2026-02-19-39`: multi-timeframe freshness 기본 임계값(`1w/1M`) 고정 + `4h` legacy compatibility 유지
 15. `D-2026-02-19-40`: monitor Influx-JSON consistency를 `symbol+timeframe` 기준으로 고정
 16. `D-2026-02-19-41`: SLA-lite baseline을 user-plane availability 중심으로 고정
+17. `D-2026-02-19-42`: `/history`, `/predict` endpoint sunset(`410 Gone`) 실행
 
 ## 5. Current Risk Focus
 1. `TD-018`: API-SSG 운영 계약(필드/경로) 최종 확정 미완료

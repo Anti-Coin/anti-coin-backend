@@ -7,6 +7,24 @@ from fastapi import HTTPException
 import api.main as api_main
 
 
+def test_history_endpoint_returns_410_after_sunset():
+    with pytest.raises(HTTPException) as exc:
+        api_main.get_history("BTC/USDT")
+
+    assert exc.value.status_code == 410
+    assert "sunset" in exc.value.detail.lower()
+    assert "/static/history_BTC_USDT_<timeframe>.json" in exc.value.detail
+
+
+def test_predict_endpoint_returns_410_after_sunset():
+    with pytest.raises(HTTPException) as exc:
+        api_main.predict_price("BTC/USDT")
+
+    assert exc.value.status_code == 410
+    assert "sunset" in exc.value.detail.lower()
+    assert "/static/prediction_BTC_USDT_<timeframe>.json" in exc.value.detail
+
+
 def _write_prediction_file(
     tmp_path,
     symbol: str,

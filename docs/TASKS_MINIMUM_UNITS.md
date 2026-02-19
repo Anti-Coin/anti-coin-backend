@@ -49,6 +49,7 @@
 37. `R-005` 완료 (2026-02-19): SLA-lite baseline을 user plane availability 중심으로 고정(공식/데이터 소스/산출 주기 잠금), `D-2026-02-19-41` 반영
 38. `B-007` 완료 (2026-02-19): admin 대시보드를 manifest-first로 전환해 symbol/timeframe/status 필터, timeframe 상태 매트릭스, prediction updated 지연 테이블을 제공하고 회귀 `113 passed`로 검증
 39. `I-2026-02-19-02` 반영: streamlit Docker packaging을 `/app/admin` 구조로 고정해 `admin.manifest_view` import 오류를 제거(`docker/Dockerfile.streamlit`)
+40. `B-005` 진행 (2026-02-19): `/history`/`/predict`를 sunset tombstone(`410 Gone`)으로 전환하고 회귀 테스트(`tests/test_api_status.py`)를 추가, 운영 1-cycle 비의존 검증과 최종 runbook 확정은 배포 검증 단계로 이월
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -70,7 +71,7 @@
 | B-007 | P2 | 운영 대시보드(admin) timeframe 확장 | done (2026-02-19) | `admin/app.py`가 `manifest.json` 1차 소스를 사용해 symbol/timeframe/status 필터, timeframe별 freshness/degraded/serve_allowed 상태 매트릭스, prediction updated 지연 테이블을 제공하며 `tests/test_manifest_view.py` + 전체 회귀 `113 passed`로 검증됨 |
 | B-008 | P2 | FE 심볼 노출 게이트 연동(`hidden_backfilling` 필터) | open | FE 심볼 리스트가 `manifest.visibility`를 소비해 `hidden_backfilling` 심볼을 완전 비노출하며, `ready_for_serving` 전환 시 자동 노출 복귀가 검증된다 |
 | B-006 | P1 | 저장소 예산 가드(50GB) + retention/downsample 실행 | done (2026-02-13) | `1m` rolling(`14d default / 30d cap`) 적용 + 디스크 watermark 경보/차단 + `1h->1d/1w/1M` downsample job 및 `downsample_lineage.json` 기반 lineage/검증 경로 확정 |
-| B-005 | P2 | `/history`/`/predict` fallback 정리(sunset) | open | Endpoint Sunset 체크리스트 조건 충족 + fallback 비의존 운영 1 cycle 검증 + rollback 절차 문서화 |
+| B-005 | P2 | `/history`/`/predict` fallback 정리(sunset) | in_progress (2026-02-19) | 코드 경로 sunset(`410`) + 회귀 테스트 + Endpoint Sunset 체크리스트 충족 근거 + fallback 비의존 운영 1 cycle 검증 + rollback 절차 문서화 |
 
 ### Phase C (Scale and Ops)
 | ID | Priority | Task | Status | Done Condition |

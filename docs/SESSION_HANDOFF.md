@@ -30,9 +30,10 @@
 24. `R-005` 완료 (2026-02-19): SLA-lite baseline을 user plane availability 기준으로 고정하고, `Alert Miss Rate`/`MTTR-Stale`의 공식/데이터 소스/산출 주기를 `D-2026-02-19-41`로 잠금.
 25. `B-007` 완료 (2026-02-19): admin 대시보드를 manifest-first로 전환해 symbol/timeframe/status 필터, timeframe 상태 매트릭스, prediction updated 지연 테이블을 제공하고 회귀 `113 passed` 확인.
 26. `I-2026-02-19-02` 반영: streamlit Docker 이미지가 `admin/`를 `/app/admin`으로 복사하고 `streamlit run admin/app.py`로 실행되도록 수정해 `admin.manifest_view` import 오류를 제거.
+27. `B-005` 진행 (2026-02-19): `/history`/`/predict` fallback endpoint를 `410 Gone` tombstone으로 전환하고 API 회귀 테스트를 추가. 운영 1-cycle 비의존 검증과 최종 rollback runbook 잠금은 배포 검증 후 확정 예정.
 
 ## 2. Next Priority Tasks
-1. `B-005`: `/history`/`/predict` sunset 조건 충족 여부 재검증
+1. `B-005`: `/history`/`/predict` sunset 배포 검증(비의존 1 cycle + rollback runbook 잠금)
 2. `C-010`: orchestrator 가독성 정리(`pipeline_worker.py` 제어면 경계 단순화)
 3. `B-008`(P2): FE 심볼 노출 게이트 연동(`hidden_backfilling` 필터)
 4. `C-001`: 심볼 목록 확장 자동화
