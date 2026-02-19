@@ -5,11 +5,12 @@
 
 ## 1. Snapshot
 1. Phase A(Reliability Baseline)는 2026-02-12에 완료했다.
-2. 현재 우선 작업은 `R-005`(SLA-lite 지표 고정), `B-007`(운영 대시보드 확장), `B-005`(fallback endpoint sunset)이다.
-3. `B-006`(저장소 예산 가드 + retention/downsample)은 완료되었다.
-4. `1d/1w/1M`은 `1h` downsample 파생 경로로 고정되며 direct ingest는 정책상 금지다.
-5. `B-005`(endpoint sunset)는 P2 트랙으로 유지한다.
-6. 운영 현실은 Oracle Free Tier ARM + 단일 운영자다.
+2. `R-005`(SLA-lite baseline)와 `B-007`(admin timeframe 대시보드 확장)은 완료되었다.
+3. 현재 우선 작업은 `B-005`(fallback endpoint sunset), `C-010`(orchestrator 가독성 정리), `B-008`(FE visibility gate)이다.
+4. `B-006`(저장소 예산 가드 + retention/downsample)은 완료되었다.
+5. `1d/1w/1M`은 `1h` downsample 파생 경로로 고정되며 direct ingest는 정책상 금지다.
+6. `B-005`(endpoint sunset)는 P2 트랙으로 유지한다.
+7. 운영 현실은 Oracle Free Tier ARM + 단일 운영자다.
 
 ## 2. Non-Negotiables
 1. 우선순위: Stability > Cost > Performance.
@@ -38,6 +39,7 @@
 13. `D-2026-02-13-34`: mismatch taxonomy 분리 + derived TF direct ingest 금지 경계 확정
 14. `D-2026-02-19-39`: multi-timeframe freshness 기본 임계값(`1w/1M`) 고정 + `4h` legacy compatibility 유지
 15. `D-2026-02-19-40`: monitor Influx-JSON consistency를 `symbol+timeframe` 기준으로 고정
+16. `D-2026-02-19-41`: SLA-lite baseline을 user-plane availability 중심으로 고정
 
 ## 5. Current Risk Focus
 1. `TD-018`: API-SSG 운영 계약(필드/경로) 최종 확정 미완료
