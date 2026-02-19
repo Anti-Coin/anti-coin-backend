@@ -1791,6 +1791,75 @@ class WorkerPersistentState:
     export_watermarks: dict[str, WatermarkCursor | str]
 
 
+def _commit_ingest_cursor_state(
+    *,
+    ingest_state_store: IngestStateStore,
+    symbol: str,
+    timeframe: str,
+    last_closed_ts: datetime | None,
+    status: str,
+) -> None:
+    """
+    ingest cursor/status를 즉시 저장한다.
+
+    Commit boundary:
+    - IngestStateStore.upsert는 호출 시점에 파일(JSON)까지 즉시 persist된다.
+    - 따라서 이 함수는 cycle 종료 commit과 별개로 동작하는 hard commit 경계다.
+    """
+    ingest_state_store.upsert(
+        symbol,
+        timeframe,
+        last_closed_ts=last_closed_ts,
+        status=status,
+    )
+
+
+def _record_ingest_outcome_state(
+    *,
+    ingest_state_store: IngestStateStore,
+    state: WorkerPersistentState,
+    symbol: str,
+    timeframe: str,
+    previous_last_closed_ts: datetime | None,
+    ingest_outcome: IngestExecutionOutcome,
+) -> None:
+    """
+    ingest 결과를 cursor(hard commit)와 watermark(memory commit)로 분리 기록한다.
+
+    Commit boundary:
+    - ingest_state cursor/status: 즉시 파일 반영(hard commit)
+    - ingest watermark: 메모리만 전진, 파일 반영은 cycle 종료 시점으로 지연
+    """
+    if ingest_outcome.result == IngestExecutionResult.SAVED:
+        _commit_ingest_cursor_state(
+            ingest_state_store=ingest_state_store,
+            symbol=symbol,
+            timeframe=timeframe,
+            last_closed_ts=ingest_outcome.latest_saved_at,
+            status="ok",
+        )
+        if ingest_outcome.latest_saved_at is not None:
+            _upsert_watermark(
+                state.ingest_watermarks,
+                symbol=symbol,
+                timeframe=timeframe,
+                closed_at=ingest_outcome.latest_saved_at,
+            )
+        return
+
+    if ingest_outcome.result in (
+        IngestExecutionResult.FAILED,
+        IngestExecutionResult.UNSUPPORTED,
+    ):
+        _commit_ingest_cursor_state(
+            ingest_state_store=ingest_state_store,
+            symbol=symbol,
+            timeframe=timeframe,
+            last_closed_ts=previous_last_closed_ts,
+            status="failed",
+        )
+
+
 def _coerce_storage_guard_level(raw_level: str) -> StorageGuardLevel:
     """
     문자열 storage level을 Enum으로 정규화한다.
@@ -1918,8 +1987,8 @@ def _run_ingest_timeframe_step(
     Step contract (1h 기준):
     1) detection gate로 실행 여부를 먼저 확정한다.
     2) since(source)를 계산하고 ingest를 실행한다.
-    3) ingest 성공 시 ingest watermark를 메모리에서만 전진시킨다.
-    4) cycle 끝 _persist_cycle_runtime_state에서 파일 커밋한다.
+    3) ingest_state cursor/status는 즉시 파일 커밋한다.
+    4) ingest watermark는 메모리에서만 전진시키고 cycle 종료에 파일 커밋한다.
     """
     state_since = ingest_state_store.get_last_closed(symbol, timeframe)
     last_time = get_last_timestamp(query_api, symbol, timeframe)
@@ -2003,9 +2072,10 @@ def _run_ingest_timeframe_step(
             f"[{symbol} {timeframe}] initial backfill blocked "
             f"by storage guard (usage={disk_usage_percent}%)."
         )
-        ingest_state_store.upsert(
-            symbol,
-            timeframe,
+        _commit_ingest_cursor_state(
+            ingest_state_store=ingest_state_store,
+            symbol=symbol,
+            timeframe=timeframe,
             last_closed_ts=state_since,
             status=IngestSinceSource.BLOCKED_STORAGE_GUARD.value,
         )
@@ -2035,32 +2105,15 @@ def _run_ingest_timeframe_step(
         timeframe=timeframe,
         since=since,
     )
-    if ingest_outcome.result == IngestExecutionResult.SAVED:
-        # ingest cursor와 ingest watermark는 같은 시점(latest_saved_at)으로 전진시킨다.
-        # publish 단계는 이후 gate에서 이 ingest watermark를 기준으로 동기화된다.
-        ingest_state_store.upsert(
-            symbol,
-            timeframe,
-            last_closed_ts=ingest_outcome.latest_saved_at,
-            status="ok",
-        )
-        # XXX: ingest_state_store는 upsert 호출 시 즉시 저장(JSON)
-        # watermark는 메모리에만 업데이트 하고, 최종 저장은 바깥 루프에 위임
-        # "상태 불일치" 발생 가능
-        if ingest_outcome.latest_saved_at is not None:
-            _upsert_watermark(
-                state.ingest_watermarks,
-                symbol=symbol,
-                timeframe=timeframe,
-                closed_at=ingest_outcome.latest_saved_at,
-            )
-    elif ingest_outcome.result == IngestExecutionResult.FAILED:
-        ingest_state_store.upsert(
-            symbol,
-            timeframe,
-            last_closed_ts=state_since,
-            status="failed",
-        )
+    _record_ingest_outcome_state(
+        ingest_state_store=ingest_state_store,
+        state=state,
+        symbol=symbol,
+        timeframe=timeframe,
+        previous_last_closed_ts=state_since,
+        ingest_outcome=ingest_outcome,
+    )
+    if ingest_outcome.result == IngestExecutionResult.FAILED:
         _log_stage_failure_context(
             "ingest",
             symbol=symbol,
@@ -2074,12 +2127,6 @@ def _run_ingest_timeframe_step(
             },
         )
     elif ingest_outcome.result == IngestExecutionResult.UNSUPPORTED:
-        ingest_state_store.upsert(
-            symbol,
-            timeframe,
-            last_closed_ts=state_since,
-            status="failed",
-        )
         _log_stage_failure_context(
             "ingest",
             symbol=symbol,
@@ -2276,10 +2323,9 @@ def _persist_cycle_runtime_state(
     cycle 종료 시 runtime state 파일을 저장한다.
 
     Commit policy:
-    - 이 함수 이전에는 메모리 상태만 변경된다.
-    - 이 함수에서 symbol_activation / ingest / predict / export watermark가
-      파일로 커밋된다.
-    - 따라서 "watermark가 올라갔는지"는 이 함수가 지난 뒤 파일에서 확인해야 한다.
+    - ingest_state cursor/status는 ingest 단계에서 즉시 커밋된다.
+    - 이 함수는 메모리 state(symbol_activation + watermarks)를 파일로 반영한다.
+    - 따라서 watermarks/manifest의 파일 반영은 이 함수 이후 상태를 기준으로 확인한다.
     """
     if run_ingest_stage:
         try:
@@ -2316,6 +2362,164 @@ def _persist_cycle_runtime_state(
         except Exception as e:
             logger.error(f"Runtime manifest update failed: {e}")
             send_alert(f"[Manifest Error] {e}")
+
+
+def _reload_publish_only_shared_state_for_cycle(
+    *,
+    run_publish_stage: bool,
+    run_ingest_stage: bool,
+    state: WorkerPersistentState,
+) -> None:
+    """
+    publish-only worker cycle 시작 시 공유 상태를 파일에서 동기화한다.
+    """
+    if run_publish_stage and not run_ingest_stage:
+        # publish 전용 프로세스는 ingest와 메모리를 공유하지 않는다.
+        # 따라서 매 cycle 파일에서 최신 activation/watermark를 다시 읽어
+        # 프로세스 간 eventual consistency를 맞춘다.
+        # ingest worker가 아직 커밋하지 않은 메모리 상태는 볼 수 없으므로,
+        # 최대 1 cycle 지연은 정상 동작 범위다.
+        state.symbol_activation_entries = _load_symbol_activation()
+        state.ingest_watermarks = _load_watermark_entries(
+            INGEST_WATERMARK_FILE
+        )
+
+
+def _run_symbol_timeframe_cycle_stages(
+    *,
+    run_ingest_stage: bool,
+    run_publish_stage: bool,
+    run_predict_stage: bool,
+    run_export_stage: bool,
+    write_api,
+    query_api,
+    activation_exchange,
+    ingest_state_store: IngestStateStore,
+    scheduler_mode: str,
+    cycle_now: datetime,
+    active_timeframes: list[str],
+    disk_level: StorageGuardLevel,
+    disk_usage_percent: float | None,
+    state: WorkerPersistentState,
+    cycle_since_source_counts: dict[str, int],
+    cycle_detection_skip_counts: dict[str, int],
+    cycle_detection_run_counts: dict[str, int],
+    cycle_export_gate_skip_counts: dict[str, int],
+    cycle_predict_gate_skip_counts: dict[str, int],
+) -> None:
+    """
+    cycle 내 symbol/timeframe ingest+publish 단계를 실행한다.
+    """
+    for symbol in TARGET_COINS:
+        (
+            symbol_activation,
+            exchange_earliest,
+            activation_loaded,
+        ) = _prepare_symbol_activation_for_cycle(
+            run_ingest_stage=run_ingest_stage,
+            query_api=query_api,
+            activation_exchange=activation_exchange,
+            symbol=symbol,
+            cycle_now=cycle_now,
+            state=state,
+        )
+
+        if (
+            symbol_activation.visibility == SymbolVisibility.HIDDEN_BACKFILLING
+            and (run_ingest_stage or activation_loaded)
+        ):
+            _remove_static_exports_for_symbol(
+                symbol,
+                TIMEFRAMES,
+                static_dir=STATIC_DIR,
+            )
+
+        for timeframe in active_timeframes:
+            if run_ingest_stage:
+                (
+                    should_continue_publish,
+                    symbol_activation,
+                ) = _run_ingest_timeframe_step(
+                    write_api=write_api,
+                    query_api=query_api,
+                    activation_exchange=activation_exchange,
+                    ingest_state_store=ingest_state_store,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    cycle_now=cycle_now,
+                    scheduler_mode=scheduler_mode,
+                    symbol_activation=symbol_activation,
+                    exchange_earliest=exchange_earliest,
+                    disk_level=disk_level,
+                    disk_usage_percent=disk_usage_percent,
+                    state=state,
+                    cycle_since_source_counts=cycle_since_source_counts,
+                    cycle_detection_skip_counts=cycle_detection_skip_counts,
+                    cycle_detection_run_counts=cycle_detection_run_counts,
+                )
+                state.symbol_activation_entries[symbol] = symbol_activation
+                if not should_continue_publish:
+                    continue
+
+            if not run_publish_stage:
+                continue
+
+            _run_publish_timeframe_step(
+                write_api=write_api,
+                query_api=query_api,
+                symbol=symbol,
+                timeframe=timeframe,
+                cycle_now=cycle_now,
+                symbol_activation=symbol_activation,
+                run_export_stage=run_export_stage,
+                run_predict_stage=run_predict_stage,
+                state=state,
+                cycle_export_gate_skip_counts=cycle_export_gate_skip_counts,
+                cycle_predict_gate_skip_counts=cycle_predict_gate_skip_counts,
+            )
+
+
+def _append_cycle_runtime_metrics_if_enabled(
+    *,
+    enabled: bool,
+    scheduler_mode: str,
+    started_at: datetime,
+    elapsed_seconds: float,
+    sleep_seconds: float,
+    overrun: bool,
+    cycle_result: str,
+    error: str | None,
+    cycle_since_source_counts: dict[str, int],
+    cycle_detection_skip_counts: dict[str, int],
+    cycle_detection_run_counts: dict[str, int],
+    cycle_missed_boundary_count: int | None,
+    error_log_prefix: str,
+) -> None:
+    """
+    runtime metrics 기록을 공통 인자로 래핑한다.
+    """
+    if not enabled:
+        return
+    try:
+        append_runtime_cycle_metrics(
+            started_at=started_at,
+            elapsed_seconds=elapsed_seconds,
+            sleep_seconds=sleep_seconds,
+            overrun=overrun,
+            cycle_result=cycle_result,
+            error=error,
+            ingest_since_source_counts=cycle_since_source_counts,
+            detection_gate_skip_counts=cycle_detection_skip_counts,
+            detection_gate_run_counts=cycle_detection_run_counts,
+            boundary_tracking_mode=(
+                "boundary_scheduler"
+                if scheduler_mode == "boundary"
+                else "poll_loop"
+            ),
+            missed_boundary_count=cycle_missed_boundary_count,
+        )
+    except Exception as metrics_error:
+        logger.error("%s: %s", error_log_prefix, metrics_error)
 
 
 def run_worker():
@@ -2371,7 +2575,8 @@ def run_worker():
         export_watermarks=_load_watermark_entries(EXPORT_WATERMARK_FILE),
     )
     # 위 state는 "cycle 내 작업 메모리"다.
-    # 파일 반영은 _persist_cycle_runtime_state()에서만 수행된다.
+    # 단, ingest_state(cursor/status)는 IngestStateStore.upsert로 즉시 파일 반영된다.
+    # activation/watermark/manifest 파일 반영은 _persist_cycle_runtime_state()에서 수행된다.
     previous_disk_level: StorageGuardLevel | None = None
     last_retention_enforced_at: datetime | None = None
     activation_exchange = None
@@ -2398,16 +2603,11 @@ def run_worker():
         cycle_predict_gate_skip_counts: dict[str, int] = {}
         cycle_export_gate_skip_counts: dict[str, int] = {}
 
-        if run_publish_stage and not run_ingest_stage:
-            # publish 전용 프로세스는 ingest와 메모리를 공유하지 않는다.
-            # 따라서 매 cycle 파일에서 최신 activation/watermark를 다시 읽어
-            # 프로세스 간 eventual consistency를 맞춘다.
-            # ingest worker가 아직 커밋하지 않은 메모리 상태는 볼 수 없으므로,
-            # 최대 1 cycle 지연은 정상 동작 범위다.
-            state.symbol_activation_entries = _load_symbol_activation()
-            state.ingest_watermarks = _load_watermark_entries(
-                INGEST_WATERMARK_FILE
-            )
+        _reload_publish_only_shared_state_for_cycle(
+            run_publish_stage=run_publish_stage,
+            run_ingest_stage=run_ingest_stage,
+            state=state,
+        )
 
         try:
             logger.info(
@@ -2436,19 +2636,21 @@ def run_worker():
                     )
                     sleep_time = max(1.0, sleep_until_boundary)
                     elapsed = time.time() - start_time
-                    if write_runtime_metrics:
-                        append_runtime_cycle_metrics(
-                            started_at=cycle_started_at,
-                            elapsed_seconds=elapsed,
-                            sleep_seconds=sleep_time,
-                            overrun=False,
-                            cycle_result="idle",
-                            ingest_since_source_counts=cycle_since_source_counts,
-                            detection_gate_skip_counts=cycle_detection_skip_counts,
-                            detection_gate_run_counts=cycle_detection_run_counts,
-                            boundary_tracking_mode="boundary_scheduler",
-                            missed_boundary_count=cycle_missed_boundary_count,
-                        )
+                    _append_cycle_runtime_metrics_if_enabled(
+                        enabled=write_runtime_metrics,
+                        scheduler_mode=scheduler_mode,
+                        started_at=cycle_started_at,
+                        elapsed_seconds=elapsed,
+                        sleep_seconds=sleep_time,
+                        overrun=False,
+                        cycle_result="idle",
+                        error=None,
+                        cycle_since_source_counts=cycle_since_source_counts,
+                        cycle_detection_skip_counts=cycle_detection_skip_counts,
+                        cycle_detection_run_counts=cycle_detection_run_counts,
+                        cycle_missed_boundary_count=cycle_missed_boundary_count,
+                        error_log_prefix="Runtime metrics update failed",
+                    )
                     logger.info(
                         "[Scheduler] no due timeframe at boundary cycle. "
                         f"sleep={sleep_time:.2f}s until next boundary."
@@ -2502,76 +2704,27 @@ def run_worker():
                     logger.error(f"[Retention] enforcement failed: {e}")
                     send_alert(f"[Retention Error] {e}")
 
-            for symbol in TARGET_COINS:
-                (
-                    symbol_activation,
-                    exchange_earliest,
-                    activation_loaded,
-                ) = _prepare_symbol_activation_for_cycle(
-                    run_ingest_stage=run_ingest_stage,
-                    query_api=query_api,
-                    activation_exchange=activation_exchange,
-                    symbol=symbol,
-                    cycle_now=cycle_now,
-                    state=state,
-                )
-
-                if (
-                    symbol_activation.visibility
-                    == SymbolVisibility.HIDDEN_BACKFILLING
-                    and (run_ingest_stage or activation_loaded)
-                ):
-                    _remove_static_exports_for_symbol(
-                        symbol,
-                        TIMEFRAMES,
-                        static_dir=STATIC_DIR,
-                    )
-
-                for timeframe in active_timeframes:
-                    if run_ingest_stage:
-                        (
-                            should_continue_publish,
-                            symbol_activation,
-                        ) = _run_ingest_timeframe_step(
-                            write_api=write_api,
-                            query_api=query_api,
-                            activation_exchange=activation_exchange,
-                            ingest_state_store=ingest_state_store,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            cycle_now=cycle_now,
-                            scheduler_mode=scheduler_mode,
-                            symbol_activation=symbol_activation,
-                            exchange_earliest=exchange_earliest,
-                            disk_level=disk_level,
-                            disk_usage_percent=disk_usage_percent,
-                            state=state,
-                            cycle_since_source_counts=cycle_since_source_counts,
-                            cycle_detection_skip_counts=cycle_detection_skip_counts,
-                            cycle_detection_run_counts=cycle_detection_run_counts,
-                        )
-                        state.symbol_activation_entries[symbol] = (
-                            symbol_activation
-                        )
-                        if not should_continue_publish:
-                            continue
-
-                    if not run_publish_stage:
-                        continue
-
-                    _run_publish_timeframe_step(
-                        write_api=write_api,
-                        query_api=query_api,
-                        symbol=symbol,
-                        timeframe=timeframe,
-                        cycle_now=cycle_now,
-                        symbol_activation=symbol_activation,
-                        run_export_stage=run_export_stage,
-                        run_predict_stage=run_predict_stage,
-                        state=state,
-                        cycle_export_gate_skip_counts=cycle_export_gate_skip_counts,
-                        cycle_predict_gate_skip_counts=cycle_predict_gate_skip_counts,
-                    )
+            _run_symbol_timeframe_cycle_stages(
+                run_ingest_stage=run_ingest_stage,
+                run_publish_stage=run_publish_stage,
+                run_predict_stage=run_predict_stage,
+                run_export_stage=run_export_stage,
+                write_api=write_api,
+                query_api=query_api,
+                activation_exchange=activation_exchange,
+                ingest_state_store=ingest_state_store,
+                scheduler_mode=scheduler_mode,
+                cycle_now=cycle_now,
+                active_timeframes=active_timeframes,
+                disk_level=disk_level,
+                disk_usage_percent=disk_usage_percent,
+                state=state,
+                cycle_since_source_counts=cycle_since_source_counts,
+                cycle_detection_skip_counts=cycle_detection_skip_counts,
+                cycle_detection_run_counts=cycle_detection_run_counts,
+                cycle_export_gate_skip_counts=cycle_export_gate_skip_counts,
+                cycle_predict_gate_skip_counts=cycle_predict_gate_skip_counts,
+            )
 
             _persist_cycle_runtime_state(
                 run_ingest_stage=run_ingest_stage,
@@ -2596,26 +2749,21 @@ def run_worker():
             sleep_time = CYCLE_TARGET_SECONDS - elapsed
             overrun = sleep_time <= 0
 
-            if write_runtime_metrics:
-                try:
-                    append_runtime_cycle_metrics(
-                        started_at=cycle_started_at,
-                        elapsed_seconds=elapsed,
-                        sleep_seconds=max(sleep_time, 0.0),
-                        overrun=overrun,
-                        cycle_result="ok",
-                        ingest_since_source_counts=cycle_since_source_counts,
-                        detection_gate_skip_counts=cycle_detection_skip_counts,
-                        detection_gate_run_counts=cycle_detection_run_counts,
-                        boundary_tracking_mode=(
-                            "boundary_scheduler"
-                            if scheduler_mode == "boundary"
-                            else "poll_loop"
-                        ),
-                        missed_boundary_count=cycle_missed_boundary_count,
-                    )
-                except Exception as e:
-                    logger.error(f"Runtime metrics update failed: {e}")
+            _append_cycle_runtime_metrics_if_enabled(
+                enabled=write_runtime_metrics,
+                scheduler_mode=scheduler_mode,
+                started_at=cycle_started_at,
+                elapsed_seconds=elapsed,
+                sleep_seconds=max(sleep_time, 0.0),
+                overrun=overrun,
+                cycle_result="ok",
+                error=None,
+                cycle_since_source_counts=cycle_since_source_counts,
+                cycle_detection_skip_counts=cycle_detection_skip_counts,
+                cycle_detection_run_counts=cycle_detection_run_counts,
+                cycle_missed_boundary_count=cycle_missed_boundary_count,
+                error_log_prefix="Runtime metrics update failed",
+            )
 
             if sleep_time > 0:
                 logger.info(
@@ -2634,30 +2782,21 @@ def run_worker():
             logger.error(error_msg)
             send_alert(error_msg)
             elapsed = time.time() - start_time
-            if write_runtime_metrics:
-                try:
-                    append_runtime_cycle_metrics(
-                        started_at=cycle_started_at,
-                        elapsed_seconds=elapsed,
-                        sleep_seconds=10.0,
-                        overrun=elapsed > CYCLE_TARGET_SECONDS,
-                        cycle_result="failed",
-                        error=str(e),
-                        ingest_since_source_counts=cycle_since_source_counts,
-                        detection_gate_skip_counts=cycle_detection_skip_counts,
-                        detection_gate_run_counts=cycle_detection_run_counts,
-                        boundary_tracking_mode=(
-                            "boundary_scheduler"
-                            if scheduler_mode == "boundary"
-                            else "poll_loop"
-                        ),
-                        missed_boundary_count=cycle_missed_boundary_count,
-                    )
-                except Exception as metrics_error:
-                    logger.error(
-                        "Runtime metrics update failed after worker error: "
-                        f"{metrics_error}"
-                    )
+            _append_cycle_runtime_metrics_if_enabled(
+                enabled=write_runtime_metrics,
+                scheduler_mode=scheduler_mode,
+                started_at=cycle_started_at,
+                elapsed_seconds=elapsed,
+                sleep_seconds=10.0,
+                overrun=elapsed > CYCLE_TARGET_SECONDS,
+                cycle_result="failed",
+                error=str(e),
+                cycle_since_source_counts=cycle_since_source_counts,
+                cycle_detection_skip_counts=cycle_detection_skip_counts,
+                cycle_detection_run_counts=cycle_detection_run_counts,
+                cycle_missed_boundary_count=cycle_missed_boundary_count,
+                error_log_prefix="Runtime metrics update failed after worker error",
+            )
             time.sleep(10)
 
 

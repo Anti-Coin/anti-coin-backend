@@ -9,7 +9,10 @@ from scripts.pipeline_worker import (
     _fetch_ohlcv_paginated,
     _lookback_days_for_timeframe,
     _minimum_required_lookback_rows,
+    _record_ingest_outcome_state,
     _refill_detected_gaps,
+    _run_ingest_timeframe_step,
+    WorkerPersistentState,
     append_runtime_cycle_metrics,
     build_runtime_manifest,
     downsample_ohlcv_frame,
@@ -39,6 +42,13 @@ from scripts.pipeline_worker import (
     worker_role_runs_ingest,
     worker_role_runs_publish,
     write_runtime_manifest,
+)
+from utils.ingest_state import IngestStateStore
+from utils.pipeline_contracts import (
+    IngestExecutionOutcome,
+    IngestExecutionResult,
+    StorageGuardLevel,
+    SymbolActivationSnapshot,
 )
 
 
@@ -1178,6 +1188,144 @@ def test_should_run_publish_from_ingest_watermark():
     assert should_run is False
     assert reason == "no_ingest_watermark"
     assert ingest_dt is None
+
+
+def test_record_ingest_outcome_state_saved_commits_cursor_and_watermark(
+    tmp_path,
+):
+    symbol = "BTC/USDT"
+    timeframe = "1h"
+    latest_saved_at = datetime(2026, 2, 18, 12, 0, tzinfo=timezone.utc)
+    key = f"{symbol}|{timeframe}"
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={},
+        predict_watermarks={},
+        export_watermarks={},
+    )
+    ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
+
+    _record_ingest_outcome_state(
+        ingest_state_store=ingest_state_store,
+        state=state,
+        symbol=symbol,
+        timeframe=timeframe,
+        previous_last_closed_ts=None,
+        ingest_outcome=IngestExecutionOutcome(
+            latest_saved_at=latest_saved_at,
+            result=IngestExecutionResult.SAVED,
+        ),
+    )
+
+    entry = ingest_state_store.get(symbol, timeframe)
+    assert entry is not None
+    assert entry.status == "ok"
+    assert entry.last_closed_ts == latest_saved_at
+    assert state.ingest_watermarks[key].closed_at == latest_saved_at
+
+
+def test_record_ingest_outcome_state_failure_keeps_watermark_and_marks_failed(
+    tmp_path,
+):
+    symbol = "BTC/USDT"
+    timeframe = "1h"
+    key = f"{symbol}|{timeframe}"
+    previous_last_closed_ts = datetime(
+        2026, 2, 18, 11, 0, tzinfo=timezone.utc
+    )
+    previous_watermark = datetime(2026, 2, 18, 10, 0, tzinfo=timezone.utc)
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={
+            key: previous_watermark.strftime("%Y-%m-%dT%H:%M:%SZ")
+        },
+        predict_watermarks={},
+        export_watermarks={},
+    )
+    ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
+
+    for failure_result in (
+        IngestExecutionResult.FAILED,
+        IngestExecutionResult.UNSUPPORTED,
+    ):
+        _record_ingest_outcome_state(
+            ingest_state_store=ingest_state_store,
+            state=state,
+            symbol=symbol,
+            timeframe=timeframe,
+            previous_last_closed_ts=previous_last_closed_ts,
+            ingest_outcome=IngestExecutionOutcome(
+                latest_saved_at=None,
+                result=failure_result,
+            ),
+        )
+        entry = ingest_state_store.get(symbol, timeframe)
+        assert entry is not None
+        assert entry.status == "failed"
+        assert entry.last_closed_ts == previous_last_closed_ts
+        assert state.ingest_watermarks[key] == "2026-02-18T10:00:00Z"
+
+
+def test_run_ingest_timeframe_step_blocked_storage_guard_stops_without_watermark(
+    monkeypatch, tmp_path
+):
+    symbol = "BTC/USDT"
+    timeframe = "1m"
+    now = datetime(2026, 2, 19, 12, 0, tzinfo=timezone.utc)
+    key = f"{symbol}|{timeframe}"
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={},
+        predict_watermarks={},
+        export_watermarks={},
+    )
+    ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
+    activation = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-02-19T11:00:00Z",
+        },
+        fallback_now=now,
+    )
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.resolve_ingest_since",
+        lambda **kwargs: (None, "blocked_storage_guard"),
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.get_last_timestamp",
+        lambda *args, **kwargs: None,
+    )
+
+    should_continue_publish, next_activation = _run_ingest_timeframe_step(
+        write_api=object(),
+        query_api=object(),
+        activation_exchange=object(),
+        ingest_state_store=ingest_state_store,
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        scheduler_mode="poll_loop",
+        symbol_activation=activation,
+        exchange_earliest=None,
+        disk_level=StorageGuardLevel.BLOCK,
+        disk_usage_percent=92.5,
+        state=state,
+        cycle_since_source_counts={},
+        cycle_detection_skip_counts={},
+        cycle_detection_run_counts={},
+    )
+
+    assert should_continue_publish is False
+    assert next_activation == activation
+    entry = ingest_state_store.get(symbol, timeframe)
+    assert entry is not None
+    assert entry.status == "blocked_storage_guard"
+    assert key not in state.ingest_watermarks
 
 
 def test_run_ingest_step_routes_derived_to_downsample(monkeypatch):

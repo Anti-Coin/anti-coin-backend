@@ -1,6 +1,6 @@
 # Coin Predict Technical Debt Register
 
-- Last Updated: 2026-02-17
+- Last Updated: 2026-02-19
 - Purpose: 기술 부채를 세션 간 누락 없이 추적
 
 ## 1. 운용 규칙
@@ -28,7 +28,7 @@
 | TD-015 | Data Consistency | Influx-JSON 최신 시각 불일치 검증 미구현 | 운영자가 오래된 JSON을 정상으로 오해할 수 있음 | resolved | A-014 | Influx 최신 시각 vs static `updated_at` 비교/승격 로직 구현 + `/predict` 미래값 운영 스모크체크(전체 심볼) 확인 완료 |
 | TD-016 | Alerting | unhealthy 상태 장기 지속 시 재알림 미구현 | 최초 상태전이 알림 유실 시 장애 인지 지연 | resolved | A-010-7 | hard_stale/corrupt/missing 3사이클 재알림 + soft_stale 연속 3사이클 재알림 구현/테스트 완료 |
 | TD-017 | Runtime Guard | Phase B 이전 다중 timeframe 설정 방어 미구현 | `missing` 오탐 증가 및 운영 판단 혼선 | resolved | A-015 | `INGEST_TIMEFRAMES=1h` fail-fast 가드 적용 완료 |
-| TD-018 | Serving Policy | API-SSG 경계 및 endpoint sunset 기준의 운영 계약(필드/경로) 미확정 | 사용자/운영 경로 혼선, 불필요한 유지비 지속 | mitigated | A-016,B-005 | 1차 경계/체크리스트 문서화는 완료. 프론트 요구 필드 계약과 운영 API(`/status`, 필요 시 `/ops/*`) 범위를 확정한 뒤 `B-005`에서 endpoint 삭제 실행 |
+| TD-018 | Serving Policy | API-SSG 경계 및 endpoint sunset 기준의 운영 계약(필드/경로) 미확정 | 사용자/운영 경로 혼선, 불필요한 유지비 지속 | resolved | A-016,B-005 | `/history`/`/predict` sunset(`410`) 완료 + 오너 확인 기반 fallback 비의존 운영 검증 반영. 재발 시 rollback runbook으로 즉시 복구 후 재평가 |
 | TD-019 | Worker Architecture | ingest/predict/export 단일 worker 결합 구조 | 특정 단계 지연/장애가 전체 파이프라인 SLA를 악화 | mitigated | C-005 | `worker-ingest`/`worker-publish` 2-service 분리 + 엔트리포인트 분리(`ingest/predict/export`) + 코드 레벨 도메인 분리(`workers/ingest.py`,`workers/predict.py`,`workers/export.py`) 적용 완료. publish 내부 predict/export를 별도 프로세스로 완전 분리하는 승격은 backlog/리소스 관측 후 판단 |
 | TD-020 | Scheduling | 고정 간격 while-loop 중심 스케줄 | timeframe별 리소스 낭비/경계 불일치 가능 | open | C-006,C-007 | `D-2026-02-13-33` 기준으로 `C-006(UTC boundary scheduler) -> C-007(new closed candle detection gate)` 순서로 전환 |
 | TD-021 | Failure Signaling | predict 실패 시 degraded 상태/알림 표준 미구현 | 마지막 정상값 제공 중 실패 사실이 숨겨질 수 있음 | resolved | A-017 | worker predict 실패/복구 상태전이 알림 + `/status` degraded/last success/failure 노출 적용 완료 |

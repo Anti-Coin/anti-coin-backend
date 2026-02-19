@@ -15,7 +15,7 @@
 
 ## 3. 기술/아키텍처 제약
 1. 정적 JSON 서빙 구조가 기본 데이터 플레인이다.
-2. FastAPI는 상태 확인, fallback, 제어 경로 중심으로 사용한다.
+2. FastAPI는 상태 확인/운영 제어/호환 종료 신호(tombstone) 중심으로 사용한다.
 3. 무거운 오케스트레이션 도구는 조건 충족 전 도입하지 않는다.
 4. 데이터 권위(Source of Truth)는 InfluxDB이며, 정적 JSON은 제공용 파생 산출물이다.
 
@@ -43,26 +43,25 @@
 4. 새 기술 부채가 생기면 `TECH_DEBT_REGISTER` 갱신은 필수다.
 5. 기존 계획대로 수행 불가 상태가 되면 같은 세션에서 `PLAN`과 `TASKS`를 함께 갱신한다.
 
-## 8. API-SSG 경계 정책 (A-016)
-1. 사용자 데이터 플레인은 SSG(static JSON)이다.
+## 8. API-SSG 경계 정책
+1. 사용자 데이터 플레인은 SSG(static JSON)다.
 2. 제품 프론트엔드는 `/history`, `/predict`를 호출하지 않는다.
-3. FastAPI의 `/status`는 운영 신호 확인 경로로 유지하며, 프론트엔드 경고 노출에 사용할 수 있다.
-4. `/history`, `/predict`는 `B-005`에서 sunset tombstone(`410 Gone`)으로 전환되며 운영/디버그 정상 경로로 사용하지 않는다.
+3. FastAPI의 `/status`는 운영 신호 확인 경로로 유지한다.
+4. `/history`, `/predict`는 sunset tombstone(`410 Gone`)이며 운영/디버그 정상 경로가 아니다.
 5. 추가 점검용 API가 필요하면 사용자 데이터 API와 분리된 운영 경로(`/ops/*`)로 추가한다.
-6. sunset 이후 `/history`, `/predict`는 호환 종료 신호용 경로로만 남고, 사용자/운영 SLA 경로에 포함하지 않는다.
+6. `/history`, `/predict`는 호환 종료 신호용 경로로만 남고, 사용자/운영 SLA 경로에 포함하지 않는다.
 
-## 9. Endpoint Sunset 체크리스트 (A-016)
-`/history`, `/predict` sunset 완료는 아래 조건을 모두 만족할 때 진행한다.
-1. 프론트엔드 요구 필드가 SSG + `/status` 조합으로 100% 충족된다.
-2. 운영 알림/상태판정(모니터 + `/status`)이 fallback endpoint 없이도 장애를 식별한다.
+## 9. Endpoint Sunset 체크리스트
+`/history`, `/predict` sunset 완료는 아래 조건을 기준으로 판단한다.
+1. 프론트엔드 요구 필드가 SSG + `/status` 조합으로 충족된다.
+2. 운영 알림/상태판정(모니터 + `/status`)이 fallback endpoint 없이도 동작한다.
 3. 운영 점검(runbook, smoke check)이 fallback endpoint 의존 없이 수행 가능하다.
-4. 제거 전 최소 1회 배포 사이클 동안 fallback 비의존 운영을 확인하는 것을 권장한다(필수 아님).
-5. 삭제 실행은 `B-005`에서 수행하고, 필요 시 즉시 복구할 롤백 절차를 문서화한다.
+4. 최소 1회 배포 사이클 fallback 비의존 운영 관측 증거를 확보한다.
+5. 필요 시 즉시 복구할 rollback 절차를 문서화한다.
 
 현재 상태(2026-02-19):
-1. 1~3은 정책/구현 기준 충족.
-2. 4는 배포 후 1 cycle 관측 증거가 필요해 `B-005 in_progress` 상태다.
-3. 5는 아래 rollback runbook으로 문서화했다.
+1. 1~5 조건을 충족해 `B-005`는 done으로 잠금됐다.
+2. rollback runbook은 아래 Section 10을 기준으로 유지한다.
 
 ## 10. B-005 Rollback Runbook (FastAPI)
 1. `api/main.py`에서 `/history`, `/predict` tombstone 핸들러를 직전 구현으로 복구한다.
