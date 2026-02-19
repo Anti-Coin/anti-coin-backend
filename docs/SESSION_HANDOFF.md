@@ -27,11 +27,12 @@
 21. freshness 임계값 설정 동기화: `utils/config.py`, `.env.example`, `docs/DECISIONS.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/CONTEXT_MIN.md` 반영 + 회귀 `106 passed`.
 22. `C-009` 완료 (2026-02-19): monitor Influx-JSON consistency를 `symbol+timeframe` 기준으로 보강하고 `PRIMARY_TIMEFRAME` legacy fallback을 유지, 관련 회귀 테스트 추가 포함 전체 `108 passed`.
 23. `D-2026-02-19-40` 반영: monitor 대사 기준을 timeframe-aware로 고정.
+24. `R-005` 완료 (2026-02-19): SLA-lite baseline을 user plane availability 기준으로 고정하고, `Alert Miss Rate`/`MTTR-Stale`의 공식/데이터 소스/산출 주기를 `D-2026-02-19-41`로 잠금.
 
 ## 2. Next Priority Tasks
-1. `R-005`: SLA-lite 지표 baseline(공식/데이터 소스/산출 주기) 확정
-2. `B-007`: admin/app.py timeframe 운영 대시보드 확장
-3. `B-005`: `/history`/`/predict` sunset 조건 충족 여부 재검증
+1. `B-007`: admin/app.py timeframe 운영 대시보드 확장
+2. `B-005`: `/history`/`/predict` sunset 조건 충족 여부 재검증
+3. `C-010`: orchestrator 가독성 정리(`pipeline_worker.py` 제어면 경계 단순화)
 4. `B-008`(P2): FE 심볼 노출 게이트 연동(`hidden_backfilling` 필터)
 
 ## 2.1 Runtime Note
@@ -54,11 +55,21 @@
 5. `B-002` 롤백: legacy 우선 read로 즉시 회귀.
 6. `B-003` 롤백: `1h` 단일 export 경로로 즉시 회귀.
 
-## 5. SLA-lite Draft Metrics (for Portfolio Evidence)
-1. Availability (User Plane): 측정 대상은 SSG + `/status` 경로, 계산식은 `성공 응답 수 / 전체 요청 수`.
-2. Alert Miss Rate: unhealthy 상태전이(`hard_stale/corrupt/missing`) 중 알림이 누락된 비율.
-3. MTTR-Stale: `hard_stale` 최초 감지 시각부터 `recovery` 감지 시각까지의 시간.
-4. 현재 상태: 지표 정의/수집 경로/산출 주기 고정이 필요하며 `R-005`에서 문서화한다.
+## 5. SLA-lite Baseline (Locked)
+1. Availability (User Plane)
+2. Formula: `successful_probes / total_probes`
+3. Scope: static 산출물(SSG) + `/status`
+4. Data Source: 운영 프로브 로그(HTTP status/timeout 포함)
+5. Alert Miss Rate
+6. Formula: `missed_alert_transitions / total_unhealthy_transitions`
+7. Scope: unhealthy 상태전이(`hard_stale/corrupt/missing`)
+8. Data Source: monitor 상태전이 로그 + alert 전송 로그
+9. MTTR-Stale
+10. Formula: `avg(recovery_detected_at - hard_stale_detected_at)`
+11. Scope: `hard_stale -> recovery`
+12. Data Source: monitor 상태전이 로그
+13. Cadence: `daily rollup + weekly review`
+14. Note: monitor 이벤트 영속 저장이 없어 초기에는 로그 파싱 집계가 필요함
 
 ## 6. Quick Verify Commands
 1. `PYENV_VERSION=coin pytest -q`

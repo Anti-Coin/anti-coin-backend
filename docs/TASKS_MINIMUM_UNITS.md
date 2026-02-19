@@ -46,6 +46,7 @@
 34. `C-009` 완료 (2026-02-19): monitor Influx-JSON consistency를 `symbol+timeframe` 기준으로 보강하고 `PRIMARY_TIMEFRAME` legacy fallback을 유지, 회귀 `108 passed`
 35. `D-2026-02-19-40` 채택: monitor 대사 기준을 timeframe-aware로 고정
 36. `C-011` 완료 (2026-02-19): boundary scheduler 시작 기준을 "다음 경계"에서 "현재 경계"로 조정해 재시작 직후 장주기 TF(`1d/1w/1M`) missed boundary를 첫 cycle에서 따라잡도록 보강, 회귀 `109 passed`
+37. `R-005` 완료 (2026-02-19): SLA-lite baseline을 user plane availability 중심으로 고정(공식/데이터 소스/산출 주기 잠금), `D-2026-02-19-41` 반영
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -55,7 +56,7 @@
 | R-002 | P0 | B/C/D 태스크 재세분화(리스크 반영) | done (2026-02-12) | 활성 태스크별 `why/failure/verify/rollback` 설계 카드가 본 문서 Section 6에 반영됨 |
 | R-003 | P0 | 교차 Phase 의존성/우선순위 재정렬 | done (2026-02-12) | Option A/B 비교 및 채택 기준선이 본 문서 Section 7에 반영됨 |
 | R-004 | P1 | Phase B kickoff 구현 묶음 확정 | done (2026-02-12) | `B-002 -> B-003` kickoff 묶음과 검증/롤백 경계가 본 문서 Section 8에 반영됨 |
-| R-005 | P1 | SLA-lite 지표 baseline 정의 | open | availability/alert miss/MTTR-stale의 공식/데이터 소스/산출 주기가 고정됨 |
+| R-005 | P1 | SLA-lite 지표 baseline 정의 | done (2026-02-19) | availability/alert miss/MTTR-stale의 공식/데이터 소스/산출 주기가 user plane 기준으로 고정되고 `daily rollup + weekly review` cadence가 문서화됨 |
 
 ### Phase B (Timeframe Expansion)
 | ID | Priority | Task | Status | Done Condition |
@@ -100,9 +101,9 @@
 | D-011 | P1 | Model Coverage Matrix + Fallback Resolver 구현 | open | 기본 `timeframe-shared`/조건부 `symbol+timeframe dedicated` 정책과 `dedicated -> shared -> insufficient_data` fallback 체인이 코드/메타데이터/테스트로 검증됨 |
 
 ## 3. Immediate Bundle
-1. `R-005`
-2. `B-007`
-3. `B-005`
+1. `B-007`
+2. `B-005`
+3. `C-010`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
@@ -166,7 +167,7 @@
 1. 현재 우선순위(`Stability > Cost > Performance`)에 따라 Option A를 기준선으로 채택한다.
 2. `B-005`는 사용자 의견에 따라 P2를 유지한다.
 3. Option B는 `C-002`에서 비용 압력이 즉시 심각하다는 증거가 나올 때 fallback 후보로만 유지한다.
-4. `D-2026-02-13-33`/`D-2026-02-13-35`/`D-2026-02-17-36`/`D-2026-02-17-37` 반영 후 활성 실행 순서는 `R-005 -> B-007(P2) -> B-005(P2)`다.
+4. `D-2026-02-13-33`/`D-2026-02-13-35`/`D-2026-02-17-36`/`D-2026-02-17-37`/`D-2026-02-19-41` 반영 후 활성 실행 순서는 `B-007(P2) -> B-005(P2) -> C-010(P2)`다.
 
 ## 8. R-004 Kickoff Contract (Accepted)
 1. Kickoff 구현 묶음은 `B-002`, `B-003` 2개로 고정한다.

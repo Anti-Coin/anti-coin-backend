@@ -346,6 +346,33 @@
 - Revisit Trigger:
   - query 비용이 운영 한계를 초과하거나, timeframe별 대사 오탐/누락이 재발할 때
 
+### D-2026-02-19-41
+- Date: 2026-02-19
+- Status: Accepted
+- Topic: `R-005` SLA-lite Baseline Lock (`User Plane Availability`)
+- Context:
+  - `R-005`의 초안 지표(availability/alert miss/MTTR-stale)는 존재했지만, 공식/데이터 소스/산출 주기가 문서 간 완전히 고정되지 않았다.
+  - 운영 목적은 "정교한 SLA 시스템 도입"이 아니라 Free Tier 현실에서 재현 가능한 Ops 증거를 확보하는 것이다.
+  - 현재 monitor는 이벤트를 파일 DB로 영속 저장하지 않으므로, alert miss/MTTR는 런타임 로그 기반 집계가 필요하다.
+- Decision:
+  - Availability 기준은 사용자 플레인으로 고정한다.
+    - 대상: static 산출물(SSG) + `/status`
+    - 공식: `availability = successful_probes / total_probes`
+  - Availability 데이터 소스는 운영 프로브 로그(HTTP status/timeout 포함)로 고정한다.
+  - Alert Miss Rate 기준은 unhealthy 전이(`hard_stale/corrupt/missing`) 대비 실제 알림 이벤트 누락 비율로 고정한다.
+    - 공식: `alert_miss_rate = missed_alert_transitions / total_unhealthy_transitions`
+    - 데이터 소스: monitor 상태전이 로그 + alert 전송 로그(Discord webhook 결과)
+  - MTTR-Stale 기준은 `hard_stale -> recovery` 전이 시간으로 고정한다.
+    - 공식: `mttr_stale = avg(recovery_detected_at - hard_stale_detected_at)`
+    - 데이터 소스: monitor 상태전이 로그
+  - 산출 주기는 `daily rollup + weekly review`로 고정한다.
+- Consequence:
+  - 포트폴리오 관점에서 지표 정의와 계산 경계가 명확해진다.
+  - alert miss/MTTR는 이벤트 영속화가 없으므로 초기에는 로그 파싱 의존도가 남는다.
+- Revisit Trigger:
+  - monitor 이벤트 영속화가 도입되어 alert miss/MTTR 자동 집계가 가능해질 때
+  - 운영 트래픽/사고 빈도가 증가해 current cadence가 대응에 부족할 때
+
 ## 3. Decision Operation Policy
 1. Archive로 이동된 결정은 `Section 1`에 요약 형태로만 유지한다.
 2. 아직 archive로 이동하지 않은 결정은 `Section 2`에 상세 형태로 유지한다.
