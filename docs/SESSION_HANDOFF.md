@@ -12,6 +12,8 @@
 6. `B-007` 완료: admin manifest-first 대시보드 확장 + 회귀 검증.
 7. `B-008` 완료(`sunset scope close`): FE 미구축 상태에서 종료, FE 재개 시 재오픈.
 8. Phase B 상세 원문은 `docs/archive/phase_b/*`로 이동했다.
+9. `C-010` 진행 중: ingest_state(즉시) vs ingest watermark(사이클 종료 커밋) 경계를 helper로 분리했고 characterization test를 추가했다.
+10. 기준선 테스트: `PYENV_VERSION=coin pytest -q` 통과(`118 passed`, 2026-02-19).
 
 ## 2. Phase C Detailed Runtime Baseline
 1. cadence: `UTC boundary + detection gate`를 기본 실행 규칙으로 유지한다.
@@ -22,6 +24,7 @@
 
 ## 3. Next Priority Tasks
 1. `C-010`: orchestrator 가독성 정리(`pipeline_worker.py` 책임 경계 단순화)
+   - 진행 근거: commit 경계 helper 분리 + `tests/test_pipeline_worker.py`에 경계 회귀 테스트 추가
    - Done 기준: ingest_state vs watermark commit 경계 명확화 + 회귀 통과
 2. `C-001`: 심볼 목록 확장 자동화
    - Done 기준: 심볼 추가 시 코드 수정 최소화(검증/가드 포함)

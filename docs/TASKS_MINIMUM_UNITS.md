@@ -53,7 +53,8 @@
 | C-008 | P1 | `1h` underfill RCA + temporary guard sunset 결정 | done (2026-02-17) | legacy fallback 오염 경로 차단(`not exists r["timeframe"]`) + 회귀/문서화 완료 |
 | C-009 | P1 | monitor Influx-JSON consistency timeframe-aware 보강 | done (2026-02-19) | Influx latest 조회를 `symbol+timeframe` 기준으로 고정 + `PRIMARY_TIMEFRAME` legacy fallback 유지 |
 | C-011 | P1 | boundary scheduler 재시작 catch-up 보강 | done (2026-02-19) | 재시작 직후 `1d/1w/1M` missed boundary를 첫 cycle에서 따라잡도록 초기화 경계 조정 |
-| C-010 | P2 | orchestrator 가독성 정리(`pipeline_worker.py` 제어면 경계 단순화) | open | cycle commit/state 저장 책임(ingest_state vs watermark commit) 분리 + 동작 불변 회귀 검증 |
+| C-010 | P2 | orchestrator 가독성 정리(`pipeline_worker.py` 제어면 경계 단순화) | in_progress (2026-02-19, pass1+pass2) | cycle commit/state 저장 책임(ingest_state vs watermark commit) 분리 + 동작 불변 회귀 검증 |
+| C-012 | P2 | 디렉토리/파일 재배치(런타임 계약 보존 전제) | open | docker/compose 엔트리포인트/빌드 컨텍스트 계약 유지 하에 구조 재배치 계획 + 단계별 롤백/검증 절차 확정 |
 
 ### Phase D (Model Evolution)
 | ID | Priority | Task | Status | Done Condition |
@@ -99,6 +100,7 @@
 | C-007 | boundary-only는 신규 데이터가 없을 때도 불필요 cycle을 수행한다 | 신규 candle 감지 오탐/누락으로 skip 오류 또는 처리 지연 발생 | 신규 closed candle 감지 기반 run/skip 테스트 + `missed_boundary=0` 검증 | detection gate 비활성화 후 boundary-only 모드 유지 |
 | C-008 | `1h` underfill이 재발하면 이후 C-006/C-005 결과 해석이 왜곡될 수 있음 | 임시 guard에 의존한 채 근본 원인 미확정 상태가 장기화됨 | RCA 증거 + guard 트리거 추적 + 유지/제거 회귀 테스트 | guard를 유지한 채 RCA 후속 태스크로 분리 |
 | C-010 | orchestrator에 제어면/호환 래퍼/상태 커밋 책임이 밀집돼 변경 시 인지부하가 높다 | 작은 수정도 영향 범위 예측 실패로 회귀 위험이 증가한다 | commit 경계 단위 테스트 + 회귀(`pytest`) + 리뷰 체크리스트 통과 | 구조 정리만 되돌리고 기존 단일 흐름으로 복귀 |
+| C-012 | 현재 배치는 런타임 wiring과 강결합되어 있어 임의 이동 시 운영 장애 가능성이 높다 | 경로/모듈 이동 중 compose 커맨드, Docker COPY, import 경로가 깨져 배포 실패가 발생한다 | 계약 맵(엔트리포인트/COPY/import) 작성 + 단계별 이동 smoke test + 즉시 원복 스크립트 검증 | 재배치 브랜치 폐기 후 기존 경로/엔트리포인트로 즉시 복귀 |
 
 ### Phase D
 | ID | Why Now | Failure Mode | Verification | Rollback |
