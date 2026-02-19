@@ -1,6 +1,6 @@
 # Coin Predict Decision Register (Active)
 
-- Last Updated: 2026-02-17
+- Last Updated: 2026-02-19
 - Scope: archive 연동형 의사결정 레지스터 (요약/상세 분리)
 - Full History: `docs/archive/phase_a/DECISIONS_PHASE_A_FULL_2026-02-12.md`
 
@@ -304,6 +304,47 @@
   - publish backlog(ingest 대비 지연)가 7일 기준 임계치를 초과할 때
   - CPU/RAM 압력으로 `worker-publish` 내부 predict/export 결합이 병목으로 확인될 때
   - watermark 파일 경합/오염이 반복되어 Influx state 저장으로 승격이 필요할 때
+
+### D-2026-02-19-39
+- Date: 2026-02-19
+- Status: Accepted
+- Topic: Multi-Timeframe Freshness Threshold Baseline (`1w`/`1M`) + `4h` Legacy Compatibility
+- Context:
+  - 다중 timeframe 운영이 활성화됐지만, 기본 freshness threshold는 `1h/4h/1d` 중심으로 남아 있었다.
+  - monitor/API freshness 판정의 신뢰도를 높이려면 `1w/1M` 기준도 명시적으로 고정할 필요가 있다.
+  - `4h`는 현재 핵심 운영 TF는 아니지만, 기존 테스트/운영 도구 호환성을 위해 즉시 제거하지 않는 편이 안전하다.
+- Decision:
+  - 기본 soft/hard freshness threshold를 아래로 고정한다.
+    - `1h`: soft `65m`, hard `130m`
+    - `4h`: soft `250m`, hard `500m` (legacy compatibility)
+    - `1d`: soft `1500m`(25h), hard `3000m`(50h)
+    - `1w`: soft `11520m`(8d), hard `23040m`(16d)
+    - `1M`: soft `50400m`(35d), hard `100800m`(70d)
+  - 위 값은 기본값이며, 운영 환경에서는 env override를 허용한다.
+  - `4h` 제거는 별도 호환성 점검 이후 후속 결정으로 분리한다.
+- Consequence:
+  - 장주기 TF freshness 판정의 일관성이 높아지고, unknown fallback에 의한 오탐 가능성을 줄일 수 있다.
+  - 한편 threshold 값이 보수적으로 크므로, 실제 운영 경보 민감도는 관측 후 재조정이 필요하다.
+- Revisit Trigger:
+  - `1w/1M` 경보가 과소/과다로 관측되어 운영 대응 품질을 떨어뜨릴 때
+  - `4h` 레거시 호환 경로가 실제로 사용되지 않는 근거가 확보될 때
+
+### D-2026-02-19-40
+- Date: 2026-02-19
+- Status: Accepted
+- Topic: Monitor Influx-JSON Consistency Must Be Timeframe-Aware
+- Context:
+  - 기존 monitor 구현은 Influx latest를 심볼 단위로 조회해 각 timeframe 판정에 재사용했다.
+  - multi-timeframe 환경에서는 서로 다른 TF의 latest가 섞이며 hard_stale 오탐/누락이 발생할 수 있다.
+- Decision:
+  - monitor의 Influx latest 조회 기준을 `symbol+timeframe`으로 고정한다.
+  - `PRIMARY_TIMEFRAME`에 대해서만 legacy(no timeframe tag) row fallback을 허용한다.
+  - consistency override는 기존 정책(기본 JSON 판정 우선 + hard limit 초과 시 hard_stale 승격)을 유지한다.
+- Consequence:
+  - multi-timeframe 운영에서 Influx-JSON 대사 신뢰도가 향상된다.
+  - timeframe별 query가 증가하므로 query 비용은 소폭 증가할 수 있다.
+- Revisit Trigger:
+  - query 비용이 운영 한계를 초과하거나, timeframe별 대사 오탐/누락이 재발할 때
 
 ## 3. Decision Operation Policy
 1. Archive로 이동된 결정은 `Section 1`에 요약 형태로만 유지한다.

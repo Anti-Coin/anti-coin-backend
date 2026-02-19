@@ -7,7 +7,7 @@ from pathlib import Path
 import requests
 from influxdb_client import InfluxDBClient
 
-from utils.config import INGEST_TIMEFRAMES, TARGET_SYMBOLS
+from utils.config import INGEST_TIMEFRAMES, PRIMARY_TIMEFRAME, TARGET_SYMBOLS
 from utils.freshness import parse_utc_timestamp
 from utils.logger import get_logger
 from utils.prediction_status import (
@@ -145,50 +145,77 @@ def detect_realert_event(
     return None
 
 
-def get_latest_ohlcv_timestamp(query_api, symbol: str) -> datetime | None:
+def _extract_latest_timestamp_from_result(result) -> datetime | None:
     """
-    Return the latest OHLCV timestamp for a given symbol.
+    Flux query 결과에서 전역 latest `_time`를 추출한다.
+
+    Why:
+    - `last()`가 series별 table을 반환할 수 있어 단일 table 가정을 피해야 한다.
+    """
+    latest_ts: datetime | None = None
+    for table in result:
+        for record in getattr(table, "records", []):
+            ts = record.get_time()
+            if ts is None:
+                continue
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            else:
+                ts = ts.astimezone(timezone.utc)
+            if latest_ts is None or ts > latest_ts:
+                latest_ts = ts
+    return latest_ts
+
+
+def _query_latest_ohlcv_timestamp(query_api, query: str) -> datetime | None:
+    """
+    주어진 Flux query를 실행해 latest `_time`를 반환한다.
+    """
+    try:
+        result = query_api.query(query=query)
+    except Exception as e:
+        logger.error(f"[Monitor] Influx latest ohlcv query failed: {e}")
+        return None
+    return _extract_latest_timestamp_from_result(result)
+
+
+def get_latest_ohlcv_timestamp(
+    query_api, symbol: str, timeframe: str
+) -> datetime | None:
+    """
+    Return the latest OHLCV timestamp for a given symbol+timeframe.
 
     NOTE:
-    Flux `last()` may return one record per group (e.g., per field/series),
-    so the query result can contain multiple tables. We therefore compute
-    the global max `_time` in Python to ensure a single authoritative
-    latest timestamp across all returned series.
-
-    All timestamps are normalized to UTC before comparison to avoid
-    naive/aware datetime comparison issues.
+    Compatibility:
+    - PRIMARY_TIMEFRAME는 legacy(no-timeframe-tag) row fallback을 허용한다.
     """
     if query_api is None or not INFLUXDB_BUCKET:
         return None
 
-    query = f"""
+    scoped_query = f"""
     from(bucket: "{INFLUXDB_BUCKET}")
       |> range(start: -30d)
       |> filter(fn: (r) => r["_measurement"] == "ohlcv")
       |> filter(fn: (r) => r["symbol"] == "{symbol}")
+      |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
       |> last(column: "_time")
     """
-    try:
-        result = query_api.query(query=query)
-        latest_ts: datetime | None = None
-        for table in result:
-            for record in getattr(table, "records", []):
-                ts = record.get_time()
-                if ts is None:
-                    continue
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                else:
-                    ts = ts.astimezone(timezone.utc)
-                if latest_ts is None or ts > latest_ts:
-                    latest_ts = ts
+    latest_ts = _query_latest_ohlcv_timestamp(query_api, scoped_query)
+    if latest_ts is not None:
         return latest_ts
-    except Exception as e:
-        logger.error(
-            f"[Monitor] Influx latest ohlcv query failed for {symbol}: {e}"
-        )
 
-    return None
+    if timeframe != PRIMARY_TIMEFRAME:
+        return None
+
+    legacy_query = f"""
+    from(bucket: "{INFLUXDB_BUCKET}")
+      |> range(start: -30d)
+      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
+      |> filter(fn: (r) => r["symbol"] == "{symbol}")
+      |> filter(fn: (r) => not exists r["timeframe"])
+      |> last(column: "_time")
+    """
+    return _query_latest_ohlcv_timestamp(query_api, legacy_query)
 
 
 def apply_influx_json_consistency(
@@ -267,10 +294,11 @@ def run_monitor_cycle(
     events: list[MonitorAlertEvent] = []
 
     for symbol in resolved_symbols:
-        # 심볼 단위로 Influx latest timestamp를 1회 조회하고, timeframe 루프에서 재사용한다.
-        latest_ohlcv_ts = get_latest_ohlcv_timestamp(query_api, symbol)
         for timeframe in resolved_timeframes:
             key = f"{symbol}|{timeframe}"
+            latest_ohlcv_ts = get_latest_ohlcv_timestamp(
+                query_api, symbol, timeframe
+            )
             base_snapshot = evaluate_symbol_timeframe(
                 symbol=symbol,
                 timeframe=timeframe,

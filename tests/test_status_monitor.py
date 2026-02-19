@@ -291,9 +291,12 @@ class _FakeTable:
 
 class _FakeQueryApi:
     def __init__(
-        self, latest_by_symbol: dict[str, datetime | list[datetime] | None]
+        self,
+        latest_by_key: dict[
+            tuple[str, str | None], datetime | list[datetime] | None
+        ],
     ):
-        self._latest_by_symbol = latest_by_symbol
+        self._latest_by_key = latest_by_key
 
     def query(self, query: str):
         marker = 'r["symbol"] == "'
@@ -303,7 +306,17 @@ class _FakeQueryApi:
         start += len(marker)
         end = query.find('"', start)
         symbol = query[start:end]
-        latest = self._latest_by_symbol.get(symbol)
+        timeframe_marker = 'r["timeframe"] == "'
+        tf_start = query.find(timeframe_marker)
+        timeframe: str | None = None
+        if tf_start >= 0:
+            tf_start += len(timeframe_marker)
+            tf_end = query.find('"', tf_start)
+            timeframe = query[tf_start:tf_end]
+        elif 'not exists r["timeframe"]' in query:
+            timeframe = None
+
+        latest = self._latest_by_key.get((symbol, timeframe))
         if latest is None:
             return []
         if isinstance(latest, list):
@@ -314,10 +327,14 @@ class _FakeQueryApi:
 def test_get_latest_ohlcv_timestamp_returns_latest_value(monkeypatch):
     monkeypatch.setattr("scripts.status_monitor.INFLUXDB_BUCKET", "market_data")
     query_api = _FakeQueryApi(
-        {"BTC/USDT": datetime(2026, 2, 10, 11, 0, tzinfo=timezone.utc)}
+        {
+            ("BTC/USDT", "1h"): datetime(
+                2026, 2, 10, 11, 0, tzinfo=timezone.utc
+            )
+        }
     )
 
-    latest = get_latest_ohlcv_timestamp(query_api, "BTC/USDT")
+    latest = get_latest_ohlcv_timestamp(query_api, "BTC/USDT", "1h")
     assert latest == datetime(2026, 2, 10, 11, 0, tzinfo=timezone.utc)
 
 
@@ -325,15 +342,32 @@ def test_get_latest_ohlcv_timestamp_uses_max_across_tables(monkeypatch):
     monkeypatch.setattr("scripts.status_monitor.INFLUXDB_BUCKET", "market_data")
     query_api = _FakeQueryApi(
         {
-            "BTC/USDT": [
+            ("BTC/USDT", "1h"): [
                 datetime(2026, 2, 10, 10, 0, tzinfo=timezone.utc),
                 datetime(2026, 2, 10, 11, 30, tzinfo=timezone.utc),
             ]
         }
     )
 
-    latest = get_latest_ohlcv_timestamp(query_api, "BTC/USDT")
+    latest = get_latest_ohlcv_timestamp(query_api, "BTC/USDT", "1h")
     assert latest == datetime(2026, 2, 10, 11, 30, tzinfo=timezone.utc)
+
+
+def test_get_latest_ohlcv_timestamp_uses_legacy_fallback_for_primary_timeframe(
+    monkeypatch,
+):
+    monkeypatch.setattr("scripts.status_monitor.INFLUXDB_BUCKET", "market_data")
+    monkeypatch.setattr("scripts.status_monitor.PRIMARY_TIMEFRAME", "1h")
+    query_api = _FakeQueryApi(
+        {
+            ("BTC/USDT", None): datetime(
+                2026, 2, 10, 11, 0, tzinfo=timezone.utc
+            )
+        }
+    )
+
+    latest = get_latest_ohlcv_timestamp(query_api, "BTC/USDT", "1h")
+    assert latest == datetime(2026, 2, 10, 11, 0, tzinfo=timezone.utc)
 
 
 def test_run_monitor_cycle_marks_hard_stale_when_influx_json_gap_exceeds_limit(
@@ -343,7 +377,11 @@ def test_run_monitor_cycle_marks_hard_stale_when_influx_json_gap_exceeds_limit(
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
     _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T12:00:00Z")
     query_api = _FakeQueryApi(
-        {"BTC/USDT": datetime(2026, 2, 10, 10, 0, tzinfo=timezone.utc)}
+        {
+            ("BTC/USDT", "1h"): datetime(
+                2026, 2, 10, 10, 0, tzinfo=timezone.utc
+            )
+        }
     )
 
     state = {}
@@ -362,6 +400,53 @@ def test_run_monitor_cycle_marks_hard_stale_when_influx_json_gap_exceeds_limit(
     snapshot = state["BTC/USDT|1h"]
     assert snapshot.status == "hard_stale"
     assert "influx_json_mismatch" in snapshot.detail
+
+
+def test_run_monitor_cycle_uses_timeframe_specific_influx_latest(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr("scripts.status_monitor.INFLUXDB_BUCKET", "market_data")
+    now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
+    symbol = "BTC/USDT"
+
+    _write_prediction(
+        tmp_path, symbol, "2026-02-10T12:00:00Z", timeframe="1h"
+    )
+    _write_prediction(
+        tmp_path, symbol, "2026-02-10T00:00:00Z", timeframe="1d"
+    )
+    query_api = _FakeQueryApi(
+        {
+            ("BTC/USDT", "1h"): datetime(
+                2026, 2, 10, 12, 0, tzinfo=timezone.utc
+            ),
+            ("BTC/USDT", "1d"): datetime(
+                2026, 2, 10, 0, 0, tzinfo=timezone.utc
+            ),
+        }
+    )
+
+    state = {}
+    events = run_monitor_cycle(
+        state=state,
+        now=now,
+        symbols=[symbol],
+        timeframes=["1h", "1d"],
+        static_dir=tmp_path,
+        soft_thresholds={
+            "1h": timedelta(minutes=10),
+            "1d": timedelta(minutes=900),
+        },
+        hard_thresholds={
+            "1h": timedelta(minutes=30),
+            "1d": timedelta(minutes=1800),
+        },
+        query_api=query_api,
+    )
+
+    assert events == []
+    assert state["BTC/USDT|1h"].status == "fresh"
+    assert state["BTC/USDT|1d"].status == "fresh"
 
 
 def test_apply_influx_json_consistency_keeps_status_when_gap_within_limit(

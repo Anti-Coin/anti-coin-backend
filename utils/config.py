@@ -14,11 +14,15 @@ DEFAULT_FRESHNESS_THRESHOLD_MINUTES = {
     "1h": 65,
     "4h": 250,
     "1d": 25 * 60,
+    "1w": 8 * 24 * 60,
+    "1M": 35 * 24 * 60,
 }
 DEFAULT_FRESHNESS_HARD_THRESHOLD_MINUTES = {
     "1h": 130,
     "4h": 500,
     "1d": 50 * 60,
+    "1w": 16 * 24 * 60,
+    "1M": 70 * 24 * 60,
 }
 
 

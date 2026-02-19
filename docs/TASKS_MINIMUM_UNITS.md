@@ -1,6 +1,6 @@
 # Coin Predict Task Board (Active)
 
-- Last Updated: 2026-02-17
+- Last Updated: 2026-02-19
 - Rule: 활성 태스크만 유지하고, 완료 상세 이력은 Archive로 분리
 - Full Phase A History: `docs/archive/phase_a/TASKS_MINIMUM_UNITS_PHASE_A_FULL_2026-02-12.md`
 
@@ -42,6 +42,9 @@
 30. `C-005` 완료 (2026-02-17): `WORKER_EXECUTION_ROLE`(`all`/`ingest`/`predict_export`) 분리, `run_ingest_step`으로 base ingest(`1m`,`1h`) vs derived materialization(`1d/1w/1M`) 경계 강제, ingest-only는 `runtime_metrics/symbol_activation`, publish-only는 `manifest` 갱신 책임으로 분리, 회귀 `103 passed`
 31. `C-005` 확장 완료 (2026-02-17): 전용 엔트리포인트(`worker_ingest.py`, `worker_predict.py`, `worker_export.py`, `worker_publish.py`) 추가 + ingest watermark 기반 publish gate(`ingest/predict/export watermarks`) 적용 + compose 2-service(`worker-ingest`, `worker-publish`) 전환, 회귀 `106 passed`
 32. `C-005` 코드 구조 정리 완료 (2026-02-17): `workers/ingest.py`, `workers/predict.py`, `workers/export.py`로 도메인 로직을 이동하고 `scripts/pipeline_worker.py`는 orchestrator + runtime glue 래퍼 중심으로 축소, 회귀 `106 passed`
+33. `D-2026-02-19-39` 채택: multi-timeframe freshness 기본 임계값(`1w/1M`)을 고정하고 `4h`는 legacy compatibility 경로로 유지(soft/hard: `1w=8d/16d`, `1M=35d/70d`), 관련 설정값(`utils/config.py`, `.env.example`) 동기화
+34. `C-009` 완료 (2026-02-19): monitor Influx-JSON consistency를 `symbol+timeframe` 기준으로 보강하고 `PRIMARY_TIMEFRAME` legacy fallback을 유지, 회귀 `108 passed`
+35. `D-2026-02-19-40` 채택: monitor 대사 기준을 timeframe-aware로 고정
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -76,6 +79,7 @@
 | C-006 | P1 | timeframe 경계 기반 scheduler 전환 | done (2026-02-17) | `WORKER_SCHEDULER_MODE=boundary` 기준으로 UTC candle boundary에서 due timeframe만 실행되며, 경계 미도래 시 idle sleep으로 불필요 cycle을 억제한다. `runtime_metrics.json`에 `boundary_tracking.mode=boundary_scheduler`와 `missed_boundary_count/rate`가 기록된다 |
 | C-007 | P1 | 신규 candle 감지 게이트 결합 | done (2026-02-17) | boundary 모드에서 `symbol+timeframe`별 detection gate가 `run/skip`를 분기하고(`new_closed_candle`/`no_new_closed_candle` 등), `runtime_metrics.json`에 `detection_gate_{run,skip}_counts/events`와 `missed_boundary_count/rate`가 함께 기록된다. 단위 회귀에서 경계 정상 시나리오 `missed_boundary=0`을 검증한다 |
 | C-008 | P1 | `1h` underfill RCA + temporary guard sunset 결정 | done (2026-02-17) | legacy fallback 오염 경로(`timeframe` 미존재 row만 허용) 차단 + 회귀 테스트 반영 + `D-2026-02-17-37` 문서화 완료. guard 7일 관찰은 블로킹 조건이 아닌 운영 메모로 `C-002` 계측 트랙에서 병행 추적 |
+| C-009 | P1 | monitor Influx-JSON consistency timeframe-aware 보강 | done (2026-02-19) | `scripts/status_monitor.py`의 Influx latest 조회가 `symbol+timeframe` 기준으로 분리되고, `PRIMARY_TIMEFRAME` legacy fallback을 유지하며, `tests/test_status_monitor.py` 회귀(신규 케이스 포함)와 전체 회귀 `108 passed`로 검증됨 |
 
 ### Phase D (Model Evolution)
 | ID | Priority | Task | Status | Done Condition |

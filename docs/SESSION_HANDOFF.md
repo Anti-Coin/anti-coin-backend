@@ -1,6 +1,6 @@
 # Coin Predict Session Handoff
 
-- Last Updated: 2026-02-17
+- Last Updated: 2026-02-19
 - Branch: `dev`
 
 ## 1. Current Snapshot
@@ -23,6 +23,10 @@
 17. `C-008` 완료 (2026-02-17): legacy fallback 오염 경로 차단(`not exists r["timeframe"]`) + 회귀 `89 passed` + `D-2026-02-17-37` 반영. guard 7일 관찰은 운영 병행 메모로 전환.
 18. `C-005` 확장 완료 (2026-02-17): 엔트리포인트 분리(`worker_ingest.py`, `worker_predict.py`, `worker_export.py`, `worker_publish.py`) + `worker-ingest`/`worker-publish` 2-service 전환 + ingest watermark 기반 publish gate(`ingest/predict/export watermarks`) 적용, 회귀 `106 passed`.
 19. `C-005` 코드 구조 정리 완료 (2026-02-17): domain 로직을 `workers/ingest.py`, `workers/predict.py`, `workers/export.py`로 분리하고 `scripts/pipeline_worker.py`를 orchestrator/runtime glue 래퍼 중심으로 정리, 회귀 `106 passed`.
+20. `D-2026-02-19-39` 반영: multi-timeframe freshness 기본 임계값을 확장(`1w` soft/hard=`8d/16d`, `1M` soft/hard=`35d/70d`)하고 `4h`는 legacy compatibility 경로로 유지.
+21. freshness 임계값 설정 동기화: `utils/config.py`, `.env.example`, `docs/DECISIONS.md`, `docs/TASKS_MINIMUM_UNITS.md`, `docs/CONTEXT_MIN.md` 반영 + 회귀 `106 passed`.
+22. `C-009` 완료 (2026-02-19): monitor Influx-JSON consistency를 `symbol+timeframe` 기준으로 보강하고 `PRIMARY_TIMEFRAME` legacy fallback을 유지, 관련 회귀 테스트 추가 포함 전체 `108 passed`.
+23. `D-2026-02-19-40` 반영: monitor 대사 기준을 timeframe-aware로 고정.
 
 ## 2. Next Priority Tasks
 1. `R-005`: SLA-lite 지표 baseline(공식/데이터 소스/산출 주기) 확정
@@ -40,6 +44,7 @@
 3. `TD-019`: 단일 worker 결합 리스크는 2-service 분리로 완화됐으나, publish 내부 predict/export 완전 분리는 미적용
 4. `TD-020`: 고정 poll loop 기반 스케줄링으로 비용/정합성 리스크
 5. `1h` underfill guard가 임시 방편으로 장기 고착될 경우, 근본 원인 은닉/불필요 재백필 비용 리스크
+6. monitor 대사 기준이 timeframe을 분리하지 않으면 multi-timeframe에서 hard_stale 오탐/누락 리스크
 
 ## 4. R-004 Kickoff Boundary (Locked)
 1. `B-001` 정책 잠금이 선행되지 않으면 `B-002`/`B-003` 착수는 보류한다.

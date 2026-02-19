@@ -1,11 +1,11 @@
 # Coin Predict Context (Minimum)
 
-- Last Updated: 2026-02-17
+- Last Updated: 2026-02-19
 - Purpose: 새 세션에서 최소 토큰으로 현재 상태를 정렬하기 위한 요약
 
 ## 1. Snapshot
 1. Phase A(Reliability Baseline)는 2026-02-12에 완료했다.
-2. 현재 우선 작업은 `B-001`(timeframe 정책 잠금), `C-002`(운영 메트릭 수집), `C-006`(경계 기반 scheduler)다.
+2. 현재 우선 작업은 `R-005`(SLA-lite 지표 고정), `B-007`(운영 대시보드 확장), `B-005`(fallback endpoint sunset)이다.
 3. `B-006`(저장소 예산 가드 + retention/downsample)은 완료되었다.
 4. `1d/1w/1M`은 `1h` downsample 파생 경로로 고정되며 direct ingest는 정책상 금지다.
 5. `B-005`(endpoint sunset)는 P2 트랙으로 유지한다.
@@ -36,12 +36,15 @@
 11. `D-2026-02-13-31`: evaluation window/min sample/reconciliation 기준 잠금
 12. `D-2026-02-13-33`: cycle cadence는 `boundary + detection gate` 하이브리드
 13. `D-2026-02-13-34`: mismatch taxonomy 분리 + derived TF direct ingest 금지 경계 확정
+14. `D-2026-02-19-39`: multi-timeframe freshness 기본 임계값(`1w/1M`) 고정 + `4h` legacy compatibility 유지
+15. `D-2026-02-19-40`: monitor Influx-JSON consistency를 `symbol+timeframe` 기준으로 고정
 
 ## 5. Current Risk Focus
 1. `TD-018`: API-SSG 운영 계약(필드/경로) 최종 확정 미완료
 2. `TD-019`: `worker-ingest`/`worker-publish` 분리로 완화됐으나 publish 내부(predict/export) 결합 리스크 잔존
 3. `TD-020`: 고정 poll loop 기반 스케줄링으로 비용/정합성 리스크
 4. `TD-027`: `1m` hybrid API 경계 미준수 시 오버런/계약 혼선 리스크
+5. monitor 대사 정합성은 `C-009`로 보강됐으나, query 비용/노이즈 추이는 운영 관찰이 필요
 
 ## 6. Deep References
 1. 현재 운영 결정: `docs/DECISIONS.md`
