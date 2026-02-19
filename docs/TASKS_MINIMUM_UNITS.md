@@ -48,6 +48,7 @@
 36. `C-011` 완료 (2026-02-19): boundary scheduler 시작 기준을 "다음 경계"에서 "현재 경계"로 조정해 재시작 직후 장주기 TF(`1d/1w/1M`) missed boundary를 첫 cycle에서 따라잡도록 보강, 회귀 `109 passed`
 37. `R-005` 완료 (2026-02-19): SLA-lite baseline을 user plane availability 중심으로 고정(공식/데이터 소스/산출 주기 잠금), `D-2026-02-19-41` 반영
 38. `B-007` 완료 (2026-02-19): admin 대시보드를 manifest-first로 전환해 symbol/timeframe/status 필터, timeframe 상태 매트릭스, prediction updated 지연 테이블을 제공하고 회귀 `113 passed`로 검증
+39. `I-2026-02-19-02` 반영: streamlit Docker packaging을 `/app/admin` 구조로 고정해 `admin.manifest_view` import 오류를 제거(`docker/Dockerfile.streamlit`)
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
