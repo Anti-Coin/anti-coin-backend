@@ -1,213 +1,179 @@
-import streamlit as st
-import pandas as pd
-import requests
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import os
-import time
-from utils.config import TARGET_SYMBOLS
+from datetime import datetime, timezone
+
+import requests
+import streamlit as st
+
+from admin.manifest_view import (
+    build_freshness_table,
+    build_status_matrix,
+    filter_manifest_entries,
+    flatten_manifest_entries,
+    status_cell_style,
+    timeframe_sort_key,
+)
 
 st.set_page_config(page_title="Coin Predict MVP", layout="wide")
 
 BASE_URL = os.getenv("API_URL", "http://nginx")
+MANIFEST_URL = f"{BASE_URL}/static/manifest.json"
 
 
 @st.cache_data(ttl=60)
-def get_history_data(symbol):
-    """Nginx에서 과거 데이터 정적 파일(SSG) 조회"""
+def get_manifest_payload():
+    """Manifest를 1차 소스로 조회한다."""
     try:
-        # 파일명 규칙 적용 (BTC/USDT -> BTC_USDT)
-        safe_symbol = symbol.replace("/", "_")
-        url = f"{BASE_URL}/static/history_{safe_symbol}.json"
-
-        response = requests.get(url, timeout=5)
+        response = requests.get(MANIFEST_URL, timeout=5)
         response.raise_for_status()
-
-        data = response.json()
-        df = pd.DataFrame(data["data"])  # SSG 구조에 맞게 수정
-
-        # 날짜 변환 (ISO 8601 -> datetime)
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        return df, data.get("updated_at")  # 생성 시점 반환
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("manifest payload is not a JSON object")
+        return payload, None
     except Exception as e:
-        st.error(f"Failed to fetch history file: {e}")
-        return pd.DataFrame(), None
+        return None, str(e)
 
 
-@st.cache_data(ttl=60)
-def get_forecast_data(symbol):
-    """Nginx에서 예측 데이터 정적 파일(SSG) 조회"""
-    try:
-        safe_symbol = symbol.replace("/", "_")
-        url = f"{BASE_URL}/static/prediction_{safe_symbol}.json"
-
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-
-        data = response.json()
-        df = pd.DataFrame(data["forecast"])  # SSG 구조에 맞게 수정
-
-        # 날짜 변환
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        return df, data.get("updated_at")
-    except Exception as e:
-        st.error(f"Failed to fetch prediction file: {e}")
-        return pd.DataFrame(), None
-
-
-# 차트 그리기 함수
-def plot_chart(symbol, history_df, forecast_df):
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-    # 과거 데이터 (Candlestick)
-    fig.add_trace(
-        go.Candlestick(
-            x=history_df["timestamp"],
-            open=history_df["open"],
-            high=history_df["high"],
-            low=history_df["low"],
-            close=history_df["close"],
-            name="History",
-        ),
-        secondary_y=False,
-    )
-
-    # 예측 데이터 (Line + Confidence Interval)
-    if not forecast_df.empty:
-        # 예측선 (yhat)
-        fig.add_trace(
-            go.Scatter(
-                x=forecast_df["timestamp"],
-                y=forecast_df["price"],
-                mode="lines",
-                name="Prediction",
-                line=dict(color="#ff00ff", width=2, dash="dot"),
-            ),
-            secondary_y=False,
-        )
-
-        # 신뢰구간 (Upper & Lower)
-        fig.add_trace(
-            go.Scatter(
-                x=forecast_df["timestamp"],
-                y=forecast_df["upper_bound"],
-                mode="lines",
-                line=dict(width=0),
-                showlegend=False,
-            ),
-            secondary_y=False,
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=forecast_df["timestamp"],
-                y=forecast_df["lower_bound"],
-                mode="lines",
-                line=dict(width=0),
-                fill="tonexty",  # Upper와 Lower 사이를 채움
-                fillcolor="rgba(255, 0, 255, 0.1)",
-                showlegend=False,
-            ),
-            secondary_y=False,
-        )
-
-    fig.update_layout(
-        title=f"{symbol} Price Analysis (30 Days + 24h Forecast)",
-        xaxis_title="Time (UTC)",
-        yaxis_title="Price (USDT)",
-        height=600,
-        xaxis_rangeslider_visible=False,
-        template="plotly_dark",
-    )
-
-    return fig
-
-
-# 메인 UI 로직
 st.title("Coin Predict Admin Dashboard")
-st.markdown("코인 예측 모니터링 시스템")
+st.markdown("Manifest-first runtime status board")
 
 # 사이드바
 st.sidebar.header("Control Panel")
-symbol = st.sidebar.selectbox("Target Asset", TARGET_SYMBOLS)
-
 if st.sidebar.button("Refresh Data"):
-    st.cache_data.clear()  # 캐시 비우기 (새로고침)
+    st.cache_data.clear()
 
-# 메인 화면
-col1, col2 = st.columns([3, 1])
+with st.spinner("Loading manifest from static user plane..."):
+    manifest_payload, manifest_error = get_manifest_payload()
 
-with col1:
-    st.subheader(f"📊 {symbol} Market Status")
+if manifest_error:
+    st.error(f"Failed to fetch manifest: {manifest_error}")
+    st.stop()
+if manifest_payload is None:
+    st.error("Manifest payload is empty.")
+    st.stop()
 
-    # API 호출
-    with st.spinner("Calling API Server..."):
-        history_df, h_updated = get_history_data(symbol)
-        forecast_df, f_updated = get_forecast_data(symbol)
+summary = manifest_payload.get("summary", {})
+entries_df = flatten_manifest_entries(
+    manifest_payload, now=datetime.now(timezone.utc)
+)
 
-    if not history_df.empty:
-        # KPI 계산
-        last_close = history_df.iloc[-1]["close"]
-        prev_close = history_df.iloc[-2]["close"]
-        change = last_close - prev_close
-        change_pct = (change / prev_close) * 100
+if entries_df.empty:
+    st.warning("Manifest entries are empty. Wait for a publish cycle.")
+    st.json({"summary": summary, "generated_at": manifest_payload.get("generated_at")})
+    st.stop()
 
-        # 차트 그리기
-        fig = plot_chart(symbol, history_df, forecast_df)
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.warning("No historical data found. Please check Ingest Worker.")
+all_symbols = sorted(entries_df["symbol"].dropna().unique().tolist())
+all_timeframes = sorted(
+    entries_df["timeframe"].dropna().unique().tolist(),
+    key=timeframe_sort_key,
+)
+all_statuses = sorted(entries_df["status"].dropna().unique().tolist())
 
-with col2:
-    st.subheader("System Metrics")
-    if not history_df.empty:
-        st.metric("Current Price", f"${last_close:,.2f}", f"{change_pct:.2f}%")
+selected_symbols = st.sidebar.multiselect(
+    "Symbols",
+    all_symbols,
+    default=all_symbols,
+)
+selected_timeframes = st.sidebar.multiselect(
+    "Timeframes",
+    all_timeframes,
+    default=all_timeframes,
+)
+selected_statuses = st.sidebar.multiselect(
+    "Prediction Status",
+    all_statuses,
+    default=all_statuses,
+)
+degraded_mode = st.sidebar.selectbox(
+    "Degraded Filter",
+    ["all", "only", "exclude"],
+    index=0,
+)
+serve_mode = st.sidebar.selectbox(
+    "Serve Allowed Filter",
+    ["all", "only", "exclude"],
+    index=0,
+)
 
-    st.divider()
+filtered_df = filter_manifest_entries(
+    entries_df,
+    symbols=selected_symbols,
+    timeframes=selected_timeframes,
+    statuses=selected_statuses,
+    degraded_mode=degraded_mode,
+    serve_mode=serve_mode,
+)
 
-    st.subheader("Freshness Check")
-    # '데이터 생성 시점'을 표시
-    if f_updated:
-        # UTC 시간 문자열 파싱
-        updated_dt = pd.to_datetime(f_updated)
-        now_dt = pd.Timestamp.now(tz="UTC")
-        diff_minutes = (now_dt - updated_dt).total_seconds() / 60
+st.caption(
+    f"Manifest generated_at={manifest_payload.get('generated_at')} / "
+    f"entry_count={summary.get('entry_count', 0)}"
+)
 
-        st.write(f"Updated: {f_updated}")
+metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+metric_col1.metric(
+    "Filtered Entries",
+    len(filtered_df),
+    f"of {summary.get('entry_count', 0)}",
+)
+metric_col2.metric(
+    "Degraded",
+    int(filtered_df["degraded"].sum()) if not filtered_df.empty else 0,
+)
+metric_col3.metric(
+    "Blocked",
+    int((~filtered_df["serve_allowed"]).sum()) if not filtered_df.empty else 0,
+)
+max_delay = (
+    filtered_df["prediction_delay_minutes"].max()
+    if not filtered_df.empty
+    else None
+)
+metric_col4.metric(
+    "Max Delay (min)",
+    "-" if max_delay is None else f"{max_delay:.2f}",
+)
 
-        if diff_minutes < 65:  # 1시간 + 5분 여유
-            st.success(f"Healthy ({int(diff_minutes)} min ago)")
-        else:
-            st.error(f"Stale Data ({int(diff_minutes)} min ago)")
-    else:
-        st.error("Time info missing")
+st.subheader("Timeframe Status Matrix")
+if filtered_df.empty:
+    st.warning("No rows match current filters.")
+else:
+    matrix = build_status_matrix(filtered_df)
+    st.dataframe(
+        matrix.style.applymap(status_cell_style),
+        use_container_width=True,
+        height=320,
+    )
+    st.caption("Cell format: STATUS | DEG | BLOCK | HIDDEN")
 
-    if not forecast_df.empty:
-        last_pred = forecast_df.iloc[-1]["price"]
-        start_pred = forecast_df.iloc[0]["price"]
-        pred_change = last_pred - start_pred
-
-        st.write("Next 24h Trend:")
-        if pred_change > 0:
-            st.success(f"📈 +${pred_change:,.2f}")
-        else:
-            st.error(f"📉 -${abs(pred_change):,.2f}")
-
-with st.expander("View Raw JSON Content"):
-    st.json(
-        {
-            "history_tail": (
-                history_df.tail(2).to_dict(orient="records")
-                if not history_df.empty
-                else {}
-            ),
-            "forecast_head": (
-                forecast_df.head(2).to_dict(orient="records")
-                if not forecast_df.empty
-                else {}
-            ),
-            "metadata": {
-                "history_updated": h_updated,
-                "forecast_updated": f_updated,
-            },
+st.subheader("Freshness and Updated-at Lag")
+if filtered_df.empty:
+    st.info("No freshness table for empty filter result.")
+else:
+    freshness_table = build_freshness_table(filtered_df).rename(
+        columns={
+            "prediction_updated_at": "prediction_updated_at_utc",
+            "prediction_delay_minutes": "updated_delay_minutes",
+            "prediction_age_minutes": "prediction_age_minutes_in_manifest",
+            "history_updated_at": "history_updated_at_utc",
+            "last_prediction_success_at": "last_success_at_utc",
+            "last_prediction_failure_at": "last_failure_at_utc",
         }
     )
+    st.dataframe(freshness_table, use_container_width=True, height=360)
+
+st.subheader("Entry Detail")
+if filtered_df.empty:
+    st.info("No entry to inspect.")
+else:
+    selected_key = st.selectbox(
+        "Select manifest entry",
+        filtered_df["key"].tolist(),
+    )
+    selected_entry = (
+        filtered_df.loc[filtered_df["key"] == selected_key]
+        .iloc[0]
+        .to_dict()
+    )
+    st.json(selected_entry)
+
+with st.expander("View Raw Manifest JSON"):
+    st.json(manifest_payload)

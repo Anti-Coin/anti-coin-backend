@@ -1,6 +1,6 @@
 # Coin Predict Living Plan (Hybrid)
 
-- Last Updated: 2026-02-17
+- Last Updated: 2026-02-19
 - Owner: Backend/Platform
 - Status: Active
 - Full Phase A History: `docs/archive/phase_a/PLAN_LIVING_HYBRID_PHASE_A_FULL_2026-02-12.md`
@@ -69,12 +69,10 @@
 4. 착수 게이트 확정(`R-004`, 완료): kickoff 구현 묶음을 `B-002 -> B-003`으로 고정하고, 검증/롤백 경계를 확정한다.
 
 ## 7. Next Cycle (Recommended)
-1. `B-001`: timeframe tier 정책 매트릭스 잠금(1m 비대칭 + `latest closed 180` + `14d/30d` + Hard Gate+Accuracy)
-2. `C-002`: 실행시간/실패율/overrun/missed boundary 메트릭 수집
-3. `C-006`: timeframe 경계 기반 scheduler 전환
-4. `C-007`: 신규 closed candle 감지 게이트 결합
-5. `B-007` 설계 착수: admin/app.py timeframe 운영 대시보드 확장
-6. `B-005` 검토: endpoint sunset 조건 충족 여부 확정
+1. `B-005` 수행: endpoint sunset 조건 충족 여부 확정
+2. `C-010` 수행: orchestrator 제어면 가독성 정리
+3. `B-008` 수행: FE visibility gate(`hidden_backfilling`) 연동
+4. `C-001` 준비: 심볼 확장 자동화 착수 조건/경계 확정
 
 ## 8. Portfolio Capability Matrix (Current vs Next)
 | Capability | Current Evidence | Next Strengthening |

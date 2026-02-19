@@ -28,12 +28,13 @@
 22. `C-009` 완료 (2026-02-19): monitor Influx-JSON consistency를 `symbol+timeframe` 기준으로 보강하고 `PRIMARY_TIMEFRAME` legacy fallback을 유지, 관련 회귀 테스트 추가 포함 전체 `108 passed`.
 23. `D-2026-02-19-40` 반영: monitor 대사 기준을 timeframe-aware로 고정.
 24. `R-005` 완료 (2026-02-19): SLA-lite baseline을 user plane availability 기준으로 고정하고, `Alert Miss Rate`/`MTTR-Stale`의 공식/데이터 소스/산출 주기를 `D-2026-02-19-41`로 잠금.
+25. `B-007` 완료 (2026-02-19): admin 대시보드를 manifest-first로 전환해 symbol/timeframe/status 필터, timeframe 상태 매트릭스, prediction updated 지연 테이블을 제공하고 회귀 `113 passed` 확인.
 
 ## 2. Next Priority Tasks
-1. `B-007`: admin/app.py timeframe 운영 대시보드 확장
-2. `B-005`: `/history`/`/predict` sunset 조건 충족 여부 재검증
-3. `C-010`: orchestrator 가독성 정리(`pipeline_worker.py` 제어면 경계 단순화)
-4. `B-008`(P2): FE 심볼 노출 게이트 연동(`hidden_backfilling` 필터)
+1. `B-005`: `/history`/`/predict` sunset 조건 충족 여부 재검증
+2. `C-010`: orchestrator 가독성 정리(`pipeline_worker.py` 제어면 경계 단순화)
+3. `B-008`(P2): FE 심볼 노출 게이트 연동(`hidden_backfilling` 필터)
+4. `C-001`: 심볼 목록 확장 자동화
 
 ## 2.1 Runtime Note
 1. 로컬 `.env`는 참고용이며, 실제 서버 런타임 환경 변수는 `.env.prod` 기준으로 주입된다.

@@ -47,6 +47,7 @@
 35. `D-2026-02-19-40` 채택: monitor 대사 기준을 timeframe-aware로 고정
 36. `C-011` 완료 (2026-02-19): boundary scheduler 시작 기준을 "다음 경계"에서 "현재 경계"로 조정해 재시작 직후 장주기 TF(`1d/1w/1M`) missed boundary를 첫 cycle에서 따라잡도록 보강, 회귀 `109 passed`
 37. `R-005` 완료 (2026-02-19): SLA-lite baseline을 user plane availability 중심으로 고정(공식/데이터 소스/산출 주기 잠금), `D-2026-02-19-41` 반영
+38. `B-007` 완료 (2026-02-19): admin 대시보드를 manifest-first로 전환해 symbol/timeframe/status 필터, timeframe 상태 매트릭스, prediction updated 지연 테이블을 제공하고 회귀 `113 passed`로 검증
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -65,7 +66,7 @@
 | B-002 | P1 | 파일 네이밍 규칙 통일 | done (2026-02-13) | canonical `{symbol}_{timeframe}` 파일 생성 + legacy fallback 호환 유지 + `tests/test_api_status.py`/`tests/test_status_monitor.py` 회귀 통과 |
 | B-003 | P1 | history/prediction export timeframe-aware 전환 | done (2026-02-13) | 다중 timeframe(`1h/1d/1w/1M`) 동시 export 동작 확인 + `1m` prediction 비생성 정책 코드/테스트 반영 + 회귀 `66 passed` |
 | B-004 | P1 | manifest 파일 생성 | done (2026-02-13) | `static_data/manifest.json`에 심볼/타임프레임별 `history.updated_at`, `prediction.status/updated_at/age`, `degraded`, `serve_allowed`, `summary(status_counts)`가 주기적으로 갱신됨 |
-| B-007 | P2 | 운영 대시보드(admin) timeframe 확장 | open | `admin/app.py`에서 symbol/timeframe 필터, timeframe별 freshness/degraded 상태 매트릭스, 최근 갱신 시각/지연 표시를 지원하고 `B-004` manifest를 1차 데이터 소스로 사용 |
+| B-007 | P2 | 운영 대시보드(admin) timeframe 확장 | done (2026-02-19) | `admin/app.py`가 `manifest.json` 1차 소스를 사용해 symbol/timeframe/status 필터, timeframe별 freshness/degraded/serve_allowed 상태 매트릭스, prediction updated 지연 테이블을 제공하며 `tests/test_manifest_view.py` + 전체 회귀 `113 passed`로 검증됨 |
 | B-008 | P2 | FE 심볼 노출 게이트 연동(`hidden_backfilling` 필터) | open | FE 심볼 리스트가 `manifest.visibility`를 소비해 `hidden_backfilling` 심볼을 완전 비노출하며, `ready_for_serving` 전환 시 자동 노출 복귀가 검증된다 |
 | B-006 | P1 | 저장소 예산 가드(50GB) + retention/downsample 실행 | done (2026-02-13) | `1m` rolling(`14d default / 30d cap`) 적용 + 디스크 watermark 경보/차단 + `1h->1d/1w/1M` downsample job 및 `downsample_lineage.json` 기반 lineage/검증 경로 확정 |
 | B-005 | P2 | `/history`/`/predict` fallback 정리(sunset) | open | Endpoint Sunset 체크리스트 조건 충족 + fallback 비의존 운영 1 cycle 검증 + rollback 절차 문서화 |
@@ -101,9 +102,9 @@
 | D-011 | P1 | Model Coverage Matrix + Fallback Resolver 구현 | open | 기본 `timeframe-shared`/조건부 `symbol+timeframe dedicated` 정책과 `dedicated -> shared -> insufficient_data` fallback 체인이 코드/메타데이터/테스트로 검증됨 |
 
 ## 3. Immediate Bundle
-1. `B-007`
-2. `B-005`
-3. `C-010`
+1. `B-005`
+2. `C-010`
+3. `B-008`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
@@ -167,7 +168,7 @@
 1. 현재 우선순위(`Stability > Cost > Performance`)에 따라 Option A를 기준선으로 채택한다.
 2. `B-005`는 사용자 의견에 따라 P2를 유지한다.
 3. Option B는 `C-002`에서 비용 압력이 즉시 심각하다는 증거가 나올 때 fallback 후보로만 유지한다.
-4. `D-2026-02-13-33`/`D-2026-02-13-35`/`D-2026-02-17-36`/`D-2026-02-17-37`/`D-2026-02-19-41` 반영 후 활성 실행 순서는 `B-007(P2) -> B-005(P2) -> C-010(P2)`다.
+4. `D-2026-02-13-33`/`D-2026-02-13-35`/`D-2026-02-17-36`/`D-2026-02-17-37`/`D-2026-02-19-41` 반영 후 활성 실행 순서는 `B-005(P2) -> C-010(P2) -> B-008(P2)`다.
 
 ## 8. R-004 Kickoff Contract (Accepted)
 1. Kickoff 구현 묶음은 `B-002`, `B-003` 2개로 고정한다.
