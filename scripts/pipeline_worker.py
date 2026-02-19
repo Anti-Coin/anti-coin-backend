@@ -768,16 +768,19 @@ def initialize_boundary_schedule(
     now: datetime, timeframes: list[str]
 ) -> dict[str, datetime]:
     """
-    각 timeframe의 다음 경계를 초기 스케줄로 설정한다.
+    각 timeframe의 현재 경계(open timestamp)를 초기 스케줄로 설정한다.
 
     Called from:
     - run_worker() 시작 시(경계 스케줄러 모드)
     """
-    # 각 timeframe의 "다음 경계"를 기준점으로 잡는다.
-    # 시작 시각을 now 그대로 쓰지 않는 이유는 경계 정렬을 강제해
-    # poll drift(누적 시간 오차)를 줄이기 위함이다.
+    # 재시작 직후 "다음 경계만 대기"하면 장주기 TF(1d/1w/1M)가
+    # 다음 경계까지 오래 정체될 수 있다.
+    # 따라서 시작 시점에는 "현재 경계"를 기준점으로 잡아
+    # 놓친 경계를 첫 cycle에서 한 번 따라잡도록 한다.
     return {
-        timeframe: next_timeframe_boundary(now, timeframe)
+        timeframe: next_timeframe_boundary(
+            last_closed_candle_open(now, timeframe), timeframe
+        )
         for timeframe in timeframes
     }
 

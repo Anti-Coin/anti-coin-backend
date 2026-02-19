@@ -577,8 +577,23 @@ def test_resolve_boundary_due_timeframes_without_missed_boundary():
 def test_initialize_boundary_schedule_sets_next_boundaries():
     now = datetime(2026, 2, 13, 10, 37, tzinfo=timezone.utc)
     schedule = initialize_boundary_schedule(now, ["1h", "1d"])
-    assert schedule["1h"] == datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
-    assert schedule["1d"] == datetime(2026, 2, 14, 0, 0, tzinfo=timezone.utc)
+    assert schedule["1h"] == datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
+    assert schedule["1d"] == datetime(2026, 2, 13, 0, 0, tzinfo=timezone.utc)
+
+
+def test_initialize_boundary_schedule_catches_up_long_timeframes_on_start():
+    now = datetime(2026, 2, 19, 8, 2, tzinfo=timezone.utc)
+    schedule = initialize_boundary_schedule(now, ["1h", "1d", "1w", "1M"])
+
+    due, missed, next_boundary_at = resolve_boundary_due_timeframes(
+        now=now,
+        timeframes=["1h", "1d", "1w", "1M"],
+        next_boundary_by_timeframe=schedule,
+    )
+
+    assert due == ["1h", "1d", "1w", "1M"]
+    assert missed == 0
+    assert next_boundary_at == datetime(2026, 2, 19, 9, 0, tzinfo=timezone.utc)
 
 
 def test_get_exchange_latest_closed_timestamp_ignores_open_candle():

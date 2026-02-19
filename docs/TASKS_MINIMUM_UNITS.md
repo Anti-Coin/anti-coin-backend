@@ -45,6 +45,7 @@
 33. `D-2026-02-19-39` 채택: multi-timeframe freshness 기본 임계값(`1w/1M`)을 고정하고 `4h`는 legacy compatibility 경로로 유지(soft/hard: `1w=8d/16d`, `1M=35d/70d`), 관련 설정값(`utils/config.py`, `.env.example`) 동기화
 34. `C-009` 완료 (2026-02-19): monitor Influx-JSON consistency를 `symbol+timeframe` 기준으로 보강하고 `PRIMARY_TIMEFRAME` legacy fallback을 유지, 회귀 `108 passed`
 35. `D-2026-02-19-40` 채택: monitor 대사 기준을 timeframe-aware로 고정
+36. `C-011` 완료 (2026-02-19): boundary scheduler 시작 기준을 "다음 경계"에서 "현재 경계"로 조정해 재시작 직후 장주기 TF(`1d/1w/1M`) missed boundary를 첫 cycle에서 따라잡도록 보강, 회귀 `109 passed`
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -80,6 +81,8 @@
 | C-007 | P1 | 신규 candle 감지 게이트 결합 | done (2026-02-17) | boundary 모드에서 `symbol+timeframe`별 detection gate가 `run/skip`를 분기하고(`new_closed_candle`/`no_new_closed_candle` 등), `runtime_metrics.json`에 `detection_gate_{run,skip}_counts/events`와 `missed_boundary_count/rate`가 함께 기록된다. 단위 회귀에서 경계 정상 시나리오 `missed_boundary=0`을 검증한다 |
 | C-008 | P1 | `1h` underfill RCA + temporary guard sunset 결정 | done (2026-02-17) | legacy fallback 오염 경로(`timeframe` 미존재 row만 허용) 차단 + 회귀 테스트 반영 + `D-2026-02-17-37` 문서화 완료. guard 7일 관찰은 블로킹 조건이 아닌 운영 메모로 `C-002` 계측 트랙에서 병행 추적 |
 | C-009 | P1 | monitor Influx-JSON consistency timeframe-aware 보강 | done (2026-02-19) | `scripts/status_monitor.py`의 Influx latest 조회가 `symbol+timeframe` 기준으로 분리되고, `PRIMARY_TIMEFRAME` legacy fallback을 유지하며, `tests/test_status_monitor.py` 회귀(신규 케이스 포함)와 전체 회귀 `108 passed`로 검증됨 |
+| C-011 | P1 | boundary scheduler 재시작 catch-up 보강 | done (2026-02-19) | `initialize_boundary_schedule`가 현재 경계 기준으로 초기화되어 재시작 직후 `1d/1w/1M`이 다음 경계까지 정체되지 않고 첫 cycle에서 due 처리되며, `tests/test_pipeline_worker.py` 신규 회귀 + 전체 회귀 `109 passed`로 검증됨 |
+| C-010 | P2 | orchestrator 가독성 정리(`pipeline_worker.py` 제어면 경계 단순화) | open | `scripts/pipeline_worker.py`의 cycle commit/state 저장 책임이 명확히 분리되고(ingest_state vs watermark commit 경계), 동작 변경 없이 인지부하를 줄였음을 회귀 테스트 + 코드 리뷰 체크리스트로 검증 |
 
 ### Phase D (Model Evolution)
 | ID | Priority | Task | Status | Done Condition |
@@ -136,6 +139,7 @@
 | C-006 | 고정 poll 루프는 경계 미스/불필요 cycle로 비용과 오탐을 증가시킴 | 경계 누락 또는 중복 트리거로 stale/중복 실행 발생 | UTC 경계 시뮬레이션 + timeframe별 실행 cadence 검증 | 기존 고정 poll 루프로 복귀 |
 | C-007 | boundary-only는 신규 데이터가 없을 때도 불필요 cycle을 수행한다 | 신규 candle 감지 오탐/누락으로 skip 오류 또는 처리 지연 발생 | 신규 closed candle 감지 기반 run/skip 테스트 + `missed_boundary=0` 검증 | detection gate 비활성화 후 boundary-only 모드 유지 |
 | C-008 | `1h` underfill이 재발하면 이후 C-006/C-005 결과 해석이 왜곡될 수 있음 | 임시 guard에 의존한 채 근본 원인 미확정 상태가 장기화됨 | RCA 증거(재현/로그/쿼리) + guard 트리거 추적 + 유지/제거 회귀 테스트 | guard를 유지한 채 RCA 후속 태스크로 분리 |
+| C-010 | orchestrator에 제어면/호환 래퍼/상태 커밋 책임이 밀집돼 변경 시 인지부하가 높다 | 작은 수정도 영향 범위 예측 실패로 회귀 위험이 증가한다 | commit 경계 단위 테스트 + 회귀(`pytest`) + 리뷰 체크리스트(책임 분리/동작 불변) 통과 | 구조 정리만 되돌리고 기존 단일 흐름으로 복귀 |
 
 ### Phase D
 | ID | Why Now | Failure Mode | Verification | Rollback |
