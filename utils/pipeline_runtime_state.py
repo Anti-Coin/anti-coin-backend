@@ -37,6 +37,15 @@ class SymbolActivationStore:
     def load(self) -> dict[str, SymbolActivationSnapshot]:
         """
         파일에서 activation entries를 읽어 DTO dict로 반환한다.
+
+        Expected payload shape:
+        {
+          "version": 1,
+          "updated_at": "...Z",
+          "entries": {
+            "BTC/USDT": {"state": "backfilling", "visibility": "hidden_backfilling", ...}
+          }
+        }
         """
         if not self._path.exists():
             return {}
@@ -75,6 +84,10 @@ class SymbolActivationStore:
     ) -> None:
         """
         DTO dict를 symbol_activation.json 포맷으로 저장한다.
+
+        Note:
+        - dict 입력도 허용하지만 저장 전에 DTO로 정규화한다.
+        - unknown/invalid 필드는 DTO 변환 시 제거되어 파일 계약을 안정화한다.
         """
         resolved_now = now or datetime.now(timezone.utc)
         payload_entries: dict[str, SymbolActivationEntryPayload] = {}
@@ -112,6 +125,12 @@ class WatermarkStore:
     def load(self) -> dict[str, WatermarkCursor]:
         """
         파일에서 watermark entries를 읽어 DTO dict로 반환한다.
+
+        Expected entries example:
+        {
+          "BTC/USDT|1h": "2026-02-19T10:00:00Z",
+          "ETH/USDT|1d": "2026-02-19T00:00:00Z"
+        }
         """
         if not self._path.exists():
             return {}
@@ -149,6 +168,9 @@ class WatermarkStore:
     ) -> None:
         """
         DTO dict를 watermark 파일 포맷으로 저장한다.
+
+        Invalid string timestamp는 저장하지 않는다.
+        (다음 load에서 파싱 실패를 유발하는 데이터를 미리 차단)
         """
         resolved_now = now or datetime.now(timezone.utc)
         payload_entries: dict[str, str] = {}

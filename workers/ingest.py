@@ -204,6 +204,12 @@ def run_downsample_and_save(
 
     Why:
     - direct ingest 대신 downsample 경로를 강제해 데이터 정합성을 보존한다.
+
+    Lineage example key:
+    - BTC/USDT|1d
+    - fields: source_rows, total_buckets, complete_buckets, incomplete_buckets,
+      last_bucket_open, status
+    - status=ok 이어도 incomplete_buckets>0 일 수 있으며, 이 경우 complete bucket만 저장한다.
     """
     if target_timeframe not in ctx.DOWNSAMPLE_TARGET_TIMEFRAMES:
         return None, "unsupported"
@@ -216,6 +222,7 @@ def run_downsample_and_save(
         lookback_days=ctx.DOWNSAMPLE_SOURCE_LOOKBACK_DAYS,
     )
     if source_df.empty:
+        # source 자체가 비어 있으면 lineage를 no_source_data로 남기고 종료한다.
         ctx.upsert_downsample_lineage(
             symbol=symbol,
             target_timeframe=target_timeframe,
@@ -251,12 +258,15 @@ def run_downsample_and_save(
     )
 
     if not incomplete_df.empty:
+        # incomplete bucket은 저장하지 않는다.
+        # (예: 1d bucket이 24개 1h candle을 채우지 못한 경우)
         ctx.logger.warning(
             f"[{symbol} {target_timeframe}] Downsample incomplete buckets: "
             f"{len(incomplete_df)}"
         )
 
     if complete_df.empty:
+        # lineage는 남았지만 저장 가능한 complete bucket이 없다는 뜻이다.
         return None, "no_data"
 
     export_df = complete_df.copy()
@@ -556,6 +566,12 @@ def resolve_ingest_since(
     Why:
     - cursor/state가 깨져도 DB SoT를 우선해 잘못된 기준점 전파를 막고,
       필요 시 rebootstrap으로 자동 복구한다.
+
+    Source code examples:
+    - "db_last": DB latest를 그대로 이어받는 정상 증분 수집
+    - "bootstrap_exchange_earliest": canonical 1h 최초 전체 백필 시작
+    - "underfilled_rebootstrap": lookback row 부족으로 재부트스트랩
+    - "blocked_storage_guard": 저장소 가드로 초기 백필 차단
     """
     resolved_now = now or datetime.now(timezone.utc)
     if (
@@ -563,6 +579,7 @@ def resolve_ingest_since(
         and timeframe == ctx.DOWNSAMPLE_SOURCE_TIMEFRAME
         and bootstrap_since is not None
     ):
+        # hidden_backfilling 상태에서는 canonical 1h를 거래소 earliest부터 강제 수집한다.
         return bootstrap_since, "full_backfill_exchange_earliest"
 
     if force_rebootstrap:
@@ -575,6 +592,7 @@ def resolve_ingest_since(
             return None, "blocked_storage_guard"
 
         lookback_days = ctx._lookback_days_for_timeframe(timeframe)
+        # underfill 복구는 최근 lookback 윈도우를 다시 수집해 끊긴 구간을 메운다.
         return (
             resolved_now - timedelta(days=lookback_days),
             "underfilled_rebootstrap",
@@ -614,6 +632,7 @@ def resolve_ingest_since(
         timeframe == ctx.DOWNSAMPLE_SOURCE_TIMEFRAME
         and bootstrap_since is not None
     ):
+        # canonical 1h + exchange earliest가 있으면 lookback보다 earliest를 우선한다.
         if source == "state_drift_rebootstrap":
             return (
                 bootstrap_since,

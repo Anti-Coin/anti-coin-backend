@@ -153,6 +153,11 @@ def run_prediction_and_save(
     Why:
       - publish 단계가 ingest 결과를 사용자/운영 산출물로 반영하는 핵심 경로이므로
         정책 스킵/실패/성공 상태를 명확한 return code로 분리한다.
+
+    Orchestrator contract:
+      - 이 함수는 watermark를 직접 갱신하지 않는다.
+      - 반환 코드(ok/skipped/failed)를 바탕으로
+        `scripts.pipeline_worker`가 predict watermark 전진 여부를 결정한다.
     """
     if not ctx.prediction_enabled_for_timeframe(timeframe):
         # 1m 등 비활성 timeframe은 "실패"가 아니라 정책적 skip으로 처리한다.

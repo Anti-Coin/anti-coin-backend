@@ -97,6 +97,11 @@ def build_runtime_manifest(
     Why:
     - 분산된 신호(history timestamp, prediction freshness, degraded, visibility)를
       단일 스냅샷으로 제공해 FE/운영 도구가 동일 기준으로 판단하도록 한다.
+
+    Data-plane contract:
+    - `serve_allowed`는 "노출 가능 여부 최종 비트"다.
+    - visibility(hidden_backfilling) 또는 hard freshness 상태면 false가 된다.
+    - FE는 세부 원인보다 이 비트를 1차 게이트로 사용하면 오노출을 줄일 수 있다.
     """
     resolved_now = now or datetime.now(timezone.utc)
     generated_at = resolved_now.strftime("%Y-%m-%dT%H:%M:%SZ")

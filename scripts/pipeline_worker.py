@@ -503,6 +503,11 @@ def evaluate_publish_gate_from_ingest_watermark(
 ) -> PublishGateDecision:
     """
     ingest watermark 기준 publish 실행 여부를 DTO로 판단한다.
+
+    Example (key=BTC/USDT|1h):
+    - ingest=2026-02-19T10:00:00Z, export=2026-02-19T09:00:00Z -> run
+    - ingest=2026-02-19T10:00:00Z, export=2026-02-19T10:00:00Z -> skip
+    - ingest 미존재 -> skip(no_ingest_watermark)
     """
     key = _prediction_health_key(symbol, timeframe)
     ingest_dt = _resolve_watermark_datetime(ingest_entries.get(key))
@@ -1833,6 +1838,11 @@ def _prepare_symbol_activation_for_cycle(
 ) -> tuple[SymbolActivationSnapshot, datetime | None, bool]:
     """
     심볼 activation 상태를 현재 cycle 기준으로 준비한다.
+
+    Branch intent:
+    - ingest role: DB + exchange 최신 상태로 activation을 재계산한다.
+    - publish-only role: 파일에 저장된 activation만 신뢰한다.
+      파일이 없거나 파싱 실패면 default hidden을 사용해 fail-open을 막는다.
     """
     exchange_earliest: datetime | None = None
     activation_loaded = False
@@ -1901,11 +1911,19 @@ def _run_ingest_timeframe_step(
       - tuple[bool, SymbolActivationSnapshot]
         1) publish 단계 진행 여부
         2) 최신 symbol activation 스냅샷
+
+    Step contract (1h 기준):
+    1) detection gate로 실행 여부를 먼저 확정한다.
+    2) since(source)를 계산하고 ingest를 실행한다.
+    3) ingest 성공 시 ingest watermark를 메모리에서만 전진시킨다.
+    4) cycle 끝 _persist_cycle_runtime_state에서 파일 커밋한다.
     """
     state_since = ingest_state_store.get_last_closed(symbol, timeframe)
     last_time = get_last_timestamp(query_api, symbol, timeframe)
 
     if scheduler_mode == "boundary":
+        # XXX: 거래서 API 응답 지연 시.
+        # 실제로는 새로운 봉이 생겼음에도, Skip 처리가 발생할 수 있음.
         gate_decision = evaluate_detection_gate_decision(
             query_api,
             activation_exchange,
@@ -1916,6 +1934,8 @@ def _run_ingest_timeframe_step(
         )
         gate_reason = gate_decision.reason.value
         if not gate_decision.should_run:
+            # Gate skip은 "정상 no-op"다.
+            # 이 경우 ingest/publish watermark 어느 쪽도 전진시키지 않는다.
             cycle_detection_skip_counts[gate_reason] = (
                 cycle_detection_skip_counts.get(gate_reason, 0) + 1
             )
@@ -1974,6 +1994,8 @@ def _run_ingest_timeframe_step(
     since_source = parse_ingest_since_source(since_source_text)
 
     if since_source == IngestSinceSource.BLOCKED_STORAGE_GUARD:
+        # 저장소 block에서는 1m 초기 백필을 중단한다.
+        # 상태는 blocked로 남기되 cursor를 임의 전진시키지 않는다.
         logger.warning(
             f"[{symbol} {timeframe}] initial backfill blocked "
             f"by storage guard (usage={disk_usage_percent}%)."
@@ -2011,12 +2033,17 @@ def _run_ingest_timeframe_step(
         since=since,
     )
     if ingest_outcome.result == IngestExecutionResult.SAVED:
+        # ingest cursor와 ingest watermark는 같은 시점(latest_saved_at)으로 전진시킨다.
+        # publish 단계는 이후 gate에서 이 ingest watermark를 기준으로 동기화된다.
         ingest_state_store.upsert(
             symbol,
             timeframe,
             last_closed_ts=ingest_outcome.latest_saved_at,
             status="ok",
         )
+        # XXX: ingest_state_store는 upsert 호출 시 즉시 저장(JSON)
+        # watermark는 메모리에만 업데이트 하고, 최종 저장은 바깥 루프에 위임
+        # "상태 불일치" 발생 가능
         if ingest_outcome.latest_saved_at is not None:
             _upsert_watermark(
                 state.ingest_watermarks,
@@ -2116,6 +2143,8 @@ def _run_publish_timeframe_step(
         return
 
     if run_export_stage:
+        # export와 predict는 각각 별도 watermark cursor를 가진다.
+        # 한쪽 실패가 다른 쪽 재시도까지 막지 않도록 gate/cursor를 분리한다.
         export_decision = evaluate_publish_gate_from_ingest_watermark(
             symbol=symbol,
             timeframe=timeframe,
@@ -2187,6 +2216,8 @@ def _run_publish_timeframe_step(
             return
 
         if predict_decision.ingest_closed_at is not None:
+            # prediction success/skip 이후에만 predict watermark를 전진시킨다.
+            # 실패 시 cursor를 멈춰 다음 cycle에서 동일 입력 재시도를 허용한다.
             _upsert_watermark(
                 state.predict_watermarks,
                 symbol=symbol,
@@ -2240,6 +2271,12 @@ def _persist_cycle_runtime_state(
 ) -> None:
     """
     cycle 종료 시 runtime state 파일을 저장한다.
+
+    Commit policy:
+    - 이 함수 이전에는 메모리 상태만 변경된다.
+    - 이 함수에서 symbol_activation / ingest / predict / export watermark가
+      파일로 커밋된다.
+    - 따라서 "watermark가 올라갔는지"는 이 함수가 지난 뒤 파일에서 확인해야 한다.
     """
     if run_ingest_stage:
         try:
@@ -2330,6 +2367,8 @@ def run_worker():
         predict_watermarks=_load_watermark_entries(PREDICT_WATERMARK_FILE),
         export_watermarks=_load_watermark_entries(EXPORT_WATERMARK_FILE),
     )
+    # 위 state는 "cycle 내 작업 메모리"다.
+    # 파일 반영은 _persist_cycle_runtime_state()에서만 수행된다.
     previous_disk_level: StorageGuardLevel | None = None
     last_retention_enforced_at: datetime | None = None
     activation_exchange = None
@@ -2360,6 +2399,8 @@ def run_worker():
             # publish 전용 프로세스는 ingest와 메모리를 공유하지 않는다.
             # 따라서 매 cycle 파일에서 최신 activation/watermark를 다시 읽어
             # 프로세스 간 eventual consistency를 맞춘다.
+            # ingest worker가 아직 커밋하지 않은 메모리 상태는 볼 수 없으므로,
+            # 최대 1 cycle 지연은 정상 동작 범위다.
             state.symbol_activation_entries = _load_symbol_activation()
             state.ingest_watermarks = _load_watermark_entries(
                 INGEST_WATERMARK_FILE
@@ -2383,6 +2424,8 @@ def run_worker():
                     next_boundary_by_timeframe=next_boundary_by_timeframe,
                 )
                 if not active_timeframes:
+                    # due timeframe이 없으면 idle cycle로 기록하고 바로 sleep한다.
+                    # 이 경로에서는 ingest/publish 단계 자체를 실행하지 않는다.
                     sleep_until_boundary = (
                         (next_boundary_at - cycle_now).total_seconds()
                         if next_boundary_at is not None
