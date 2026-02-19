@@ -1,6 +1,6 @@
 # Coin Predict Decision Register (Active)
 
-- Last Updated: 2026-02-17
+- Last Updated: 2026-02-19
 - Scope: archive 연동형 의사결정 레지스터 (요약/상세 분리)
 - Full History: `docs/archive/phase_a/DECISIONS_PHASE_A_FULL_2026-02-12.md`
 
@@ -249,6 +249,102 @@
 - Revisit Trigger:
   - 활성 심볼 수/디스크 성장률이 예상보다 커져 `warn` 이상이 장기 지속될 때
   - 거래소 API가 earliest 구간 제공 정책을 변경해 full bootstrap 전략이 비효율적일 때
+
+### D-2026-02-17-37
+- Date: 2026-02-17
+- Status: Accepted
+- Topic: `C-008` RCA - `1h` underfill 원인 고정 및 guard 수명 결정
+- Context:
+  - `1h` canonical 데이터가 없을 때 `get_last_timestamp/get_first_timestamp`는 `PRIMARY_TIMEFRAME`에 한해 legacy fallback(타임프레임 미포함 스키마 호환)을 허용했다.
+  - 기존 fallback 쿼리가 `symbol`만으로 조회되어, `1d/1w/1M` 등 다른 timeframe row를 legacy row로 오인할 수 있었다.
+  - 이 경우 `since` 기준이 실제 `1h` 최초/최종 시각이 아닌 타 timeframe 시각으로 결정되어 `1h` underfill(예: lookback 기대치 대비 소량 row)로 이어질 수 있다.
+- Decision:
+  - legacy fallback은 `timeframe` 태그가 없는 row만 대상으로 제한한다(`not exists r["timeframe"]`).
+  - 즉, `PRIMARY_TIMEFRAME` 호환 fallback은 유지하되, cross-timeframe 오염 경로는 차단한다.
+  - `I-2026-02-13-01` underfill rebootstrap guard는 즉시 제거하지 않고 유지한다.
+  - 단, guard의 역할은 `최종 해결`이 아니라 `2차 안전장치`로 명시하며, 재트리거 추세를 관찰해 후속(운영 관찰 창 만료 시점)에 sunset 여부를 재결정한다.
+  - `C-008` 완료 기준은 원인 경로 차단 + 회귀 테스트 + 결정 문서화로 닫고, 7일 관찰은 차단 게이트가 아닌 운영 메모로 `C-002` 계측 트랙에서 병행 수행한다.
+- Consequence:
+  - `1h` 커버리지 기준 시각 계산의 오염 가능성이 줄어들어 underfill 재발 확률이 낮아진다.
+  - legacy 무타임프레임 데이터와의 호환성은 유지되며, multi-timeframe 데이터와의 혼선은 방지된다.
+  - guard 유지로 단기 안정성은 확보되지만, 불필요 rebootstrap 비용은 계속 관찰 대상이다.
+- Revisit Trigger:
+  - guard 재트리거가 7일 내 반복되거나, 재백필 비용/소요시간이 운영 허용치를 초과할 때
+  - 운영 관찰 메모(7일) 종료 시점에 guard 제거/완화 근거가 충분히 확보될 때
+
+### D-2026-02-17-38
+- Date: 2026-02-17
+- Status: Accepted
+- Topic: `C-005B` Worker File Split + 2-Service Deployment + Ingest-Watermark Publish Gate
+- Context:
+  - 기존 `pipeline_worker.py` 단일 엔트리 구조는 역할(R&R) 경계가 코드/운영 양쪽에서 불명확해 가독성과 장애 격리성 모두에 한계가 있었다.
+  - 사용자 요구는 ingest/predict/export를 파일 단위로 분리해 책임을 명확히 하는 것이며, 동시에 운영 비용을 과도하게 늘리지 않는 구성이 필요했다.
+  - predict/export 트리거를 고정 주기만으로 두면 불필요 실행이 발생하므로, "ingest로 신규 데이터가 들어왔을 때만 실행" 경계가 필요했다.
+- Decision:
+  - 엔트리포인트를 아래 4개로 분리한다.
+    - `scripts/worker_ingest.py`
+    - `scripts/worker_predict.py`
+    - `scripts/worker_export.py`
+    - `scripts/worker_publish.py`(운영 기본용 `predict+export` 통합 엔트리)
+  - 배포 기본은 compose 2-service로 고정한다.
+    - `worker-ingest`: ingest/downsample/activation 담당
+    - `worker-publish`: predict/export/manifest 담당
+  - publish 실행 게이트는 ingest watermark 기반으로 고정한다.
+    - ingest writer: `static_data/ingest_watermarks.json`
+    - predict cursor: `static_data/predict_watermarks.json`
+    - export cursor: `static_data/export_watermarks.json`
+  - publish는 ingest watermark가 advance된 `symbol+timeframe`에 대해서만 실행한다.
+  - Source of Truth는 기존처럼 InfluxDB이며, watermark 파일은 inter-worker trigger cursor로 한정한다.
+- Consequence:
+  - 코드/운영 책임 경계가 명확해져 원인 추적 및 변경 영향 분석이 쉬워진다.
+  - ingest 지연/장애가 publish 단계 전체를 즉시 멈추는 결합이 완화된다.
+  - 3-service 완전 분리보다 운영 비용을 낮추면서도 대부분의 격리 이득을 확보한다.
+  - watermark 파일 손상/누락 시 publish skip이 증가할 수 있으므로 파일 무결성 관측이 필요하다.
+- Revisit Trigger:
+  - publish backlog(ingest 대비 지연)가 7일 기준 임계치를 초과할 때
+  - CPU/RAM 압력으로 `worker-publish` 내부 predict/export 결합이 병목으로 확인될 때
+  - watermark 파일 경합/오염이 반복되어 Influx state 저장으로 승격이 필요할 때
+
+### D-2026-02-19-39
+- Date: 2026-02-19
+- Status: Accepted
+- Topic: Multi-Timeframe Freshness Threshold Baseline (`1w`/`1M`) + `4h` Legacy Compatibility
+- Context:
+  - 다중 timeframe 운영이 활성화됐지만, 기본 freshness threshold는 `1h/4h/1d` 중심으로 남아 있었다.
+  - monitor/API freshness 판정의 신뢰도를 높이려면 `1w/1M` 기준도 명시적으로 고정할 필요가 있다.
+  - `4h`는 현재 핵심 운영 TF는 아니지만, 기존 테스트/운영 도구 호환성을 위해 즉시 제거하지 않는 편이 안전하다.
+- Decision:
+  - 기본 soft/hard freshness threshold를 아래로 고정한다.
+    - `1h`: soft `65m`, hard `130m`
+    - `4h`: soft `250m`, hard `500m` (legacy compatibility)
+    - `1d`: soft `1500m`(25h), hard `3000m`(50h)
+    - `1w`: soft `11520m`(8d), hard `23040m`(16d)
+    - `1M`: soft `50400m`(35d), hard `100800m`(70d)
+  - 위 값은 기본값이며, 운영 환경에서는 env override를 허용한다.
+  - `4h` 제거는 별도 호환성 점검 이후 후속 결정으로 분리한다.
+- Consequence:
+  - 장주기 TF freshness 판정의 일관성이 높아지고, unknown fallback에 의한 오탐 가능성을 줄일 수 있다.
+  - 한편 threshold 값이 보수적으로 크므로, 실제 운영 경보 민감도는 관측 후 재조정이 필요하다.
+- Revisit Trigger:
+  - `1w/1M` 경보가 과소/과다로 관측되어 운영 대응 품질을 떨어뜨릴 때
+  - `4h` 레거시 호환 경로가 실제로 사용되지 않는 근거가 확보될 때
+
+### D-2026-02-19-40
+- Date: 2026-02-19
+- Status: Accepted
+- Topic: Monitor Influx-JSON Consistency Must Be Timeframe-Aware
+- Context:
+  - 기존 monitor 구현은 Influx latest를 심볼 단위로 조회해 각 timeframe 판정에 재사용했다.
+  - multi-timeframe 환경에서는 서로 다른 TF의 latest가 섞이며 hard_stale 오탐/누락이 발생할 수 있다.
+- Decision:
+  - monitor의 Influx latest 조회 기준을 `symbol+timeframe`으로 고정한다.
+  - `PRIMARY_TIMEFRAME`에 대해서만 legacy(no timeframe tag) row fallback을 허용한다.
+  - consistency override는 기존 정책(기본 JSON 판정 우선 + hard limit 초과 시 hard_stale 승격)을 유지한다.
+- Consequence:
+  - multi-timeframe 운영에서 Influx-JSON 대사 신뢰도가 향상된다.
+  - timeframe별 query가 증가하므로 query 비용은 소폭 증가할 수 있다.
+- Revisit Trigger:
+  - query 비용이 운영 한계를 초과하거나, timeframe별 대사 오탐/누락이 재발할 때
 
 ## 3. Decision Operation Policy
 1. Archive로 이동된 결정은 `Section 1`에 요약 형태로만 유지한다.

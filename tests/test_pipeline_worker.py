@@ -13,17 +13,31 @@ from scripts.pipeline_worker import (
     append_runtime_cycle_metrics,
     build_runtime_manifest,
     downsample_ohlcv_frame,
+    evaluate_detection_gate,
     enforce_1m_retention,
+    get_first_timestamp,
     get_disk_usage_percent,
+    get_exchange_latest_closed_timestamp,
+    get_last_timestamp,
+    initialize_boundary_schedule,
     prediction_enabled_for_timeframe,
+    publish_mode_runs_export,
+    publish_mode_runs_predict,
+    resolve_boundary_due_timeframes,
+    resolve_worker_publish_mode,
+    resolve_worker_execution_role,
     resolve_ingest_since,
     resolve_disk_watermark_level,
     run_downsample_and_save,
+    run_ingest_step,
     run_prediction_and_save,
     save_history_to_json,
+    should_run_publish_from_ingest_watermark,
     should_block_initial_backfill,
     should_enforce_1m_retention,
     upsert_prediction_health,
+    worker_role_runs_ingest,
+    worker_role_runs_publish,
     write_runtime_manifest,
 )
 
@@ -42,9 +56,18 @@ class FakeExchange:
         raise ValueError("unsupported timeframe for test")
 
     def fetch_ohlcv(
-        self, symbol: str, timeframe: str, since: int, limit: int
+        self,
+        symbol: str,
+        timeframe: str,
+        since: int | None = None,
+        limit: int | None = None,
     ) -> list[list[float]]:
-        candidates = [row for row in self._candles if row[0] >= since]
+        if since is None:
+            candidates = self._candles
+        else:
+            candidates = [row for row in self._candles if row[0] >= since]
+        if limit is None:
+            return candidates
         return candidates[:limit]
 
 
@@ -336,6 +359,8 @@ def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
         sleep_seconds=47.6,
         overrun=False,
         cycle_result="ok",
+        ingest_since_source_counts={"db_last": 5, "bootstrap_lookback": 1},
+        detection_gate_run_counts={"new_closed_candle": 2},
         path=metrics_path,
         target_cycle_seconds=60,
         window_size=10,
@@ -347,6 +372,11 @@ def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
         overrun=True,
         cycle_result="failed",
         error="worker_error",
+        ingest_since_source_counts={
+            "underfilled_rebootstrap": 2,
+            "blocked_storage_guard": 1,
+        },
+        detection_gate_skip_counts={"no_new_closed_candle": 3},
         path=metrics_path,
         target_cycle_seconds=60,
         window_size=10,
@@ -362,6 +392,37 @@ def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
     assert payload["summary"]["overrun_count"] == 1
     assert payload["summary"]["p95_elapsed_seconds"] == 70.0
     assert payload["summary"]["missed_boundary_count"] is None
+    assert payload["summary"]["ingest_since_source_counts"]["db_last"] == 5
+    assert (
+        payload["summary"]["ingest_since_source_counts"][
+            "underfilled_rebootstrap"
+        ]
+        == 2
+    )
+    assert payload["summary"]["rebootstrap_cycles"] == 1
+    assert payload["summary"]["rebootstrap_events"] == 2
+    assert payload["summary"]["underfill_guard_retrigger_cycles"] == 1
+    assert payload["summary"]["underfill_guard_retrigger_events"] == 2
+    assert (
+        payload["summary"]["detection_gate_run_counts"]["new_closed_candle"]
+        == 2
+    )
+    assert payload["summary"]["detection_gate_run_events"] == 2
+    assert (
+        payload["summary"]["detection_gate_skip_counts"]["no_new_closed_candle"]
+        == 3
+    )
+    assert payload["summary"]["detection_gate_skip_events"] == 3
+    assert payload["recent_cycles"][1]["ingest_since_source_counts"] == {
+        "underfilled_rebootstrap": 2,
+        "blocked_storage_guard": 1,
+    }
+    assert payload["recent_cycles"][0]["detection_gate_run_counts"] == {
+        "new_closed_candle": 2
+    }
+    assert payload["recent_cycles"][1]["detection_gate_skip_counts"] == {
+        "no_new_closed_candle": 3
+    }
     assert payload["recent_cycles"][1]["error"] == "worker_error"
 
 
@@ -402,6 +463,232 @@ def test_append_runtime_cycle_metrics_applies_window_limit(tmp_path):
     assert payload["recent_cycles"][0]["started_at"] == "2026-02-13T12:01:00Z"
     assert payload["recent_cycles"][1]["started_at"] == "2026-02-13T12:02:00Z"
     assert payload["summary"]["samples"] == 2
+
+
+def test_append_runtime_cycle_metrics_ignores_invalid_source_counts(tmp_path):
+    metrics_path = tmp_path / "runtime_metrics.json"
+    base = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    append_runtime_cycle_metrics(
+        started_at=base,
+        elapsed_seconds=9.0,
+        sleep_seconds=51.0,
+        overrun=False,
+        cycle_result="ok",
+        ingest_since_source_counts={
+            "db_last": "not_a_number",
+            "": 3,
+            "underfilled_rebootstrap": -1,
+            "bootstrap_lookback": 2,
+        },
+        path=metrics_path,
+    )
+
+    payload = json.loads(metrics_path.read_text())
+    assert payload["recent_cycles"][0]["ingest_since_source_counts"] == {
+        "bootstrap_lookback": 2
+    }
+    assert payload["summary"]["ingest_since_source_counts"] == {
+        "bootstrap_lookback": 2
+    }
+    assert payload["summary"]["rebootstrap_events"] == 0
+
+
+def test_append_runtime_cycle_metrics_boundary_mode_tracks_missed_boundary(
+    tmp_path,
+):
+    metrics_path = tmp_path / "runtime_metrics.json"
+    base = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    append_runtime_cycle_metrics(
+        started_at=base,
+        elapsed_seconds=61.0,
+        sleep_seconds=0.0,
+        overrun=True,
+        cycle_result="ok",
+        boundary_tracking_mode="boundary_scheduler",
+        missed_boundary_count=2,
+        path=metrics_path,
+    )
+
+    payload = json.loads(metrics_path.read_text())
+    assert payload["boundary_tracking"]["mode"] == "boundary_scheduler"
+    assert payload["boundary_tracking"]["missed_boundary_supported"] is True
+    assert payload["summary"]["missed_boundary_count"] == 2
+    assert payload["summary"]["missed_boundary_rate"] == 2.0
+    assert payload["recent_cycles"][0]["scheduler_mode"] == "boundary_scheduler"
+    assert payload["recent_cycles"][0]["missed_boundary_count"] == 2
+
+
+def test_append_runtime_cycle_metrics_boundary_mode_zero_missed(tmp_path):
+    metrics_path = tmp_path / "runtime_metrics.json"
+    base = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    append_runtime_cycle_metrics(
+        started_at=base,
+        elapsed_seconds=20.0,
+        sleep_seconds=40.0,
+        overrun=False,
+        cycle_result="ok",
+        boundary_tracking_mode="boundary_scheduler",
+        missed_boundary_count=0,
+        path=metrics_path,
+    )
+
+    payload = json.loads(metrics_path.read_text())
+    assert payload["summary"]["missed_boundary_count"] == 0
+    assert payload["summary"]["missed_boundary_rate"] == 0.0
+
+
+def test_resolve_boundary_due_timeframes_counts_missed_boundaries():
+    now = datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
+    schedule = {
+        "1h": datetime(2026, 2, 13, 9, 0, tzinfo=timezone.utc),
+        "1d": datetime(2026, 2, 14, 0, 0, tzinfo=timezone.utc),
+    }
+
+    due, missed, next_boundary_at = resolve_boundary_due_timeframes(
+        now=now,
+        timeframes=["1h", "1d"],
+        next_boundary_by_timeframe=schedule,
+    )
+
+    assert due == ["1h"]
+    assert missed == 1
+    assert schedule["1h"] == datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+    assert next_boundary_at == datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+
+def test_resolve_boundary_due_timeframes_without_missed_boundary():
+    now = datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
+    schedule = {"1h": datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)}
+
+    due, missed, next_boundary_at = resolve_boundary_due_timeframes(
+        now=now,
+        timeframes=["1h"],
+        next_boundary_by_timeframe=schedule,
+    )
+
+    assert due == ["1h"]
+    assert missed == 0
+    assert next_boundary_at == datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+
+def test_initialize_boundary_schedule_sets_next_boundaries():
+    now = datetime(2026, 2, 13, 10, 37, tzinfo=timezone.utc)
+    schedule = initialize_boundary_schedule(now, ["1h", "1d"])
+    assert schedule["1h"] == datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
+    assert schedule["1d"] == datetime(2026, 2, 13, 0, 0, tzinfo=timezone.utc)
+
+
+def test_initialize_boundary_schedule_catches_up_long_timeframes_on_start():
+    now = datetime(2026, 2, 19, 8, 2, tzinfo=timezone.utc)
+    schedule = initialize_boundary_schedule(now, ["1h", "1d", "1w", "1M"])
+
+    due, missed, next_boundary_at = resolve_boundary_due_timeframes(
+        now=now,
+        timeframes=["1h", "1d", "1w", "1M"],
+        next_boundary_by_timeframe=schedule,
+    )
+
+    assert due == ["1h", "1d", "1w", "1M"]
+    assert missed == 0
+    assert next_boundary_at == datetime(2026, 2, 19, 9, 0, tzinfo=timezone.utc)
+
+
+def test_get_exchange_latest_closed_timestamp_ignores_open_candle():
+    now = datetime(2026, 2, 13, 10, 37, tzinfo=timezone.utc)
+    base = datetime(2026, 2, 13, 8, 0, tzinfo=timezone.utc)
+    candles = [
+        [_to_ms(base), 1.0, 1.0, 1.0, 1.0, 1.0],
+        [_to_ms(base + timedelta(hours=1)), 1.0, 1.0, 1.0, 1.0, 1.0],
+        [_to_ms(base + timedelta(hours=2)), 1.0, 1.0, 1.0, 1.0, 1.0],
+    ]
+    exchange = FakeExchange(candles)
+
+    latest = get_exchange_latest_closed_timestamp(
+        exchange,
+        "BTC/USDT",
+        "1h",
+        now=now,
+    )
+
+    assert latest == datetime(2026, 2, 13, 9, 0, tzinfo=timezone.utc)
+
+
+def test_evaluate_detection_gate_skips_when_no_new_closed_candle():
+    now = datetime(2026, 2, 13, 10, 37, tzinfo=timezone.utc)
+    last_saved = datetime(2026, 2, 13, 9, 0, tzinfo=timezone.utc)
+    candles = [
+        [
+            _to_ms(datetime(2026, 2, 13, 9, 0, tzinfo=timezone.utc)),
+            1,
+            1,
+            1,
+            1,
+            1,
+        ],
+        [
+            _to_ms(datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)),
+            1,
+            1,
+            1,
+            1,
+            1,
+        ],
+    ]
+    exchange = FakeExchange(candles)
+
+    should_run, reason = evaluate_detection_gate(
+        query_api=object(),
+        detection_exchange=exchange,
+        symbol="BTC/USDT",
+        timeframe="1h",
+        now=now,
+        last_saved=last_saved,
+    )
+
+    assert should_run is False
+    assert reason == "no_new_closed_candle"
+
+
+def test_evaluate_detection_gate_runs_when_detection_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.get_exchange_latest_closed_timestamp",
+        lambda *args, **kwargs: None,
+    )
+
+    should_run, reason = evaluate_detection_gate(
+        query_api=object(),
+        detection_exchange=object(),
+        symbol="BTC/USDT",
+        timeframe="1h",
+        now=datetime(2026, 2, 13, 10, 37, tzinfo=timezone.utc),
+        last_saved=None,
+    )
+
+    assert should_run is True
+    assert reason == "detection_unavailable_fallback_run"
+
+
+def test_evaluate_detection_gate_derived_already_materialized(monkeypatch):
+    now = datetime(2026, 2, 14, 0, 10, tzinfo=timezone.utc)
+    expected = datetime(2026, 2, 13, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.get_last_timestamp",
+        lambda *args, **kwargs: expected,
+    )
+
+    should_run, reason = evaluate_detection_gate(
+        query_api=object(),
+        detection_exchange=object(),
+        symbol="BTC/USDT",
+        timeframe="1d",
+        now=now,
+    )
+
+    assert should_run is False
+    assert reason == "already_materialized"
 
 
 def test_lookback_days_for_timeframe_uses_1m_policy():
@@ -591,6 +878,64 @@ def test_resolve_ingest_since_enforces_full_backfill_for_hidden_1h():
     assert since == earliest
 
 
+def test_get_last_timestamp_legacy_fallback_filters_missing_timeframe(
+    monkeypatch,
+):
+    captured_queries = []
+    expected = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+    def fake_query_last_timestamp(query_api, query: str):
+        captured_queries.append(query)
+        if len(captured_queries) == 1:
+            return None
+        return expected
+
+    monkeypatch.setattr("scripts.pipeline_worker.PRIMARY_TIMEFRAME", "1h")
+    monkeypatch.setattr(
+        "scripts.pipeline_worker._query_last_timestamp",
+        fake_query_last_timestamp,
+    )
+
+    result = get_last_timestamp(
+        query_api=object(),
+        symbol="BTC/USDT",
+        timeframe="1h",
+    )
+
+    assert result == expected
+    assert len(captured_queries) == 2
+    assert 'not exists r["timeframe"]' in captured_queries[1]
+
+
+def test_get_first_timestamp_legacy_fallback_filters_missing_timeframe(
+    monkeypatch,
+):
+    captured_queries = []
+    expected = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+
+    def fake_query_first_timestamp(query_api, query: str):
+        captured_queries.append(query)
+        if len(captured_queries) == 1:
+            return None
+        return expected
+
+    monkeypatch.setattr("scripts.pipeline_worker.PRIMARY_TIMEFRAME", "1h")
+    monkeypatch.setattr(
+        "scripts.pipeline_worker._query_first_timestamp",
+        fake_query_first_timestamp,
+    )
+
+    result = get_first_timestamp(
+        query_api=object(),
+        symbol="BTC/USDT",
+        timeframe="1h",
+    )
+
+    assert result == expected
+    assert len(captured_queries) == 2
+    assert 'not exists r["timeframe"]' in captured_queries[1]
+
+
 def test_build_runtime_manifest_marks_hidden_symbol_unservable(tmp_path):
     symbol = "BTC/USDT"
     timeframe = "1h"
@@ -763,3 +1108,133 @@ def test_run_downsample_and_save_writes_ohlcv_and_lineage(
     assert entry["complete_buckets"] == 2
     assert entry["incomplete_buckets"] == 0
     assert entry["status"] == "ok"
+
+
+def test_resolve_worker_execution_role_falls_back_to_all():
+    assert resolve_worker_execution_role("all") == "all"
+    assert resolve_worker_execution_role("ingest") == "ingest"
+    assert resolve_worker_execution_role("predict_export") == "predict_export"
+    assert resolve_worker_execution_role("invalid_role") == "all"
+
+
+def test_worker_execution_role_stage_flags():
+    assert worker_role_runs_ingest("all") is True
+    assert worker_role_runs_ingest("ingest") is True
+    assert worker_role_runs_ingest("predict_export") is False
+    assert worker_role_runs_publish("all") is True
+    assert worker_role_runs_publish("predict_export") is True
+    assert worker_role_runs_publish("ingest") is False
+
+
+def test_resolve_worker_publish_mode_falls_back_to_predict_and_export():
+    assert (
+        resolve_worker_publish_mode("predict_and_export")
+        == "predict_and_export"
+    )
+    assert resolve_worker_publish_mode("predict_only") == "predict_only"
+    assert resolve_worker_publish_mode("export_only") == "export_only"
+    assert resolve_worker_publish_mode("invalid_mode") == "predict_and_export"
+
+
+def test_worker_publish_mode_stage_flags():
+    assert publish_mode_runs_predict("predict_and_export") is True
+    assert publish_mode_runs_predict("predict_only") is True
+    assert publish_mode_runs_predict("export_only") is False
+    assert publish_mode_runs_export("predict_and_export") is True
+    assert publish_mode_runs_export("export_only") is True
+    assert publish_mode_runs_export("predict_only") is False
+
+
+def test_should_run_publish_from_ingest_watermark():
+    key = "BTC/USDT|1h"
+    ingest_entries = {key: "2026-02-17T10:00:00Z"}
+
+    should_run, reason, ingest_dt = should_run_publish_from_ingest_watermark(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        ingest_entries=ingest_entries,
+        publish_entries={},
+    )
+    assert should_run is True
+    assert reason == "ingest_watermark_advanced"
+    assert ingest_dt == datetime(2026, 2, 17, 10, 0, tzinfo=timezone.utc)
+
+    should_run, reason, ingest_dt = should_run_publish_from_ingest_watermark(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        ingest_entries=ingest_entries,
+        publish_entries={key: "2026-02-17T10:00:00Z"},
+    )
+    assert should_run is False
+    assert reason == "up_to_date_ingest_watermark"
+    assert ingest_dt == datetime(2026, 2, 17, 10, 0, tzinfo=timezone.utc)
+
+    should_run, reason, ingest_dt = should_run_publish_from_ingest_watermark(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        ingest_entries={},
+        publish_entries={},
+    )
+    assert should_run is False
+    assert reason == "no_ingest_watermark"
+    assert ingest_dt is None
+
+
+def test_run_ingest_step_routes_derived_to_downsample(monkeypatch):
+    expected_latest = datetime(2026, 2, 12, 0, 0, tzinfo=timezone.utc)
+
+    def fake_downsample(write_api, query_api, *, symbol, target_timeframe):
+        assert symbol == "BTC/USDT"
+        assert target_timeframe == "1d"
+        return expected_latest, "saved"
+
+    def fail_fetch(*args, **kwargs):  # pragma: no cover
+        raise AssertionError("fetch_and_save should not run for derived tf")
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.run_downsample_and_save", fake_downsample
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.fetch_and_save", fail_fetch)
+
+    latest, result = run_ingest_step(
+        write_api=object(),
+        query_api=object(),
+        symbol="BTC/USDT",
+        timeframe="1d",
+        since=datetime(2026, 2, 1, tzinfo=timezone.utc),
+    )
+
+    assert latest == expected_latest
+    assert result == "saved"
+
+
+def test_run_ingest_step_routes_base_to_exchange_fetch(monkeypatch):
+    expected_latest = datetime(2026, 2, 12, 1, 0, tzinfo=timezone.utc)
+    expected_since = datetime(2026, 2, 1, 0, 0, tzinfo=timezone.utc)
+
+    def fail_downsample(*args, **kwargs):  # pragma: no cover
+        raise AssertionError(
+            "run_downsample_and_save should not run for base tf"
+        )
+
+    def fake_fetch(write_api, symbol, since, timeframe):
+        assert symbol == "BTC/USDT"
+        assert since == expected_since
+        assert timeframe == "1h"
+        return expected_latest, "saved"
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.run_downsample_and_save", fail_downsample
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.fetch_and_save", fake_fetch)
+
+    latest, result = run_ingest_step(
+        write_api=object(),
+        query_api=object(),
+        symbol="BTC/USDT",
+        timeframe="1h",
+        since=expected_since,
+    )
+
+    assert latest == expected_latest
+    assert result == "saved"

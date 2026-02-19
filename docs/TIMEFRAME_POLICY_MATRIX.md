@@ -1,7 +1,7 @@
 # Coin Predict Timeframe Policy Matrix (B-001)
 
 - Last Updated: 2026-02-17
-- Status: Draft v4 (Onboarding Gate Added)
+- Status: Locked v1 (B-001 Completed)
 - Owners: Backend/Platform
 - Source Decisions: `D-2026-02-13-29`, `D-2026-02-13-30`, `D-2026-02-13-31`, `D-2026-02-13-34`, `D-2026-02-17-36`
 

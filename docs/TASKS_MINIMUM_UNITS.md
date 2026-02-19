@@ -1,6 +1,6 @@
 # Coin Predict Task Board (Active)
 
-- Last Updated: 2026-02-17
+- Last Updated: 2026-02-19
 - Rule: 활성 태스크만 유지하고, 완료 상세 이력은 Archive로 분리
 - Full Phase A History: `docs/archive/phase_a/TASKS_MINIMUM_UNITS_PHASE_A_FULL_2026-02-12.md`
 
@@ -32,6 +32,20 @@
 20. `I-2026-02-13-01` 반영: `1h` canonical underfill(예: 30d 대비 소량 row) 시 DB last가 있어도 lookback 재부트스트랩을 강제해 bootstrap drift를 복구
 21. `D-2026-02-13-35` 채택: `I-2026-02-13-01`은 임시 방편(containment)이며 RCA 완료 전 최종 해결로 간주하지 않음
 22. `D-2026-02-17-36` 채택: 모든 심볼 onboarding을 `1h full-first(exchange earliest)`로 고정하고, full backfill 완료 전 FE 심볼 완전 비노출 게이트를 정책으로 채택
+23. `B-001` 진행 (2026-02-17): worker에 symbol activation(`registered/backfilling/ready_for_serving`) 및 manifest `visibility/is_full_backfilled/coverage_*` 필드 반영, hidden 심볼 `serve_allowed=false` 강제, 회귀 `87 passed`
+24. `B-001` 완료 (2026-02-17): 정책/구현/회귀 근거(`87 passed`)가 정렬되어 timeframe 정책 잠금 태스크를 종료
+25. `C-008` 시작 (2026-02-17): `1h underfill` RCA 착수(`I-2026-02-13-01` 임시 guard의 유지/조정/제거 결론 도출 준비)
+26. `C-008` 완료 (2026-02-17): fallback 오염 경로 차단 + 회귀(`89 passed`) + `D-2026-02-17-37` 반영, guard 7일 관찰은 차단 게이트가 아닌 운영 메모로 `C-002`에서 병행 추적
+27. `C-002` 완료 (2026-02-17): `runtime_metrics.json`에 `ingest_since_source_counts`/`rebootstrap`/`underfill_guard_retrigger` 집계를 추가해 `C-008` 후속 7일 관찰 근거를 메트릭 경로로 고정, 회귀 `90 passed`
+28. `C-006` 완료 (2026-02-17): boundary scheduler(`WORKER_SCHEDULER_MODE=boundary` 기본) 도입으로 timeframe 경계 시점에만 실행하도록 전환, `runtime_metrics.json`에 `missed_boundary_count/rate` 실측 반영, 회귀 `93 passed`
+29. `C-007` 완료 (2026-02-17): boundary 직전 detection gate(run/skip) 결합, `runtime_metrics.json`에 `detection_gate_{run,skip}_counts/events` 집계 반영 + `missed_boundary=0` 경계 시나리오 회귀 추가, 회귀 `99 passed`
+30. `C-005` 완료 (2026-02-17): `WORKER_EXECUTION_ROLE`(`all`/`ingest`/`predict_export`) 분리, `run_ingest_step`으로 base ingest(`1m`,`1h`) vs derived materialization(`1d/1w/1M`) 경계 강제, ingest-only는 `runtime_metrics/symbol_activation`, publish-only는 `manifest` 갱신 책임으로 분리, 회귀 `103 passed`
+31. `C-005` 확장 완료 (2026-02-17): 전용 엔트리포인트(`worker_ingest.py`, `worker_predict.py`, `worker_export.py`, `worker_publish.py`) 추가 + ingest watermark 기반 publish gate(`ingest/predict/export watermarks`) 적용 + compose 2-service(`worker-ingest`, `worker-publish`) 전환, 회귀 `106 passed`
+32. `C-005` 코드 구조 정리 완료 (2026-02-17): `workers/ingest.py`, `workers/predict.py`, `workers/export.py`로 도메인 로직을 이동하고 `scripts/pipeline_worker.py`는 orchestrator + runtime glue 래퍼 중심으로 축소, 회귀 `106 passed`
+33. `D-2026-02-19-39` 채택: multi-timeframe freshness 기본 임계값(`1w/1M`)을 고정하고 `4h`는 legacy compatibility 경로로 유지(soft/hard: `1w=8d/16d`, `1M=35d/70d`), 관련 설정값(`utils/config.py`, `.env.example`) 동기화
+34. `C-009` 완료 (2026-02-19): monitor Influx-JSON consistency를 `symbol+timeframe` 기준으로 보강하고 `PRIMARY_TIMEFRAME` legacy fallback을 유지, 회귀 `108 passed`
+35. `D-2026-02-19-40` 채택: monitor 대사 기준을 timeframe-aware로 고정
+36. `C-011` 완료 (2026-02-19): boundary scheduler 시작 기준을 "다음 경계"에서 "현재 경계"로 조정해 재시작 직후 장주기 TF(`1d/1w/1M`) missed boundary를 첫 cycle에서 따라잡도록 보강, 회귀 `109 passed`
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -46,11 +60,12 @@
 ### Phase B (Timeframe Expansion)
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
-| B-001 | P1 | timeframe tier 정책 매트릭스 확정(수집/보존/서빙/예측) | in_progress | `docs/TIMEFRAME_POLICY_MATRIX.md` 정책 잠금 + `1m` 예측 비서빙, `1m` hybrid API=`latest closed 180 candles`, `1m` rolling=`default 14d / cap 30d`, `1h` onboarding=`full-first(exchange earliest)` + `registered/backfilling/ready_for_serving` 게이트 + full backfill 완료 전 FE 심볼 완전 비노출, `1h->1d/1w/1M` downsample 경로, `1d/1w/1M` direct ingest 금지 경계, `internal_deterministic_mismatch`/`external_reconciliation_mismatch` 구분 규칙, Hard Gate+Accuracy 정책을 문서/설정으로 고정 |
+| B-001 | P1 | timeframe tier 정책 매트릭스 확정(수집/보존/서빙/예측) | done (2026-02-17) | `docs/TIMEFRAME_POLICY_MATRIX.md` 정책 잠금 + `1m` 예측 비서빙, `1m` hybrid API=`latest closed 180 candles`, `1m` rolling=`default 14d / cap 30d`, `1h` onboarding=`full-first(exchange earliest)` + `registered/backfilling/ready_for_serving` 게이트 + full backfill 완료 전 FE 심볼 완전 비노출, `1h->1d/1w/1M` downsample 경로, `1d/1w/1M` direct ingest 금지 경계, `internal_deterministic_mismatch`/`external_reconciliation_mismatch` 구분 규칙, Hard Gate+Accuracy 정책을 문서/설정으로 고정 |
 | B-002 | P1 | 파일 네이밍 규칙 통일 | done (2026-02-13) | canonical `{symbol}_{timeframe}` 파일 생성 + legacy fallback 호환 유지 + `tests/test_api_status.py`/`tests/test_status_monitor.py` 회귀 통과 |
 | B-003 | P1 | history/prediction export timeframe-aware 전환 | done (2026-02-13) | 다중 timeframe(`1h/1d/1w/1M`) 동시 export 동작 확인 + `1m` prediction 비생성 정책 코드/테스트 반영 + 회귀 `66 passed` |
 | B-004 | P1 | manifest 파일 생성 | done (2026-02-13) | `static_data/manifest.json`에 심볼/타임프레임별 `history.updated_at`, `prediction.status/updated_at/age`, `degraded`, `serve_allowed`, `summary(status_counts)`가 주기적으로 갱신됨 |
 | B-007 | P2 | 운영 대시보드(admin) timeframe 확장 | open | `admin/app.py`에서 symbol/timeframe 필터, timeframe별 freshness/degraded 상태 매트릭스, 최근 갱신 시각/지연 표시를 지원하고 `B-004` manifest를 1차 데이터 소스로 사용 |
+| B-008 | P2 | FE 심볼 노출 게이트 연동(`hidden_backfilling` 필터) | open | FE 심볼 리스트가 `manifest.visibility`를 소비해 `hidden_backfilling` 심볼을 완전 비노출하며, `ready_for_serving` 전환 시 자동 노출 복귀가 검증된다 |
 | B-006 | P1 | 저장소 예산 가드(50GB) + retention/downsample 실행 | done (2026-02-13) | `1m` rolling(`14d default / 30d cap`) 적용 + 디스크 watermark 경보/차단 + `1h->1d/1w/1M` downsample job 및 `downsample_lineage.json` 기반 lineage/검증 경로 확정 |
 | B-005 | P2 | `/history`/`/predict` fallback 정리(sunset) | open | Endpoint Sunset 체크리스트 조건 충족 + fallback 비의존 운영 1 cycle 검증 + rollback 절차 문서화 |
 
@@ -58,13 +73,16 @@
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
 | C-001 | P1 | 심볼 목록 확장 자동화 | open | 심볼 추가 시 코드 수정 최소화 |
-| C-002 | P1 | 실행시간/실패율 메트릭 수집 | in_progress | `static_data/runtime_metrics.json`에 cycle 실행시간/실패율/overrun 추세가 누적되고, `missed_boundary` 지원 여부(전환 전 미지원)가 명시된다 |
+| C-002 | P1 | 실행시간/실패율 메트릭 수집 | done (2026-02-17) | `static_data/runtime_metrics.json`에 cycle 실행시간/실패율/overrun 추세가 누적되고, poll-loop 기준 `missed_boundary` 미지원이 명시되며, `ingest_since_source_counts`/`rebootstrap_events`/`underfill_guard_retrigger_*`가 함께 집계되어 `C-008` 후속 관찰 근거를 제공한다 |
 | C-003 | P2 | 부하 테스트 시나리오 업데이트 | open | 정적/상태 경로 부하 테스트 가능 |
 | C-004 | P2 | 모델 학습 잡 분리 초안 | open | 수집/예측과 독립 실행 가능 |
-| C-005 | P1 | pipeline worker 역할 분리 | open (gated) | `B-003` 검증 증거 확보 후 착수, 완료 시 ingest 지연/장애가 predict/export에 즉시 전파되지 않으며 base ingest(`1m`,`1h`)와 derived materialization(`1d/1w/1M`) 경계가 코드 레벨로 분리됨 |
-| C-006 | P1 | timeframe 경계 기반 scheduler 전환 | open | UTC candle boundary 기준으로 `symbol+timeframe` 실행 스케줄을 고정하고 고정 poll 루프 대비 overrun을 감소시킴 |
-| C-007 | P1 | 신규 candle 감지 게이트 결합 | open | boundary 스케줄 직전 신규 closed candle 감지 후 실행/skip를 분기해 불필요 cycle을 억제하고 `missed_boundary=0`을 검증 |
-| C-008 | P1 | `1h` underfill RCA + temporary guard sunset 결정 | open | underfill 원인(또는 유지 근거)이 증거 기반으로 확정되고, `I-2026-02-13-01` guard를 유지/조정/제거 중 하나로 결론내려 문서/테스트에 반영됨 |
+| C-005 | P1 | pipeline worker 역할 분리 | done (2026-02-17) | `WORKER_EXECUTION_ROLE` + `WORKER_PUBLISH_MODE`로 ingest/predict/export 실행 경계를 분리했고, 전용 엔트리포인트(`worker_ingest.py`, `worker_predict.py`, `worker_export.py`)를 추가했다. 운영 기본은 compose 2-service(`worker-ingest`,`worker-publish`)이며, publish는 ingest watermark gate를 통해 신규 데이터 감지 시에만 predict/export를 수행한다. base ingest(`1m`,`1h`)와 derived materialization(`1d/1w/1M`) 경계는 `run_ingest_step` 라우팅으로 코드 레벨 고정된다. 도메인 로직은 `workers/ingest.py`, `workers/predict.py`, `workers/export.py`로 분리되어 `pipeline_worker.py`는 orchestrator/runtime glue 중심으로 유지한다 |
+| C-006 | P1 | timeframe 경계 기반 scheduler 전환 | done (2026-02-17) | `WORKER_SCHEDULER_MODE=boundary` 기준으로 UTC candle boundary에서 due timeframe만 실행되며, 경계 미도래 시 idle sleep으로 불필요 cycle을 억제한다. `runtime_metrics.json`에 `boundary_tracking.mode=boundary_scheduler`와 `missed_boundary_count/rate`가 기록된다 |
+| C-007 | P1 | 신규 candle 감지 게이트 결합 | done (2026-02-17) | boundary 모드에서 `symbol+timeframe`별 detection gate가 `run/skip`를 분기하고(`new_closed_candle`/`no_new_closed_candle` 등), `runtime_metrics.json`에 `detection_gate_{run,skip}_counts/events`와 `missed_boundary_count/rate`가 함께 기록된다. 단위 회귀에서 경계 정상 시나리오 `missed_boundary=0`을 검증한다 |
+| C-008 | P1 | `1h` underfill RCA + temporary guard sunset 결정 | done (2026-02-17) | legacy fallback 오염 경로(`timeframe` 미존재 row만 허용) 차단 + 회귀 테스트 반영 + `D-2026-02-17-37` 문서화 완료. guard 7일 관찰은 블로킹 조건이 아닌 운영 메모로 `C-002` 계측 트랙에서 병행 추적 |
+| C-009 | P1 | monitor Influx-JSON consistency timeframe-aware 보강 | done (2026-02-19) | `scripts/status_monitor.py`의 Influx latest 조회가 `symbol+timeframe` 기준으로 분리되고, `PRIMARY_TIMEFRAME` legacy fallback을 유지하며, `tests/test_status_monitor.py` 회귀(신규 케이스 포함)와 전체 회귀 `108 passed`로 검증됨 |
+| C-011 | P1 | boundary scheduler 재시작 catch-up 보강 | done (2026-02-19) | `initialize_boundary_schedule`가 현재 경계 기준으로 초기화되어 재시작 직후 `1d/1w/1M`이 다음 경계까지 정체되지 않고 첫 cycle에서 due 처리되며, `tests/test_pipeline_worker.py` 신규 회귀 + 전체 회귀 `109 passed`로 검증됨 |
+| C-010 | P2 | orchestrator 가독성 정리(`pipeline_worker.py` 제어면 경계 단순화) | open | `scripts/pipeline_worker.py`의 cycle commit/state 저장 책임이 명확히 분리되고(ingest_state vs watermark commit 경계), 동작 변경 없이 인지부하를 줄였음을 회귀 테스트 + 코드 리뷰 체크리스트로 검증 |
 
 ### Phase D (Model Evolution)
 | ID | Priority | Task | Status | Done Condition |
@@ -82,9 +100,9 @@
 | D-011 | P1 | Model Coverage Matrix + Fallback Resolver 구현 | open | 기본 `timeframe-shared`/조건부 `symbol+timeframe dedicated` 정책과 `dedicated -> shared -> insufficient_data` fallback 체인이 코드/메타데이터/테스트로 검증됨 |
 
 ## 3. Immediate Bundle
-1. `B-001`
-2. `C-002`
-3. `C-008`
+1. `R-005`
+2. `B-007`
+3. `B-005`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
@@ -106,6 +124,7 @@
 | B-003 | export가 timeframe-aware가 아니면 산출물이 덮어써지고, 1m 예측 비서빙 정책 위반 위험이 생김 | 타임프레임 간 파일 충돌/유실 + 1m prediction 파일 노출 | 다중 timeframe 동시 export 테스트 + `1m` prediction 미생성 검증 | `1h` export 경로로 임시 복귀 |
 | B-004 | manifest 부재 시 운영자가 전체 상태를 빠르게 파악하기 어려움 | manifest stale/오류로 잘못된 운영 판단 | manifest와 원본 파일 간 일관성 검사 + updated_at 검증 | manifest 소비 중지, 개별 파일 점검으로 회귀 |
 | B-007 | 다중 timeframe 전환 후 운영자가 상태를 단일 화면에서 파악하기 어려움 | timeframe별 stale/degraded를 놓쳐 운영 대응 지연 | admin 뷰에서 symbol/timeframe 필터 + 상태 매트릭스 + updated_at 지연 표시 검증 | 기존 단일 timeframe 대시보드로 임시 회귀 |
+| B-008 | FE가 manifest visibility를 소비하지 않으면 정책상 비노출 심볼이 사용자에게 노출될 수 있음 | backfilling 심볼 조기 노출로 사용자 신뢰 저하/해석 오류 발생 | FE 심볼 목록 필터 테스트(`hidden_backfilling` 제외) + ready 전환 시 노출 복귀 E2E 확인 | FE에서 visibility 필터 비활성화 후 기존 수동 심볼 목록으로 임시 회귀 |
 | B-006 | Free Tier 50GB 제약에서 다중 심볼 1m 원본 장기 보관은 운영 중단 리스크를 만든다 | 디스크 고갈로 쓰기 실패, DB 성능 저하, 복구 지연 | 디스크 사용량 추세 검증 + `14d default / 30d cap` enforcement 테스트 + downsample 결과 무결성 검증 | retention/downsample 중지 후 기존 수집 정책으로 회귀 |
 | B-005 | fallback endpoint를 무기한 유지하면 경계 혼선/숨은 의존이 누적됨 | 제거 시 숨어있던 호출 경로 장애 발생 | sunset 체크리스트 + fallback 비의존 운영 1 cycle 검증 | endpoint 복구 절차 즉시 실행(runbook) |
 
@@ -120,6 +139,7 @@
 | C-006 | 고정 poll 루프는 경계 미스/불필요 cycle로 비용과 오탐을 증가시킴 | 경계 누락 또는 중복 트리거로 stale/중복 실행 발생 | UTC 경계 시뮬레이션 + timeframe별 실행 cadence 검증 | 기존 고정 poll 루프로 복귀 |
 | C-007 | boundary-only는 신규 데이터가 없을 때도 불필요 cycle을 수행한다 | 신규 candle 감지 오탐/누락으로 skip 오류 또는 처리 지연 발생 | 신규 closed candle 감지 기반 run/skip 테스트 + `missed_boundary=0` 검증 | detection gate 비활성화 후 boundary-only 모드 유지 |
 | C-008 | `1h` underfill이 재발하면 이후 C-006/C-005 결과 해석이 왜곡될 수 있음 | 임시 guard에 의존한 채 근본 원인 미확정 상태가 장기화됨 | RCA 증거(재현/로그/쿼리) + guard 트리거 추적 + 유지/제거 회귀 테스트 | guard를 유지한 채 RCA 후속 태스크로 분리 |
+| C-010 | orchestrator에 제어면/호환 래퍼/상태 커밋 책임이 밀집돼 변경 시 인지부하가 높다 | 작은 수정도 영향 범위 예측 실패로 회귀 위험이 증가한다 | commit 경계 단위 테스트 + 회귀(`pytest`) + 리뷰 체크리스트(책임 분리/동작 불변) 통과 | 구조 정리만 되돌리고 기존 단일 흐름으로 복귀 |
 
 ### Phase D
 | ID | Why Now | Failure Mode | Verification | Rollback |
@@ -146,7 +166,7 @@
 1. 현재 우선순위(`Stability > Cost > Performance`)에 따라 Option A를 기준선으로 채택한다.
 2. `B-005`는 사용자 의견에 따라 P2를 유지한다.
 3. Option B는 `C-002`에서 비용 압력이 즉시 심각하다는 증거가 나올 때 fallback 후보로만 유지한다.
-4. `D-2026-02-13-33`/`D-2026-02-13-35` 반영 후 활성 실행 순서는 `B-001 -> B-004 -> B-006 -> C-002 -> C-008 -> C-006 -> C-007 -> C-005 -> R-005 -> B-007(P2) -> B-005(P2)`다.
+4. `D-2026-02-13-33`/`D-2026-02-13-35`/`D-2026-02-17-36`/`D-2026-02-17-37` 반영 후 활성 실행 순서는 `R-005 -> B-007(P2) -> B-005(P2)`다.
 
 ## 8. R-004 Kickoff Contract (Accepted)
 1. Kickoff 구현 묶음은 `B-002`, `B-003` 2개로 고정한다.
