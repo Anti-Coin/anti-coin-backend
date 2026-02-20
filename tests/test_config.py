@@ -4,6 +4,7 @@ import pytest
 
 from utils.config import (
     _enforce_ingest_timeframe_guard,
+    _normalize_and_validate_symbols,
     _parse_bool_env,
     _parse_csv_env,
     _parse_thresholds,
@@ -20,6 +21,30 @@ def test_parse_csv_env_trims_and_filters_empty_values():
     raw = " BTC/USDT, , ETH/USDT ,,SOL/USDT "
     parsed = _parse_csv_env(raw, ["X"])
     assert parsed == ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
+
+
+def test_normalize_and_validate_symbols_normalizes_and_deduplicates():
+    parsed = _normalize_and_validate_symbols(
+        [" btc/usdt ", "ETH/USDT", "btc/usdt", "xrp/usdt"],
+        env_name="TARGET_SYMBOLS",
+    )
+    assert parsed == ["BTC/USDT", "ETH/USDT", "XRP/USDT"]
+
+
+def test_normalize_and_validate_symbols_rejects_invalid_shape():
+    with pytest.raises(ValueError):
+        _normalize_and_validate_symbols(
+            ["BTCUSDT", "ETH/USDT"],
+            env_name="TARGET_SYMBOLS",
+        )
+
+
+def test_normalize_and_validate_symbols_accepts_canary_addition():
+    parsed = _normalize_and_validate_symbols(
+        ["BTC/USDT", "ETH/USDT", "ADA/USDT"],
+        env_name="TARGET_SYMBOLS",
+    )
+    assert parsed == ["BTC/USDT", "ETH/USDT", "ADA/USDT"]
 
 
 def test_parse_bool_env_parses_common_values():

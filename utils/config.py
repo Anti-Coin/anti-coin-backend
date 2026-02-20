@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import timedelta
 
 DEFAULT_TARGET_SYMBOLS = [
@@ -25,6 +26,8 @@ DEFAULT_FRESHNESS_HARD_THRESHOLD_MINUTES = {
     "1M": 70 * 24 * 60,
 }
 
+SYMBOL_PATTERN = re.compile(r"^[A-Z0-9]+/[A-Z0-9]+$")
+
 
 def _parse_csv_env(raw: str | None, default: list[str]) -> list[str]:
     if not raw:
@@ -32,6 +35,45 @@ def _parse_csv_env(raw: str | None, default: list[str]) -> list[str]:
 
     values = [item.strip() for item in raw.split(",") if item.strip()]
     return values or default.copy()
+
+
+def _normalize_and_validate_symbols(
+    symbols: list[str], *, env_name: str
+) -> list[str]:
+    """
+    TARGET_SYMBOLS 계열 입력을 정규화/검증한다.
+
+    Rules:
+    - 대문자 통일 (binance spot symbol 관례)
+    - 형식 강제: BASE/QUOTE (알파벳+숫자)
+    - 중복 제거(입력 순서 유지)
+    """
+    if not symbols:
+        raise ValueError(f"{env_name} must not be empty.")
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    invalid: list[str] = []
+
+    for raw_symbol in symbols:
+        symbol = raw_symbol.strip().upper()
+        if not SYMBOL_PATTERN.fullmatch(symbol):
+            invalid.append(raw_symbol)
+            continue
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        normalized.append(symbol)
+
+    if invalid:
+        rendered = ", ".join(invalid)
+        raise ValueError(
+            f"{env_name} contains invalid symbol(s): {rendered}. "
+            "Expected format like BTC/USDT."
+        )
+    if not normalized:
+        raise ValueError(f"{env_name} resolved to empty after normalization.")
+    return normalized
 
 
 def _parse_bool_env(raw: str | None, default: bool = False) -> bool:
@@ -95,8 +137,9 @@ def _enforce_ingest_timeframe_guard(
     return timeframes.copy()
 
 
-TARGET_SYMBOLS = _parse_csv_env(
-    os.getenv("TARGET_SYMBOLS"), DEFAULT_TARGET_SYMBOLS
+TARGET_SYMBOLS = _normalize_and_validate_symbols(
+    _parse_csv_env(os.getenv("TARGET_SYMBOLS"), DEFAULT_TARGET_SYMBOLS),
+    env_name="TARGET_SYMBOLS",
 )
 ENABLE_MULTI_TIMEFRAMES = _parse_bool_env(
     os.getenv("ENABLE_MULTI_TIMEFRAMES"),

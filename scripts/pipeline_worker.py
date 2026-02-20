@@ -30,6 +30,7 @@ from utils.config import INGEST_TIMEFRAMES, PRIMARY_TIMEFRAME, TARGET_SYMBOLS
 from utils.file_io import atomic_write_json
 from utils.ingest_state import IngestStateStore
 from utils.pipeline_contracts import (
+    DetectionGateReason,
     DetectionGateDecision,
     IngestExecutionOutcome,
     IngestExecutionResult,
@@ -2015,6 +2016,24 @@ def _run_ingest_timeframe_step(
                 f"[{symbol} {timeframe}] detection gate skip "
                 f"(reason={gate_reason})"
             )
+            if (
+                gate_reason == DetectionGateReason.ALREADY_MATERIALIZED.value
+                and last_time is not None
+            ):
+                # derived TF가 이미 materialized된 경우,
+                # ingest는 skip하더라도 ingest watermark를 DB latest로 동기화해
+                # publish gate(export/predict catch-up)가 정체되지 않도록 한다.
+                _upsert_watermark(
+                    state.ingest_watermarks,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    closed_at=last_time,
+                )
+                logger.info(
+                    f"[{symbol} {timeframe}] synced ingest watermark from "
+                    f"already_materialized gate: {_format_utc(last_time)}"
+                )
+                return True, symbol_activation
             return False, symbol_activation
         cycle_detection_run_counts[gate_reason] = (
             cycle_detection_run_counts.get(gate_reason, 0) + 1

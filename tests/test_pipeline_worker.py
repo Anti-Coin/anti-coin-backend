@@ -1328,6 +1328,140 @@ def test_run_ingest_timeframe_step_blocked_storage_guard_stops_without_watermark
     assert key not in state.ingest_watermarks
 
 
+def test_run_ingest_timeframe_step_already_materialized_syncs_watermark_and_allows_publish(
+    monkeypatch, tmp_path
+):
+    symbol = "BTC/USDT"
+    timeframe = "1d"
+    now = datetime(2026, 2, 19, 12, 0, tzinfo=timezone.utc)
+    latest_saved_at = datetime(2026, 2, 19, 0, 0, tzinfo=timezone.utc)
+    key = f"{symbol}|{timeframe}"
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={},
+        predict_watermarks={},
+        export_watermarks={},
+    )
+    ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
+    activation = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-02-19T11:00:00Z",
+        },
+        fallback_now=now,
+    )
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.get_last_timestamp",
+        lambda *args, **kwargs: latest_saved_at,
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.evaluate_detection_gate_decision",
+        lambda *args, **kwargs: SimpleNamespace(
+            should_run=False,
+            reason=SimpleNamespace(value="already_materialized"),
+        ),
+    )
+
+    cycle_detection_skip_counts = {}
+    should_continue_publish, next_activation = _run_ingest_timeframe_step(
+        write_api=object(),
+        query_api=object(),
+        activation_exchange=object(),
+        ingest_state_store=ingest_state_store,
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        scheduler_mode="boundary",
+        symbol_activation=activation,
+        exchange_earliest=None,
+        disk_level=StorageGuardLevel.NORMAL,
+        disk_usage_percent=60.0,
+        state=state,
+        cycle_since_source_counts={},
+        cycle_detection_skip_counts=cycle_detection_skip_counts,
+        cycle_detection_run_counts={},
+    )
+
+    assert should_continue_publish is True
+    assert next_activation == activation
+    assert cycle_detection_skip_counts == {"already_materialized": 1}
+    assert state.ingest_watermarks[key].closed_at == latest_saved_at
+
+
+def test_run_ingest_timeframe_step_non_materialized_skip_still_blocks_publish(
+    monkeypatch, tmp_path
+):
+    symbol = "BTC/USDT"
+    timeframe = "1h"
+    now = datetime(2026, 2, 19, 12, 0, tzinfo=timezone.utc)
+    key = f"{symbol}|{timeframe}"
+    previous_watermark = datetime(2026, 2, 19, 10, 0, tzinfo=timezone.utc)
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={
+            key: previous_watermark.strftime("%Y-%m-%dT%H:%M:%SZ")
+        },
+        predict_watermarks={},
+        export_watermarks={},
+    )
+    ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
+    activation = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-02-19T11:00:00Z",
+        },
+        fallback_now=now,
+    )
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.get_last_timestamp",
+        lambda *args, **kwargs: datetime(
+            2026, 2, 19, 11, 0, tzinfo=timezone.utc
+        ),
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.evaluate_detection_gate_decision",
+        lambda *args, **kwargs: SimpleNamespace(
+            should_run=False,
+            reason=SimpleNamespace(value="no_new_closed_candle"),
+        ),
+    )
+
+    cycle_detection_skip_counts = {}
+    should_continue_publish, next_activation = _run_ingest_timeframe_step(
+        write_api=object(),
+        query_api=object(),
+        activation_exchange=object(),
+        ingest_state_store=ingest_state_store,
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        scheduler_mode="boundary",
+        symbol_activation=activation,
+        exchange_earliest=None,
+        disk_level=StorageGuardLevel.NORMAL,
+        disk_usage_percent=60.0,
+        state=state,
+        cycle_since_source_counts={},
+        cycle_detection_skip_counts=cycle_detection_skip_counts,
+        cycle_detection_run_counts={},
+    )
+
+    assert should_continue_publish is False
+    assert next_activation == activation
+    assert cycle_detection_skip_counts == {"no_new_closed_candle": 1}
+    assert state.ingest_watermarks[key] == "2026-02-19T10:00:00Z"
+
+
 def test_run_ingest_step_routes_derived_to_downsample(monkeypatch):
     expected_latest = datetime(2026, 2, 12, 0, 0, tzinfo=timezone.utc)
 

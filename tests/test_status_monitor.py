@@ -42,6 +42,25 @@ def test_evaluate_symbol_timeframe_fresh_from_legacy_file(tmp_path):
     assert snapshot.updated_at == "2026-02-10T11:55:00Z"
 
 
+def test_evaluate_symbol_timeframe_non_primary_does_not_use_legacy_file(
+    tmp_path,
+):
+    now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
+    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T11:55:00Z")
+
+    snapshot = evaluate_symbol_timeframe(
+        symbol="BTC/USDT",
+        timeframe="1d",
+        now=now,
+        static_dir=tmp_path,
+        soft_thresholds={"1d": timedelta(days=2)},
+        hard_thresholds={"1d": timedelta(days=4)},
+    )
+
+    assert snapshot.status == "missing"
+    assert snapshot.error_code == "missing_file"
+
+
 def test_evaluate_symbol_timeframe_prefers_timeframe_file_over_legacy(tmp_path):
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
     _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T11:30:00Z")

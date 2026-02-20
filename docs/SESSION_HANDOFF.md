@@ -1,6 +1,6 @@
 # Coin Predict Session Handoff
 
-- Last Updated: 2026-02-19
+- Last Updated: 2026-02-20
 - Branch: `dev`
 
 ## 1. Current Snapshot
@@ -13,7 +13,9 @@
 7. `B-008` 완료(`sunset scope close`): FE 미구축 상태에서 종료, FE 재개 시 재오픈.
 8. Phase B 상세 원문은 `docs/archive/phase_b/*`로 이동했다.
 9. `C-010` 완료: ingest_state(즉시) vs ingest watermark(사이클 종료 커밋) 경계를 helper로 분리했고 characterization test를 추가했다.
-10. 완료 증거: `PYENV_VERSION=coin pytest -q` 통과(`118 passed`, 2026-02-19) + 운영 smoke 확인.
+10. `C-001` 완료(2026-02-20): `TARGET_SYMBOLS` 정규화/형식 검증/중복 제거 + canary 추가 검증 테스트를 고정했다.
+11. `C-003` 완료(2026-02-20): `tests/locustfile.py`를 static + `/status` 중심 baseline/stress 시나리오로 갱신했다.
+12. 완료 증거: `PYENV_VERSION=coin pytest -q` 통과(`125 passed`, 2026-02-20) + 운영 smoke 확인.
 
 ## 2. Phase C Detailed Runtime Baseline
 1. cadence: `UTC boundary + detection gate`를 기본 실행 규칙으로 유지한다.
@@ -23,12 +25,15 @@
 5. orchestrator 변경(`C-010`)은 동작 불변(behavior-preserving)을 강제한다.
 
 ## 3. Next Priority Tasks
-1. `C-001`: 심볼 목록 확장 자동화
-   - Done 기준: 심볼 추가 시 코드 수정 최소화(검증/가드 포함)
-2. `C-003`: 부하 테스트 시나리오 업데이트
-   - Done 기준: static/`/status` 경로 baseline/stress 시나리오 재현 가능
-3. `C-012`: 디렉토리/파일 재배치 계획 수립(런타임 계약 보존 전제)
+1. `C-012`: 디렉토리/파일 재배치 계획 수립(런타임 계약 보존 전제)
    - Done 기준: compose/Docker/import 계약 맵 + 단계별 롤백/검증 절차 확정
+2. `C-013`: `pipeline_worker.py` 저수준 가독성 분해(동작 불변)
+   - Done 기준: helper 추출 + characterization 회귀 + runtime smoke 불변
+
+## 3.1 Stale RCA Follow-up (Taskized)
+1. `C-014`(P1): done (2026-02-20), derived TF `already_materialized` skip 시 ingest watermark를 DB latest로 동기화해 publish catch-up starvation 완화
+2. `C-015`(P1): done (2026-02-20), prediction status legacy fallback을 `PRIMARY_TIMEFRAME` 전용으로 제한해 non-primary timeframe 판정 오염 차단
+3. `C-016`(P2): stale 장기 지속 escalation(alert/runbook) 정책 정비
 
 ## 4. Phase D Detailed Baseline
 1. coverage 기본값은 `timeframe-shared champion`이다.
@@ -50,6 +55,8 @@
 ## 7. Quick Verify Commands
 1. `PYENV_VERSION=coin pytest -q`
 2. `python -m compileall api utils scripts tests`
+3. `PYENV_VERSION=coin locust -f tests/locustfile.py --tags baseline --headless -u 10 -r 2 -t 3m --host http://localhost`
+4. `PYENV_VERSION=coin locust -f tests/locustfile.py --tags stress --headless -u 30 -r 5 -t 3m --host http://localhost`
 
 ## 8. Archive Guidance
 1. Phase A 상세 이력: `docs/archive/phase_a/*`

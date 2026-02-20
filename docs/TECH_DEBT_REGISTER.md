@@ -1,6 +1,6 @@
 # Coin Predict Technical Debt Register
 
-- Last Updated: 2026-02-19
+- Last Updated: 2026-02-20
 - Purpose: 기술 부채를 세션 간 누락 없이 추적
 
 ## 1. 운용 규칙
@@ -41,6 +41,7 @@
 | TD-028 | Storage Budget | 다중 심볼 `1m` 원본 장기 보관 전략 부재 | Free Tier 50GB 초과로 쓰기 실패/운영 중단 가능 | resolved | B-006 | `1m` rolling retention(`14d default / 30d cap`) + disk watermark(70/85/90) 경보/차단 + `block` 레벨 초기 백필 차단 반영 |
 | TD-029 | Data Lineage | `1h->1d/1w/1M` downsample 경로/검증 기준 미정 | timeframe 간 정합성 불일치, 재현성 저하 | resolved | B-001,B-006 | `1h->1d/1w/1M` downsample 집계 경로 구현 + `downsample_lineage.json` 기록 + incomplete bucket 검증/회귀 테스트 반영 |
 | TD-030 | Modeling Guard | 장기 timeframe 최소 샘플 부족 시 예측 차단/품질표시 정책 미구현 | 통계적 신뢰도 부족한 예측이 정상처럼 노출될 수 있음 | open | D-010 | Hard Gate(`insufficient_data`) + Accuracy Signal(`mae/smape/directional/sample_count`) 표준화 |
+| TD-031 | Maintainability | `scripts/pipeline_worker.py` 책임 집중(2.8k LOC + 장문 함수) | 작은 수정에도 영향 범위 예측 실패/리뷰 비용 증가 | open | C-013 | behavior-preserving 분해(오케스트레이션/ingest/publish/runtime 경계 추출) + characterization 회귀 기준선 고정 |
 
 ## 3. 상태 정의
 1. `open`: 미해결
