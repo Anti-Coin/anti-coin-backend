@@ -34,7 +34,7 @@
 | TD-021 | Failure Signaling | predict 실패 시 degraded 상태/알림 표준 미구현 | 마지막 정상값 제공 중 실패 사실이 숨겨질 수 있음 | resolved | A-017 | worker predict 실패/복구 상태전이 알림 + `/status` degraded/last success/failure 노출 적용 완료 |
 | TD-022 | Freshness Semantics | prediction 파일 `updated_at` 기반 fresh 판정이 입력 데이터 stale을 가릴 수 있음 | freshness honesty 훼손 및 운영 오판 가능 | open | A-014,A-017 | A-014 정합성 체크 운영 검증은 완료, 입력 데이터 최신 시각(`ohlcv_last`)의 사용자 노출 경로 추가 검토 필요 |
 | TD-023 | Status Consistency | API와 monitor의 prediction 파일 선택/판정 경로가 분리됨 | 동일 시점 상태 불일치 및 경보 혼선 가능 | resolved | A-018 | `utils/prediction_status.py` 공통 evaluator 도입 및 API/monitor 공용 경로 통합 완료 |
-| TD-024 | Alerting | worker 단계별 부분 실패가 운영 알림으로 충분히 승격되지 않음 | 프로세스 생존 상태에서 기능 실패 장기 미탐지 가능 | mitigated | A-017,A-010-7,C-005 | predict 상태전이/지속재알림은 반영됨. `worker-ingest`/`worker-publish` 분리 후에도 export 전용 실패 알림 표준은 미완료이므로 후속 알림 세분화 태스크에서 재평가 |
+| TD-024 | Alerting | worker 단계별 부분 실패가 운영 알림으로 충분히 승격되지 않음 | 프로세스 생존 상태에서 기능 실패 장기 미탐지 가능 | mitigated | A-017,A-010-7,C-005,C-016 | stale 장기 지속 escalation(`*_escalated`)과 runbook은 반영됨. 다만 `worker-ingest`/`worker-publish` 분리 후 export 전용 실패 알림 표준은 미완료이므로 후속 알림 세분화 태스크에서 재평가 |
 | TD-025 | Ingest Recovery | DB last + 30일 룩백 기반 since 결정 | 장기 중단 후 복구 지점 부정확/과다 백필 가능 | resolved | A-002 | `utils/ingest_state.py` 도입으로 `symbol+timeframe` 커서 저장/재시작 복구 기준 고정 완료 |
 | TD-026 | Maintainability | 주석/로그 밀도가 경로별로 불균등함 | 신규 세션/회귀 분석 시 의도 파악 지연 | mitigated | A-019,C-005 | 핵심 경로 1차 보강은 완료. 신규 복잡 분기 추가 시 동일 기준(의도 주석 + 상태전이 로그) 즉시 적용 |
 | TD-027 | Serving Policy | `1m` 예측/서빙 경계가 불명확함(예측 비서빙 vs 제공 경로) | candle 경계 내 오버런, 의미 낮은 예측 노출, FE 계약 혼선 | open | B-001,B-003 | `1m`은 prediction 비서빙 + hybrid API(`latest closed 180`) 경계를 정책/테스트로 고정 |

@@ -90,3 +90,27 @@
 1. `C-013`: `run_worker`를 오케스트레이션 중심으로 유지하고, stage helper 추출을 추가 수행.
 2. `TD-031`: 책임 과밀 부채를 debt register에 명시하고 해소 기준을 테스트와 함께 관리.
 3. 함수 길이/분기 밀도 지표를 문서 기준선으로 고정해 회귀를 계량적으로 추적.
+
+## 5. Entry 2026-02-20 - Refactor Necessity vs Overengineering
+1. Topic: 현 시점 리팩토링 필요성 재검토(오버엔지니어링 방지)
+
+2. Observed Facts:
+1. `C-014`, `C-015`로 stale 관련 즉시 위험은 1차 완화됐다.
+2. 현재 활성 목표는 운영 안정성 증빙(Phase C)이며, 전면 구조개편의 즉시 ROI가 낮다.
+3. `pipeline_worker.py`는 인지부하가 크지만, 대규모 분해는 회귀 면적을 빠르게 키운다.
+
+3. Decision:
+1. `C-016`을 `C-013`보다 우선한다.
+2. `C-013`은 대규모 리팩토링이 아니라 timeboxed micro-refactor로 축소한다.
+3. timebox(최대 1세션) 초과 시 즉시 중단하고 기능/운영 트랙으로 복귀한다.
+
+4. Guardrails:
+1. `C-013` 범위: 상위 인지부하 함수 1~2개 분리만 허용.
+2. characterization + `pytest` + runtime smoke를 통과하지 못하면 병합하지 않는다.
+3. 리팩토링 목표는 “구조 미학”이 아니라 “변경 통제성과 읽기 쉬움”으로 제한한다.
+
+5. Progress Update (2026-02-20): `C-016` 구현/검증 완료.
+1. monitor에 장기 지속 승격 이벤트(`*_escalated`)를 추가하고, `MONITOR_ESCALATION_CYCLES`(default 60) 기준을 도입했다.
+2. escalation 이벤트는 repeat보다 우선해 운영자에게 장기 지속 상태를 명시한다.
+3. 운영 개입 절차를 `docs/RUNBOOK_STALE_ESCALATION.md`로 고정했다.
+4. 검증: `PYENV_VERSION=coin pytest -q tests/test_status_monitor.py` 통과(`21 passed`), 전체 `PYENV_VERSION=coin pytest -q` 통과(`127 passed`).

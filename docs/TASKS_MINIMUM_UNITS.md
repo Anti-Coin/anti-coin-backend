@@ -55,11 +55,11 @@
 | C-009 | P1 | monitor Influx-JSON consistency timeframe-aware 보강 | done (2026-02-19) | Influx latest 조회를 `symbol+timeframe` 기준으로 고정 + `PRIMARY_TIMEFRAME` legacy fallback 유지 |
 | C-011 | P1 | boundary scheduler 재시작 catch-up 보강 | done (2026-02-19) | 재시작 직후 `1d/1w/1M` missed boundary를 첫 cycle에서 따라잡도록 초기화 경계 조정 |
 | C-010 | P2 | orchestrator 가독성 정리(`pipeline_worker.py` 제어면 경계 단순화) | done (2026-02-19) | cycle commit/state 저장 책임(ingest_state vs watermark commit) 분리 + 동작 불변 회귀/운영 smoke 검증 |
-| C-012 | P2 | 디렉토리/파일 재배치(런타임 계약 보존 전제) | open | docker/compose 엔트리포인트/빌드 컨텍스트 계약 유지 하에 구조 재배치 계획 + 단계별 롤백/검증 절차 확정 |
-| C-013 | P2 | `pipeline_worker.py` 저수준 가독성 분해(동작 불변) | open | 오케스트레이션/ingest/publish/runtime 경계 helper 추가 추출 + characterization 회귀 통과 + runtime smoke 불변 확인 |
+| C-012 | P2 | 디렉토리/파일 재배치(런타임 계약 보존 전제) | done (2026-02-20) | `docs/C-012_RELOCATION_CONTRACT_PLAN.md`에 compose/Docker/import 계약 맵 + 단계별 롤백/검증 절차 확정 |
+| C-013 | P2 | `pipeline_worker.py` 저수준 가독성 분해(동작 불변, timeboxed) | open | 대규모 분해 없이 상위 인지부하 함수 1~2개만 분리(최대 1세션) + characterization/`pytest` 통과 + runtime smoke 불변 확인 |
 | C-014 | P1 | derived TF skip 경로 publish starvation 완화 | done (2026-02-20) | `already_materialized` skip 시 ingest watermark를 DB latest로 동기화해 publish gate가 catch-up 가능하도록 보강 + 회귀 테스트 통과 |
 | C-015 | P1 | prediction status fallback 경계 강화 | done (2026-02-20) | non-primary timeframe에서 legacy prediction fallback 금지, `PRIMARY_TIMEFRAME`만 허용 + API/monitor 공통 evaluator 회귀 통과 |
-| C-016 | P2 | stale 장기 지속 재시도/승격 정책 정비 | open | 장주기 TF stale 지속 시 escalation alert/runbook 기준(실패 예산, 재시도 상한, 수동 개입 조건) 문서+검증 절차 확정 |
+| C-016 | P2 | stale 장기 지속 재시도/승격 정책 정비 | done (2026-02-20) | monitor escalation 이벤트(`*_escalated`) + runbook(`docs/RUNBOOK_STALE_ESCALATION.md`) + 회귀 테스트(`tests/test_status_monitor.py`) 고정 |
 
 ### Phase D (Model Evolution)
 | ID | Priority | Task | Status | Done Condition |
@@ -77,9 +77,9 @@
 | D-011 | P1 | Model Coverage Matrix + Fallback Resolver 구현 | open | `dedicated -> shared -> insufficient_data` fallback 체인이 코드/메타데이터/테스트로 검증됨 |
 
 ## 3. Immediate Bundle
-1. `C-012`
-2. `C-013` (`C-012` 후행 권장)
-3. `C-016`
+1. `C-013` (timeboxed micro-refactor)
+2. `C-004`
+3. `D-001`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
@@ -106,7 +106,7 @@
 | C-008 | `1h` underfill이 재발하면 이후 C-006/C-005 결과 해석이 왜곡될 수 있음 | 임시 guard에 의존한 채 근본 원인 미확정 상태가 장기화됨 | RCA 증거 + guard 트리거 추적 + 유지/제거 회귀 테스트 | guard를 유지한 채 RCA 후속 태스크로 분리 |
 | C-010 | orchestrator에 제어면/호환 래퍼/상태 커밋 책임이 밀집돼 변경 시 인지부하가 높다 | 작은 수정도 영향 범위 예측 실패로 회귀 위험이 증가한다 | commit 경계 단위 테스트 + 회귀(`pytest`) + 리뷰 체크리스트 통과 | 구조 정리만 되돌리고 기존 단일 흐름으로 복귀 |
 | C-012 | 현재 배치는 런타임 wiring과 강결합되어 있어 임의 이동 시 운영 장애 가능성이 높다 | 경로/모듈 이동 중 compose 커맨드, Docker COPY, import 경로가 깨져 배포 실패가 발생한다 | 계약 맵(엔트리포인트/COPY/import) 작성 + 단계별 이동 smoke test + 즉시 원복 스크립트 검증 | 재배치 브랜치 폐기 후 기존 경로/엔트리포인트로 즉시 복귀 |
-| C-013 | `pipeline_worker.py` 장문 오케스트레이터가 변경 영향 범위 예측을 어렵게 만든다 | 작은 로직 변경이 stage 경계/커밋 정책에 연쇄 회귀를 유발할 수 있다 | characterization 테스트 선행/동시 + `pytest` 회귀 + worker runtime smoke(ingest/publish cadence) 검증 | 추출 helper를 되돌리고 `C-010` 기준 구조로 즉시 복귀 |
+| C-013 | `pipeline_worker.py` 장문 오케스트레이터는 개선 가치가 있지만, 전면 리팩토링은 현 단계에서 오버엔지니어링 위험이 있다 | 범위를 넓히면 기능/운영 증빙이 지연되고 stage 경계 회귀가 연쇄 발생할 수 있다 | timebox(최대 1세션) + 함수 1~2개 micro-split + characterization/`pytest`/runtime smoke 통과 | timebox 초과 또는 회귀 발생 시 즉시 중단 후 `C-010` 기준 구조로 복귀 |
 | C-014 | derived TF에서 `already_materialized` skip 후 publish가 연쇄 skip되면 stale 체류 시간이 길어진다 | ingest는 정상이어도 prediction/export 갱신이 장주기 TF에서 방치될 수 있다 | skip 경로 회귀 테스트 + watermark/predict 갱신 추세 검증 + runtime smoke | 기존 gate 로직으로 즉시 복귀 |
 | C-015 | non-primary TF가 legacy fallback 파일을 읽으면 timeframe 판정이 오염될 수 있다 | stale/missing/corrupt 오탐 또는 누락으로 운영 경보 신뢰도가 저하된다 | evaluator 단위 테스트 + API/monitor 통합 회귀로 primary-only fallback 검증 | fallback 제한을 해제하고 기존 dual-candidate 경로로 복귀 |
 | C-016 | 실패 시 watermark 미전진 정책은 맞지만 장주기 TF에서 장기 stale 방치 인지 리스크가 남는다 | 운영자가 "정상 대기"와 "장기 실패"를 구분 못해 MTTR이 증가할 수 있다 | stale 지속 카운터/승격 규칙 문서화 + 경보 조건 테스트/운영 리허설 | 기존 재알림 주기 정책만 유지 |
@@ -136,7 +136,7 @@
 1. 현재 우선순위(`Stability > Cost > Performance`)에 따라 Option A를 기준선으로 채택한다.
 2. `B-005`는 사용자 의견에 따라 P2를 유지했다.
 3. Option B는 `C-002`에서 비용 압력이 즉시 심각하다는 증거가 나올 때 fallback 후보로만 유지한다.
-4. `C-010` 완료 이후 활성 실행 순서는 `C-012 -> C-013 -> C-016`이다.
+4. `C-010` 완료 이후 활성 실행 순서는 `C-013 -> C-004`이다.
 
 ## 8. R-004 Kickoff Contract (Accepted)
 1. Kickoff 구현 묶음은 `B-002`, `B-003` 2개로 고정했다.

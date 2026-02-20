@@ -39,6 +39,9 @@ def _parse_positive_int_env(name: str, default: int) -> int:
 
 MONITOR_POLL_SECONDS = _parse_positive_int_env("MONITOR_POLL_SECONDS", 60)
 MONITOR_RE_ALERT_CYCLES = _parse_positive_int_env("MONITOR_RE_ALERT_CYCLES", 3)
+MONITOR_ESCALATION_CYCLES = _parse_positive_int_env(
+    "MONITOR_ESCALATION_CYCLES", 60
+)
 
 HEALTHY_STATUSES = {"fresh", "stale"}
 ALERTABLE_UNHEALTHY_STATUSES = {"hard_stale", "corrupt", "missing"}
@@ -142,6 +145,29 @@ def detect_realert_event(
         return f"{current_status}_repeat"
     if current_status == "stale":
         return "soft_stale_repeat"
+    return None
+
+
+def detect_escalation_event(
+    current_status: str, cycles_in_status: int
+) -> str | None:
+    """
+    장기 지속 상태를 운영 승격(escalation) 이벤트로 표준화한다.
+
+    정책:
+    - 기본은 MONITOR_ESCALATION_CYCLES(기본 60) 주기
+    - hard_stale/corrupt/missing: `<status>_escalated`
+    - stale(soft): `soft_stale_escalated`
+    """
+    if cycles_in_status < MONITOR_ESCALATION_CYCLES:
+        return None
+    if cycles_in_status % MONITOR_ESCALATION_CYCLES != 0:
+        return None
+
+    if current_status in ALERTABLE_UNHEALTHY_STATUSES:
+        return f"{current_status}_escalated"
+    if current_status == "stale":
+        return "soft_stale_escalated"
     return None
 
 
@@ -322,7 +348,11 @@ def run_monitor_cycle(
             cycles_in_status = update_status_cycle_counter(
                 resolved_status_counters, key, snapshot.status
             )
-            # 상태전이 알림이 없으면, 동일 상태의 장기 지속 여부를 확인해 재알림을 보낸다.
+            # 상태전이 알림이 없으면 escalation -> repeat 순서로 판단한다.
+            if event is None:
+                event = detect_escalation_event(
+                    snapshot.status, cycles_in_status
+                )
             if event is None:
                 event = detect_realert_event(snapshot.status, cycles_in_status)
             if event:
@@ -349,6 +379,11 @@ def run_monitor_cycle(
 
 
 def send_discord_alert(event: MonitorAlertEvent) -> None:
+    runbook_line = (
+        "\naction=runbook: docs/RUNBOOK_STALE_ESCALATION.md"
+        if event.event.endswith("_escalated")
+        else ""
+    )
     cycles_line = (
         f"\ncycles_in_status={event.cycles_in_status}"
         if event.cycles_in_status is not None
@@ -361,6 +396,7 @@ def send_discord_alert(event: MonitorAlertEvent) -> None:
         f"updated_at={event.current_snapshot.updated_at}\n"
         f"age_minutes={event.current_snapshot.age_minutes}"
         f"{cycles_line}"
+        f"{runbook_line}"
     )
 
     if not DISCORD_WEBHOOK_URL:

@@ -1,6 +1,6 @@
 # Coin Predict Decision Register (Active)
 
-- Last Updated: 2026-02-19
+- Last Updated: 2026-02-20
 - Scope: archive 연동형 의사결정 레지스터 (요약/상세 분리)
 - Full Phase A History: `docs/archive/phase_a/DECISIONS_PHASE_A_FULL_2026-02-12.md`
 - Full Phase B History: `docs/archive/phase_b/DECISIONS_PHASE_B_FULL_2026-02-19.md`
@@ -177,6 +177,25 @@
   - 포트폴리오 관점의 운영 지표 경계가 명확해진다.
 - Revisit Trigger:
   - monitor 이벤트 영속화 도입 또는 트래픽/사고 빈도 증가 시
+
+### D-2026-02-20-46
+- Date: 2026-02-20
+- Status: Accepted
+- Topic: Monitor Long-Stale Escalation Tier (`C-016`)
+- Context:
+  - 기존 monitor는 상태전이 + 주기 재알림은 제공했지만, 장기 지속 사건을 명시적으로 승격하지 못했다.
+  - 장주기 timeframe에서는 "정상 대기"와 "장기 방치"를 구분하는 운영 기준이 필요했다.
+- Decision:
+  - monitor에 장기 지속 승격 이벤트를 추가한다.
+    - `hard_stale_escalated`, `missing_escalated`, `corrupt_escalated`, `soft_stale_escalated`
+  - 승격 기준은 `MONITOR_ESCALATION_CYCLES`(default 60)로 고정하고, repeat보다 우선한다.
+  - monitor 역할은 alert-only를 유지하고, 제어는 runbook 수동 개입으로 분리한다.
+  - 수동 개입 기준/점검 절차는 `docs/RUNBOOK_STALE_ESCALATION.md`로 고정한다.
+- Consequence:
+  - 장기 지속 이벤트 인지가 쉬워지고 MTTR 판단 근거가 명확해진다.
+  - 자동 제어를 넣지 않아 운영 단순성과 경계 분리를 유지한다.
+- Revisit Trigger:
+  - escalation 알림 과다/과소 또는 poll cadence 변경(`MONITOR_POLL_SECONDS`) 시
 
 ## 3. Decision Operation Policy
 1. archive로 이동된 결정은 요약 형태로만 활성 문서에 유지한다.
