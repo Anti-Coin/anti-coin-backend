@@ -17,7 +17,9 @@
 11. `C-003` 완료(2026-02-20): `tests/locustfile.py`를 static + `/status` 중심 baseline/stress 시나리오로 갱신했다.
 12. `C-012` 완료(2026-02-20): 재배치 전제 계약 문서(`docs/C-012_RELOCATION_CONTRACT_PLAN.md`)에 compose/Docker/import 계약 맵 + 단계별 검증/롤백 runbook을 잠금했다.
 13. `C-016` 완료(2026-02-20): monitor 장기 지속 상태 escalation(`*_escalated`) + runbook(`docs/RUNBOOK_STALE_ESCALATION.md`) + 회귀 테스트를 고정했다.
-14. 완료 증거: `PYENV_VERSION=coin pytest -q` 통과(`127 passed`, 2026-02-20) + 운영 smoke 확인.
+14. `C-013` 완료(2026-02-20): `pipeline_worker`에서 ingest detection gate/underfill 판단을 helper 2개로 분리해 동작 불변 가독성 개선을 적용했다(timeboxed micro-refactor).
+15. `C-004` 완료(2026-02-20): `worker-train` one-shot 서비스(`ops-train` profile)와 `train_model` CLI 인자(`--symbols/--timeframes/--lookback-limit`)를 고정했고, 실행/복구 절차를 `docs/RUNBOOK_TRAIN_JOB.md`로 명문화했다.
+16. 완료 증거: `PYENV_VERSION=coin pytest -q` 통과(`137 passed`, 2026-02-20) + 운영 smoke 확인.
 
 ## 2. Phase C Detailed Runtime Baseline
 1. cadence: `UTC boundary + detection gate`를 기본 실행 규칙으로 유지한다.
@@ -27,10 +29,10 @@
 5. orchestrator 변경(`C-010`)은 동작 불변(behavior-preserving)을 강제한다.
 
 ## 3. Next Priority Tasks
-1. `C-013`: `pipeline_worker.py` 저수준 가독성 분해(동작 불변, timeboxed)
-   - Done 기준: 대규모 리팩토링 금지, 상위 인지부하 함수 1~2개만 micro-split(최대 1세션) + characterization 회귀 + runtime smoke 불변
-2. `C-004`: 모델 학습 잡 분리 초안 정렬
-   - Done 기준: ingest/publish 경로와 자원 경합 없는 실행 경계 + 검증/롤백 절차 문서화
+1. `D-001`: 모델 인터페이스 계약(`fit/predict/save/load`) 고정
+   - Done 기준: 기존 Prophet 경로 호환 + 계약 테스트 가능 기준선 확정
+2. `D-002`: 모델 메타데이터/버전 스키마 정의
+   - Done 기준: 모델 버전/학습시각/학습 데이터 범위 메타데이터를 일관된 스키마로 기록
 
 ## 3.1 Stale RCA Follow-up (Taskized)
 1. `C-014`(P1): done (2026-02-20), derived TF `already_materialized` skip 시 ingest watermark를 DB latest로 동기화해 publish catch-up starvation 완화

@@ -20,15 +20,16 @@
 2. worker 경계: `worker-ingest`/`worker-publish` 2-service + ingest watermark 기반 publish gate 유지(`D-2026-02-17-38`).
 3. 대사 기준: monitor Influx-JSON consistency는 `symbol+timeframe` 고정, `PRIMARY_TIMEFRAME`에만 legacy fallback 허용(`D-2026-02-19-40`).
 4. 현재 핵심 태스크:
-   - `C-013`: `pipeline_worker.py` timeboxed micro-refactor(동작 불변)
-   - `C-004`: 모델 학습 잡 분리 초안 정렬
    - `D-001`: 모델 인터페이스 계약 고정
+   - `D-002`: 모델 메타데이터/버전 스키마 정렬
 5. 최근 완료(2026-02-20):
+   - `C-004`: 모델 학습 잡 분리 초안 완료(`worker-train` profile + `train_model` CLI)
    - `C-014`: derived TF `already_materialized` skip 시 publish starvation 완화
    - `C-015`: non-primary timeframe legacy prediction fallback 차단
    - `C-016`: monitor 장기 지속 escalation(`*_escalated`) + runbook(`docs/RUNBOOK_STALE_ESCALATION.md`) 고정
+   - `C-013`: ingest detection gate/underfill 판단 helper 분리(timeboxed, 동작 불변)
 6. 기준선 회귀:
-   - `PYENV_VERSION=coin pytest -q` 통과(`127 passed`) + 운영 smoke 확인.
+   - `PYENV_VERSION=coin pytest -q` 통과(`137 passed`) + 운영 smoke 확인.
 
 ## 4. Phase D Detailed Strategy
 1. 기본 모델 커버리지는 `timeframe-shared champion`으로 시작한다(`D-2026-02-13-32`).

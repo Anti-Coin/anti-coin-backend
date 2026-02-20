@@ -28,7 +28,8 @@
 4. `TIMEFRAME_POLICY_MATRIX`: timeframe 정책 매트릭스
 5. `TASKS_MINIMUM_UNITS`: 활성 태스크 보드
 6. `DISCUSSION`: 구현 전 쟁점/옵션/근거 토론 로그
-7. `archive/*`: 무손실 상세 이력 원장
+7. `RUNBOOK_*`: 운영 개입/복구 절차
+8. `archive/*`: 무손실 상세 이력 원장
 
 ## 4. Update Rules
 1. 정책 변경: `DECISIONS` 우선 갱신

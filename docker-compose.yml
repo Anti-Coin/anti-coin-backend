@@ -98,6 +98,25 @@ services:
       - ./static_data:/app/static_data
     command: ["python", "-u", "-m", "scripts.worker_publish"]
 
+  # Optional one-shot trainer. Run with:
+  # docker compose --profile ops-train run --rm worker-train
+  worker-train:
+    image: ghcr.io/anti-coin/anti-coin-backend-worker:latest
+    container_name: coin-worker-train
+    profiles:
+      - ops-train
+    environment:
+      TARGET_SYMBOLS: ${TARGET_SYMBOLS}
+      TRAIN_SYMBOLS: ${TRAIN_SYMBOLS}
+      TRAIN_TIMEFRAMES: ${TRAIN_TIMEFRAMES}
+      TRAIN_LOOKBACK_LIMIT: ${TRAIN_LOOKBACK_LIMIT}
+      ENABLE_MULTI_TIMEFRAMES: ${ENABLE_MULTI_TIMEFRAMES}
+    restart: "no"
+    volumes:
+      - ./models:/app/models
+      - ./static_data:/app/static_data
+    command: ["python", "-u", "-m", "scripts.worker_train"]
+
   monitor:
     image: ghcr.io/anti-coin/anti-coin-backend-worker:latest
     container_name: coin-monitor

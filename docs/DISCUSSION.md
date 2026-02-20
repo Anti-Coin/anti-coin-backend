@@ -114,3 +114,13 @@
 2. escalation 이벤트는 repeat보다 우선해 운영자에게 장기 지속 상태를 명시한다.
 3. 운영 개입 절차를 `docs/RUNBOOK_STALE_ESCALATION.md`로 고정했다.
 4. 검증: `PYENV_VERSION=coin pytest -q tests/test_status_monitor.py` 통과(`21 passed`), 전체 `PYENV_VERSION=coin pytest -q` 통과(`127 passed`).
+
+6. Progress Update (2026-02-20): `C-013` timeboxed micro-refactor 완료.
+1. `_run_ingest_timeframe_step`에서 detection gate 처리와 underfill rebootstrap 판단을 helper 2개로 분리했다.
+2. 분해 범위는 1세션 내 2 helper로 제한했고, 로직 순서/상태 갱신/로그 의미는 유지했다.
+3. 검증: `PYENV_VERSION=coin pytest -q tests/test_pipeline_worker.py` 통과(`52 passed`), 전체 `PYENV_VERSION=coin pytest -q` 통과(`127 passed`).
+
+7. Progress Update (2026-02-20): `C-004` 모델 학습 잡 분리 초안 완료.
+1. `worker-train` one-shot service(`ops-train` profile)를 추가해 ingest/publish 루프와 학습 실행 경계를 분리했다.
+2. `scripts/train_model.py`에 `--symbols/--timeframes/--lookback-limit` CLI를 도입하고, canonical 모델 저장 + primary legacy 동기화를 고정했다.
+3. 검증: `tests/test_train_model.py` 추가 후 `PYENV_VERSION=coin pytest -q tests/test_train_model.py` 통과(`10 passed`), 전체 `PYENV_VERSION=coin pytest -q` 통과(`137 passed`).

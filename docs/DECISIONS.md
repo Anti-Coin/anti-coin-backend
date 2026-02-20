@@ -197,6 +197,24 @@
 - Revisit Trigger:
   - escalation 알림 과다/과소 또는 poll cadence 변경(`MONITOR_POLL_SECONDS`) 시
 
+### D-2026-02-20-47
+- Date: 2026-02-20
+- Status: Accepted
+- Topic: Standalone Training Job Boundary (`C-004`)
+- Context:
+  - 학습 로직이 운영 ingest/publish 루프 내부로 다시 편입되면 `pipeline_worker` 비대화와 자원 경합 리스크가 커진다.
+  - 현 단계 목표는 자동 재학습보다 "독립 실행 경계 + 운영 통제 가능성"을 먼저 고정하는 것이다.
+- Decision:
+  - 학습은 `worker-train` one-shot service(`docker compose --profile ops-train run --rm worker-train`)로 분리한다.
+  - `scripts/train_model.py`는 CLI(`--symbols`, `--timeframes`, `--lookback-limit`)를 제공해 대상/비용을 실행 시점에 제한 가능하도록 한다.
+  - 모델 저장은 canonical(`model_{symbol}_{timeframe}.json`)을 기본으로 하고, `PRIMARY_TIMEFRAME`에 한해 legacy(`model_{symbol}.json`)를 동시 기록한다.
+  - 자동 스케줄/자동 승격은 `D-006`,`D-007`,`D-005`로 분리해 본 태스크에서 도입하지 않는다.
+- Consequence:
+  - 학습 실행 경계가 명확해져 운영 루프와 책임이 분리된다.
+  - 자동화 수준은 낮지만 오버엔지니어링 없이 D 단계 확장 포인트를 보존한다.
+- Revisit Trigger:
+  - 수동 학습 빈도 증가, 학습-운영 자원 경합 재발, 또는 자동 재학습 요구가 확정될 때
+
 ## 3. Decision Operation Policy
 1. archive로 이동된 결정은 요약 형태로만 활성 문서에 유지한다.
 2. 새 결정은 활성 문서 `Section 2`에 상세 기록한다.

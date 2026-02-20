@@ -67,9 +67,9 @@
 4. Phase B 상세 이력은 `docs/archive/phase_b/*`를 단일 출처로 사용한다.
 
 ## 6. Next Cycle (Recommended)
-1. `C-013` 수행: `pipeline_worker.py` timeboxed micro-refactor(함수 1~2개, 동작 불변)
-2. `C-004` 수행: 모델 학습 잡 분리 초안 정렬(운영 경로와 자원 경합 최소화)
-3. `D-001` 수행: 모델 인터페이스 계약(`fit/predict/save/load`) 고정
+1. `D-001` 수행: 모델 인터페이스 계약(`fit/predict/save/load`) 고정
+2. `D-002` 수행: 모델 메타데이터/버전 스키마 정의
+3. `D-010` 수행: 장기 timeframe 최소 샘플 gate 구현
 
 ## 7. Portfolio Capability Matrix (Current vs Next)
 | Capability | Current Evidence | Next Strengthening |

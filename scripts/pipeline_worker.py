@@ -1958,6 +1958,110 @@ def _prepare_symbol_activation_for_cycle(
     return default_activation, exchange_earliest, activation_loaded
 
 
+def _evaluate_boundary_detection_gate(
+    *,
+    query_api,
+    activation_exchange,
+    symbol: str,
+    timeframe: str,
+    cycle_now: datetime,
+    last_time: datetime | None,
+    state: WorkerPersistentState,
+    cycle_detection_skip_counts: dict[str, int],
+    cycle_detection_run_counts: dict[str, int],
+) -> tuple[bool, bool]:
+    """
+    boundary scheduler의 detection gate 결과를 평가한다.
+
+    Returns:
+      - tuple[bool, bool]
+        1) ingest 실행 여부
+        2) publish 단계 진행 여부
+    """
+    gate_decision = evaluate_detection_gate_decision(
+        query_api,
+        activation_exchange,
+        symbol=symbol,
+        timeframe=timeframe,
+        now=cycle_now,
+        last_saved=last_time,
+    )
+    gate_reason = gate_decision.reason.value
+    if not gate_decision.should_run:
+        # Gate skip은 "정상 no-op"다.
+        # 이 경우 ingest/publish watermark 어느 쪽도 전진시키지 않는다.
+        cycle_detection_skip_counts[gate_reason] = (
+            cycle_detection_skip_counts.get(gate_reason, 0) + 1
+        )
+        logger.info(
+            f"[{symbol} {timeframe}] detection gate skip "
+            f"(reason={gate_reason})"
+        )
+        if (
+            gate_reason == DetectionGateReason.ALREADY_MATERIALIZED.value
+            and last_time is not None
+        ):
+            # derived TF가 이미 materialized된 경우,
+            # ingest는 skip하더라도 ingest watermark를 DB latest로 동기화해
+            # publish gate(export/predict catch-up)가 정체되지 않도록 한다.
+            _upsert_watermark(
+                state.ingest_watermarks,
+                symbol=symbol,
+                timeframe=timeframe,
+                closed_at=last_time,
+            )
+            logger.info(
+                f"[{symbol} {timeframe}] synced ingest watermark from "
+                f"already_materialized gate: {_format_utc(last_time)}"
+            )
+            return False, True
+        return False, False
+
+    cycle_detection_run_counts[gate_reason] = (
+        cycle_detection_run_counts.get(gate_reason, 0) + 1
+    )
+    return True, True
+
+
+def _evaluate_underfill_rebootstrap(
+    *,
+    query_api,
+    symbol: str,
+    timeframe: str,
+) -> tuple[int, bool]:
+    """
+    lookback 커버리지 기준으로 rebootstrap 필요 여부를 계산한다.
+
+    Returns:
+      - tuple[int, bool]
+        1) lookback_days
+        2) force_rebootstrap
+    """
+    lookback_days = _lookback_days_for_timeframe(timeframe)
+    min_required_rows = _minimum_required_lookback_rows(
+        timeframe,
+        lookback_days,
+    )
+    if min_required_rows is None:
+        return lookback_days, False
+
+    close_count = get_lookback_close_count(
+        query_api,
+        symbol,
+        timeframe,
+        lookback_days,
+    )
+    if close_count is not None and close_count < min_required_rows:
+        logger.warning(
+            f"[{symbol} {timeframe}] canonical coverage underfilled: "
+            f"close_count={close_count} < min_required={min_required_rows}. "
+            "Rebootstrapping from lookback."
+        )
+        return lookback_days, True
+
+    return lookback_days, False
+
+
 def _run_ingest_timeframe_step(
     *,
     write_api,
@@ -1997,68 +2101,27 @@ def _run_ingest_timeframe_step(
     if scheduler_mode == "boundary":
         # XXX: 거래서 API 응답 지연 시.
         # 실제로는 새로운 봉이 생겼음에도, Skip 처리가 발생할 수 있음.
-        gate_decision = evaluate_detection_gate_decision(
-            query_api,
-            activation_exchange,
-            symbol=symbol,
-            timeframe=timeframe,
-            now=cycle_now,
-            last_saved=last_time,
-        )
-        gate_reason = gate_decision.reason.value
-        if not gate_decision.should_run:
-            # Gate skip은 "정상 no-op"다.
-            # 이 경우 ingest/publish watermark 어느 쪽도 전진시키지 않는다.
-            cycle_detection_skip_counts[gate_reason] = (
-                cycle_detection_skip_counts.get(gate_reason, 0) + 1
+        should_run_ingest, should_continue_publish = (
+            _evaluate_boundary_detection_gate(
+                query_api=query_api,
+                activation_exchange=activation_exchange,
+                symbol=symbol,
+                timeframe=timeframe,
+                cycle_now=cycle_now,
+                last_time=last_time,
+                state=state,
+                cycle_detection_skip_counts=cycle_detection_skip_counts,
+                cycle_detection_run_counts=cycle_detection_run_counts,
             )
-            logger.info(
-                f"[{symbol} {timeframe}] detection gate skip "
-                f"(reason={gate_reason})"
-            )
-            if (
-                gate_reason == DetectionGateReason.ALREADY_MATERIALIZED.value
-                and last_time is not None
-            ):
-                # derived TF가 이미 materialized된 경우,
-                # ingest는 skip하더라도 ingest watermark를 DB latest로 동기화해
-                # publish gate(export/predict catch-up)가 정체되지 않도록 한다.
-                _upsert_watermark(
-                    state.ingest_watermarks,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    closed_at=last_time,
-                )
-                logger.info(
-                    f"[{symbol} {timeframe}] synced ingest watermark from "
-                    f"already_materialized gate: {_format_utc(last_time)}"
-                )
-                return True, symbol_activation
-            return False, symbol_activation
-        cycle_detection_run_counts[gate_reason] = (
-            cycle_detection_run_counts.get(gate_reason, 0) + 1
         )
+        if not should_run_ingest:
+            return should_continue_publish, symbol_activation
 
-    lookback_days = _lookback_days_for_timeframe(timeframe)
-    force_rebootstrap = False
-    min_required_rows = _minimum_required_lookback_rows(
-        timeframe,
-        lookback_days,
+    lookback_days, force_rebootstrap = _evaluate_underfill_rebootstrap(
+        query_api=query_api,
+        symbol=symbol,
+        timeframe=timeframe,
     )
-    if min_required_rows is not None:
-        close_count = get_lookback_close_count(
-            query_api,
-            symbol,
-            timeframe,
-            lookback_days,
-        )
-        if close_count is not None and close_count < min_required_rows:
-            force_rebootstrap = True
-            logger.warning(
-                f"[{symbol} {timeframe}] canonical coverage underfilled: "
-                f"close_count={close_count} < min_required={min_required_rows}. "
-                "Rebootstrapping from lookback."
-            )
 
     since, since_source_text = resolve_ingest_since(
         symbol=symbol,

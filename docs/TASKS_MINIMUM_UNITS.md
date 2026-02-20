@@ -47,7 +47,7 @@
 | C-001 | P1 | 심볼 목록 확장 자동화 | done (2026-02-20) | `TARGET_SYMBOLS` 정규화/형식 검증/중복 제거 + canary 추가 검증 테스트 고정으로 심볼 추가 시 코드 수정 최소화 |
 | C-002 | P1 | 실행시간/실패율 메트릭 수집 | done (2026-02-17) | `static_data/runtime_metrics.json`에 cycle 실행시간/실패율/overrun 추세 누적 + `ingest_since_source_counts`/`rebootstrap_events`/`underfill_guard_retrigger_*` 집계 제공 |
 | C-003 | P2 | 부하 테스트 시나리오 업데이트 | done (2026-02-20) | `tests/locustfile.py`에 baseline/stress 시나리오( `/status` + `/static/manifest|history|prediction` )를 태그 기반으로 고정하고, 환경변수 기반 심볼/타임프레임/허용코드 조정이 가능함 |
-| C-004 | P2 | 모델 학습 잡 분리 초안 | open | 수집/예측과 독립 실행 가능 |
+| C-004 | P2 | 모델 학습 잡 분리 초안 | done (2026-02-20) | `worker-train` one-shot 실행 경계(`ops-train` profile) + `scripts/train_model.py` CLI(`--symbols/--timeframes/--lookback-limit`) + runbook(`docs/RUNBOOK_TRAIN_JOB.md`) + 회귀 테스트(`tests/test_train_model.py`) 고정 |
 | C-005 | P1 | pipeline worker 역할 분리 | done (2026-02-17) | `WORKER_EXECUTION_ROLE` + `WORKER_PUBLISH_MODE` 분리, compose 2-service(`worker-ingest`,`worker-publish`) 전환, 도메인 로직 `workers/*` 분리 |
 | C-006 | P1 | timeframe 경계 기반 scheduler 전환 | done (2026-02-17) | `WORKER_SCHEDULER_MODE=boundary` 기준으로 due timeframe만 실행, `missed_boundary_count/rate` 계측 |
 | C-007 | P1 | 신규 candle 감지 게이트 결합 | done (2026-02-17) | `detection_gate_{run,skip}` 집계 반영 + 경계 정상 시나리오 `missed_boundary=0` 회귀 검증 |
@@ -56,7 +56,7 @@
 | C-011 | P1 | boundary scheduler 재시작 catch-up 보강 | done (2026-02-19) | 재시작 직후 `1d/1w/1M` missed boundary를 첫 cycle에서 따라잡도록 초기화 경계 조정 |
 | C-010 | P2 | orchestrator 가독성 정리(`pipeline_worker.py` 제어면 경계 단순화) | done (2026-02-19) | cycle commit/state 저장 책임(ingest_state vs watermark commit) 분리 + 동작 불변 회귀/운영 smoke 검증 |
 | C-012 | P2 | 디렉토리/파일 재배치(런타임 계약 보존 전제) | done (2026-02-20) | `docs/C-012_RELOCATION_CONTRACT_PLAN.md`에 compose/Docker/import 계약 맵 + 단계별 롤백/검증 절차 확정 |
-| C-013 | P2 | `pipeline_worker.py` 저수준 가독성 분해(동작 불변, timeboxed) | open | 대규모 분해 없이 상위 인지부하 함수 1~2개만 분리(최대 1세션) + characterization/`pytest` 통과 + runtime smoke 불변 확인 |
+| C-013 | P2 | `pipeline_worker.py` 저수준 가독성 분해(동작 불변, timeboxed) | done (2026-02-20) | `_run_ingest_timeframe_step`의 detection gate/underfill 판단을 helper 2개로 분리(동작 불변) + characterization/전체 `pytest` 통과 |
 | C-014 | P1 | derived TF skip 경로 publish starvation 완화 | done (2026-02-20) | `already_materialized` skip 시 ingest watermark를 DB latest로 동기화해 publish gate가 catch-up 가능하도록 보강 + 회귀 테스트 통과 |
 | C-015 | P1 | prediction status fallback 경계 강화 | done (2026-02-20) | non-primary timeframe에서 legacy prediction fallback 금지, `PRIMARY_TIMEFRAME`만 허용 + API/monitor 공통 evaluator 회귀 통과 |
 | C-016 | P2 | stale 장기 지속 재시도/승격 정책 정비 | done (2026-02-20) | monitor escalation 이벤트(`*_escalated`) + runbook(`docs/RUNBOOK_STALE_ESCALATION.md`) + 회귀 테스트(`tests/test_status_monitor.py`) 고정 |
@@ -77,9 +77,9 @@
 | D-011 | P1 | Model Coverage Matrix + Fallback Resolver 구현 | open | `dedicated -> shared -> insufficient_data` fallback 체인이 코드/메타데이터/테스트로 검증됨 |
 
 ## 3. Immediate Bundle
-1. `C-013` (timeboxed micro-refactor)
-2. `C-004`
-3. `D-001`
+1. `D-001`
+2. `D-002`
+3. `D-010`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
@@ -136,7 +136,7 @@
 1. 현재 우선순위(`Stability > Cost > Performance`)에 따라 Option A를 기준선으로 채택한다.
 2. `B-005`는 사용자 의견에 따라 P2를 유지했다.
 3. Option B는 `C-002`에서 비용 압력이 즉시 심각하다는 증거가 나올 때 fallback 후보로만 유지한다.
-4. `C-010` 완료 이후 활성 실행 순서는 `C-013 -> C-004`이다.
+4. `C-010` 완료 이후 활성 실행 순서는 `D-001 -> D-002`다.
 
 ## 8. R-004 Kickoff Contract (Accepted)
 1. Kickoff 구현 묶음은 `B-002`, `B-003` 2개로 고정했다.

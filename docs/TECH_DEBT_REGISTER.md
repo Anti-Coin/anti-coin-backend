@@ -22,7 +22,7 @@
 | TD-009 | Deployment | dev push 즉시 배포 구조 | 운영 실수 영향 확대 | open | (TBD) | CI/CD 정책 분리 문서화 후 적용 |
 | TD-010 | Modeling | 모델 인터페이스 미구현 | 모델 교체 비용 증가 | open | D-001 | BaseModel 추상화 도입 |
 | TD-011 | Modeling | shadow 추론/평가 파이프라인 미구현 | 모델 비교 근거 부족 | open | D-003,D-004 | shadow 결과 저장/리포트 구현 |
-| TD-012 | Modeling | 자동 재학습/승격 게이트 미구현 | 모델 운영 수작업 부담 | open | D-006,D-007,D-005 | 수동 트리거부터 도입 |
+| TD-012 | Modeling | 자동 재학습/승격 게이트 미구현 | 모델 운영 수작업 부담 | open | C-004,D-006,D-007,D-005 | `C-004`로 수동 one-shot 학습 경계는 확보됨. 자동 트리거/스케줄/승격 게이트는 D 태스크에서 후속 구현 |
 | TD-013 | Reliability | atomic JSON 권한 이슈 (회귀 위험) | nginx 읽기 실패 재발 가능 | mitigated | A-007,A-011-2 | 회귀 테스트 유지 및 CI 연동 |
 | TD-014 | Deployment | worker 이미지 ENTRYPOINT 고정으로 monitor 커맨드 충돌 | monitor 오작동/중복 worker 실행 가능 | resolved | A-010-6 | 범용 ENTRYPOINT + worker 기본 CMD로 분리 적용 |
 | TD-015 | Data Consistency | Influx-JSON 최신 시각 불일치 검증 미구현 | 운영자가 오래된 JSON을 정상으로 오해할 수 있음 | resolved | A-014 | Influx 최신 시각 vs static `updated_at` 비교/승격 로직 구현 + `/predict` 미래값 운영 스모크체크(전체 심볼) 확인 완료 |
@@ -41,7 +41,7 @@
 | TD-028 | Storage Budget | 다중 심볼 `1m` 원본 장기 보관 전략 부재 | Free Tier 50GB 초과로 쓰기 실패/운영 중단 가능 | resolved | B-006 | `1m` rolling retention(`14d default / 30d cap`) + disk watermark(70/85/90) 경보/차단 + `block` 레벨 초기 백필 차단 반영 |
 | TD-029 | Data Lineage | `1h->1d/1w/1M` downsample 경로/검증 기준 미정 | timeframe 간 정합성 불일치, 재현성 저하 | resolved | B-001,B-006 | `1h->1d/1w/1M` downsample 집계 경로 구현 + `downsample_lineage.json` 기록 + incomplete bucket 검증/회귀 테스트 반영 |
 | TD-030 | Modeling Guard | 장기 timeframe 최소 샘플 부족 시 예측 차단/품질표시 정책 미구현 | 통계적 신뢰도 부족한 예측이 정상처럼 노출될 수 있음 | open | D-010 | Hard Gate(`insufficient_data`) + Accuracy Signal(`mae/smape/directional/sample_count`) 표준화 |
-| TD-031 | Maintainability | `scripts/pipeline_worker.py` 책임 집중(2.8k LOC + 장문 함수) | 작은 수정에도 영향 범위 예측 실패/리뷰 비용 증가 | open | C-013 | behavior-preserving 분해(오케스트레이션/ingest/publish/runtime 경계 추출) + characterization 회귀 기준선 고정 |
+| TD-031 | Maintainability | `scripts/pipeline_worker.py` 책임 집중(2.8k LOC + 장문 함수) | 작은 수정에도 영향 범위 예측 실패/리뷰 비용 증가 | mitigated | C-013 | timeboxed micro-refactor로 ingest detection gate/underfill helper 분해 완료. 추가 대규모 분해는 오버엔지니어링 방지 원칙 하에 필요 시 재평가 |
 
 ## 3. 상태 정의
 1. `open`: 미해결
