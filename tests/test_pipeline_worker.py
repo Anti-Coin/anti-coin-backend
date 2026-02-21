@@ -232,9 +232,7 @@ def test_run_prediction_and_save_skips_disabled_timeframe(monkeypatch):
     assert error is None
 
 
-def test_save_history_to_json_writes_timeframe_aware_files(
-    tmp_path, monkeypatch
-):
+def test_save_history_to_json_writes_timeframe_aware_files(tmp_path, monkeypatch):
     monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
 
     base = datetime(2026, 2, 12, 0, 0, tzinfo=timezone.utc)
@@ -404,24 +402,15 @@ def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
     assert payload["summary"]["missed_boundary_count"] is None
     assert payload["summary"]["ingest_since_source_counts"]["db_last"] == 5
     assert (
-        payload["summary"]["ingest_since_source_counts"][
-            "underfilled_rebootstrap"
-        ]
-        == 2
+        payload["summary"]["ingest_since_source_counts"]["underfilled_rebootstrap"] == 2
     )
     assert payload["summary"]["rebootstrap_cycles"] == 1
     assert payload["summary"]["rebootstrap_events"] == 2
     assert payload["summary"]["underfill_guard_retrigger_cycles"] == 1
     assert payload["summary"]["underfill_guard_retrigger_events"] == 2
-    assert (
-        payload["summary"]["detection_gate_run_counts"]["new_closed_candle"]
-        == 2
-    )
+    assert payload["summary"]["detection_gate_run_counts"]["new_closed_candle"] == 2
     assert payload["summary"]["detection_gate_run_events"] == 2
-    assert (
-        payload["summary"]["detection_gate_skip_counts"]["no_new_closed_candle"]
-        == 3
-    )
+    assert payload["summary"]["detection_gate_skip_counts"]["no_new_closed_candle"] == 3
     assert payload["summary"]["detection_gate_skip_events"] == 3
     assert payload["recent_cycles"][1]["ingest_since_source_counts"] == {
         "underfilled_rebootstrap": 2,
@@ -498,9 +487,7 @@ def test_append_runtime_cycle_metrics_ignores_invalid_source_counts(tmp_path):
     assert payload["recent_cycles"][0]["ingest_since_source_counts"] == {
         "bootstrap_lookback": 2
     }
-    assert payload["summary"]["ingest_since_source_counts"] == {
-        "bootstrap_lookback": 2
-    }
+    assert payload["summary"]["ingest_since_source_counts"] == {"bootstrap_lookback": 2}
     assert payload["summary"]["rebootstrap_events"] == 0
 
 
@@ -724,9 +711,7 @@ def test_get_disk_usage_percent_uses_shutil_result(monkeypatch):
 def test_should_enforce_1m_retention_interval():
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
     assert should_enforce_1m_retention(None, now) is True
-    assert (
-        should_enforce_1m_retention(now - timedelta(minutes=59), now) is False
-    )
+    assert should_enforce_1m_retention(now - timedelta(minutes=59), now) is False
     assert should_enforce_1m_retention(now - timedelta(hours=1), now) is True
 
 
@@ -1008,10 +993,8 @@ def test_minimum_required_lookback_rows_for_1h_only():
 def test_enforce_1m_retention_calls_delete_api(monkeypatch):
     fake_delete_api = FakeDeleteAPI()
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
-    monkeypatch.setattr(
-        "scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data"
-    )
-    monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_ORG", "coin")
+    monkeypatch.setattr("scripts.worker_guards.INFLUXDB_BUCKET", "market_data")
+    monkeypatch.setattr("scripts.worker_guards.INFLUXDB_ORG", "coin")
 
     enforce_1m_retention(
         fake_delete_api,
@@ -1025,9 +1008,7 @@ def test_enforce_1m_retention_calls_delete_api(monkeypatch):
     assert first_call["bucket"] == "market_data"
     assert first_call["org"] == "coin"
     assert first_call["predicate"].endswith('timeframe="1m"')
-    assert first_call["stop"] == datetime(
-        2026, 1, 14, 12, 0, tzinfo=timezone.utc
-    )
+    assert first_call["stop"] == datetime(2026, 1, 14, 12, 0, tzinfo=timezone.utc)
 
 
 def test_downsample_ohlcv_frame_filters_incomplete_bucket():
@@ -1063,9 +1044,7 @@ def test_downsample_ohlcv_frame_filters_incomplete_bucket():
     assert incomplete_df.iloc[0]["expected_count"] == 24
 
 
-def test_run_downsample_and_save_writes_ohlcv_and_lineage(
-    tmp_path, monkeypatch
-):
+def test_run_downsample_and_save_writes_ohlcv_and_lineage(tmp_path, monkeypatch):
     base = datetime(2026, 2, 10, 0, 0, tzinfo=timezone.utc)
     rows = []
     for hour in range(48):
@@ -1085,12 +1064,8 @@ def test_run_downsample_and_save_writes_ohlcv_and_lineage(
     write_api = FakeWriteAPI()
 
     lineage_path = tmp_path / "downsample_lineage.json"
-    monkeypatch.setattr(
-        "scripts.pipeline_worker.DOWNSAMPLE_LINEAGE_FILE", lineage_path
-    )
-    monkeypatch.setattr(
-        "scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data"
-    )
+    monkeypatch.setattr("scripts.pipeline_worker.DOWNSAMPLE_LINEAGE_FILE", lineage_path)
+    monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data")
     monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_ORG", "coin")
 
     latest_saved_at, result = run_downsample_and_save(
@@ -1137,10 +1112,7 @@ def test_worker_execution_role_stage_flags():
 
 
 def test_resolve_worker_publish_mode_falls_back_to_predict_and_export():
-    assert (
-        resolve_worker_publish_mode("predict_and_export")
-        == "predict_and_export"
-    )
+    assert resolve_worker_publish_mode("predict_and_export") == "predict_and_export"
     assert resolve_worker_publish_mode("predict_only") == "predict_only"
     assert resolve_worker_publish_mode("export_only") == "export_only"
     assert resolve_worker_publish_mode("invalid_mode") == "predict_and_export"
@@ -1230,15 +1202,11 @@ def test_record_ingest_outcome_state_failure_keeps_watermark_and_marks_failed(
     symbol = "BTC/USDT"
     timeframe = "1h"
     key = f"{symbol}|{timeframe}"
-    previous_last_closed_ts = datetime(
-        2026, 2, 18, 11, 0, tzinfo=timezone.utc
-    )
+    previous_last_closed_ts = datetime(2026, 2, 18, 11, 0, tzinfo=timezone.utc)
     previous_watermark = datetime(2026, 2, 18, 10, 0, tzinfo=timezone.utc)
     state = WorkerPersistentState(
         symbol_activation_entries={},
-        ingest_watermarks={
-            key: previous_watermark.strftime("%Y-%m-%dT%H:%M:%SZ")
-        },
+        ingest_watermarks={key: previous_watermark.strftime("%Y-%m-%dT%H:%M:%SZ")},
         predict_watermarks={},
         export_watermarks={},
     )
@@ -1403,9 +1371,7 @@ def test_run_ingest_timeframe_step_non_materialized_skip_still_blocks_publish(
     previous_watermark = datetime(2026, 2, 19, 10, 0, tzinfo=timezone.utc)
     state = WorkerPersistentState(
         symbol_activation_entries={},
-        ingest_watermarks={
-            key: previous_watermark.strftime("%Y-%m-%dT%H:%M:%SZ")
-        },
+        ingest_watermarks={key: previous_watermark.strftime("%Y-%m-%dT%H:%M:%SZ")},
         predict_watermarks={},
         export_watermarks={},
     )
@@ -1424,9 +1390,7 @@ def test_run_ingest_timeframe_step_non_materialized_skip_still_blocks_publish(
 
     monkeypatch.setattr(
         "scripts.pipeline_worker.get_last_timestamp",
-        lambda *args, **kwargs: datetime(
-            2026, 2, 19, 11, 0, tzinfo=timezone.utc
-        ),
+        lambda *args, **kwargs: datetime(2026, 2, 19, 11, 0, tzinfo=timezone.utc),
     )
     monkeypatch.setattr(
         "scripts.pipeline_worker.evaluate_detection_gate_decision",
@@ -1495,9 +1459,7 @@ def test_run_ingest_step_routes_base_to_exchange_fetch(monkeypatch):
     expected_since = datetime(2026, 2, 1, 0, 0, tzinfo=timezone.utc)
 
     def fail_downsample(*args, **kwargs):  # pragma: no cover
-        raise AssertionError(
-            "run_downsample_and_save should not run for base tf"
-        )
+        raise AssertionError("run_downsample_and_save should not run for base tf")
 
     def fake_fetch(write_api, symbol, since, timeframe):
         assert symbol == "BTC/USDT"

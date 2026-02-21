@@ -26,7 +26,6 @@ from pathlib import Path
 import requests
 import traceback
 from utils.logger import get_logger
-from utils.config import INGEST_TIMEFRAMES, PRIMARY_TIMEFRAME, TARGET_SYMBOLS
 from utils.file_io import atomic_write_json
 from utils.ingest_state import IngestStateStore
 from utils.pipeline_contracts import (
@@ -62,6 +61,66 @@ from workers import export as export_ops
 from workers import ingest as ingest_ops
 from workers import predict as predict_ops
 
+# Configuration constants — sourced from worker_config.
+# 모듈 속성으로 재노출해 기존 monkeypatch 경로(scripts.pipeline_worker.*)를 유지한다.
+from scripts.worker_config import (  # noqa: F401
+    BASE_DIR,
+    CYCLE_TARGET_SECONDS,
+    DISCORD_WEBHOOK_URL,
+    DISK_USAGE_PATH,
+    DISK_WATERMARK_BLOCK_PERCENT,
+    DISK_WATERMARK_CRITICAL_PERCENT,
+    DISK_WATERMARK_WARN_PERCENT,
+    DOWNSAMPLE_LINEAGE_FILE,
+    DOWNSAMPLE_SOURCE_LOOKBACK_DAYS,
+    DOWNSAMPLE_SOURCE_TIMEFRAME,
+    DOWNSAMPLE_TARGET_TIMEFRAMES,
+    EXPORT_WATERMARK_FILE,
+    FULL_BACKFILL_TOLERANCE_HOURS,
+    INGEST_STATE_FILE,
+    INGEST_WATERMARK_FILE,
+    INFLUXDB_BUCKET,
+    INFLUXDB_ORG,
+    INFLUXDB_TOKEN,
+    INFLUXDB_URL,
+    LOOKBACK_DAYS,
+    LOOKBACK_MIN_ROWS_RATIO,
+    MANIFEST_FILE,
+    MODELS_DIR,
+    PREDICT_WATERMARK_FILE,
+    PREDICTION_DISABLED_TIMEFRAMES,
+    PREDICTION_HEALTH_FILE,
+    PRIMARY_TIMEFRAME,
+    RETENTION_1M_DEFAULT_DAYS,
+    RETENTION_1M_MAX_DAYS,
+    RETENTION_ENFORCE_INTERVAL_SECONDS,
+    RUNTIME_METRICS_FILE,
+    RUNTIME_METRICS_WINDOW_SIZE,
+    SERVE_ALLOWED_STATUSES,
+    STATIC_DIR,
+    SYMBOL_ACTIVATION_FILE,
+    TARGET_COINS,
+    TIMEFRAMES,
+    VALID_WORKER_EXECUTION_ROLES,
+    VALID_WORKER_PUBLISH_MODES,
+    VALID_WORKER_SCHEDULER_MODES,
+    WORKER_EXECUTION_ROLE,
+    WORKER_PUBLISH_MODE,
+    WORKER_SCHEDULER_MODE,
+)
+from scripts.worker_guards import (  # noqa: F401
+    coerce_storage_guard_level as _coerce_storage_guard_level,
+    enforce_1m_retention,
+    get_disk_usage_percent,
+    resolve_disk_watermark_level,
+    should_block_initial_backfill,
+    should_enforce_1m_retention,
+)
+from scripts.worker_scheduling import (  # noqa: F401
+    initialize_boundary_schedule,
+    resolve_boundary_due_timeframes,
+)
+
 logger = get_logger(__name__)
 
 
@@ -80,72 +139,6 @@ def _ctx():
     # 이 패턴을 유지하면 테스트 monkeypatch 경로(scripts.pipeline_worker.*)를
     # 깨지 않고도 구현 본체를 workers/*로 이동할 수 있다.
     return sys.modules[__name__]
-
-
-INFLUXDB_URL = os.getenv("INFLUXDB_URL")
-INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN")
-INFLUXDB_ORG = os.getenv("INFLUXDB_ORG")
-INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET")
-
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-MODELS_DIR = BASE_DIR / "models"
-STATIC_DIR = BASE_DIR / "static_data"
-os.makedirs(MODELS_DIR, exist_ok=True)
-os.makedirs(STATIC_DIR, exist_ok=True)
-
-# 수집 대상 및 설정
-TARGET_COINS = TARGET_SYMBOLS
-TIMEFRAMES = INGEST_TIMEFRAMES if INGEST_TIMEFRAMES else [PRIMARY_TIMEFRAME]
-LOOKBACK_DAYS = 30  # 과거 30일치 데이터 유지
-INGEST_STATE_FILE = STATIC_DIR / "ingest_state.json"
-PREDICTION_HEALTH_FILE = STATIC_DIR / "prediction_health.json"
-MANIFEST_FILE = STATIC_DIR / "manifest.json"
-DOWNSAMPLE_LINEAGE_FILE = STATIC_DIR / "downsample_lineage.json"
-RUNTIME_METRICS_FILE = STATIC_DIR / "runtime_metrics.json"
-SYMBOL_ACTIVATION_FILE = STATIC_DIR / "symbol_activation.json"
-INGEST_WATERMARK_FILE = STATIC_DIR / "ingest_watermarks.json"
-PREDICT_WATERMARK_FILE = STATIC_DIR / "predict_watermarks.json"
-EXPORT_WATERMARK_FILE = STATIC_DIR / "export_watermarks.json"
-PREDICTION_DISABLED_TIMEFRAMES = {
-    value.strip()
-    for value in os.getenv("PREDICTION_DISABLED_TIMEFRAMES", "1m").split(",")
-    if value.strip()
-}
-SERVE_ALLOWED_STATUSES = {"fresh", "stale"}
-RETENTION_1M_DEFAULT_DAYS = 14
-RETENTION_1M_MAX_DAYS = 30
-DISK_WATERMARK_WARN_PERCENT = 70
-DISK_WATERMARK_CRITICAL_PERCENT = 85
-DISK_WATERMARK_BLOCK_PERCENT = 90
-DISK_USAGE_PATH = Path(os.getenv("DISK_USAGE_PATH", "/"))
-RETENTION_ENFORCE_INTERVAL_SECONDS = 60 * 60
-DOWNSAMPLE_TARGET_TIMEFRAMES = {"1d", "1w", "1M"}
-DOWNSAMPLE_SOURCE_TIMEFRAME = "1h"
-DOWNSAMPLE_SOURCE_LOOKBACK_DAYS = 120
-FULL_BACKFILL_TOLERANCE_HOURS = 1
-CYCLE_TARGET_SECONDS = int(os.getenv("WORKER_CYCLE_SECONDS", "60"))
-RUNTIME_METRICS_WINDOW_SIZE = int(
-    os.getenv("RUNTIME_METRICS_WINDOW_SIZE", "240")
-)
-LOOKBACK_MIN_ROWS_RATIO = float(os.getenv("LOOKBACK_MIN_ROWS_RATIO", "0.8"))
-WORKER_SCHEDULER_MODE = (
-    os.getenv("WORKER_SCHEDULER_MODE", "boundary").strip().lower()
-)
-VALID_WORKER_SCHEDULER_MODES = {"poll_loop", "boundary"}
-WORKER_EXECUTION_ROLE = (
-    os.getenv("WORKER_EXECUTION_ROLE", "all").strip().lower()
-)
-VALID_WORKER_EXECUTION_ROLES = {"all", "ingest", "predict_export"}
-WORKER_PUBLISH_MODE = (
-    os.getenv("WORKER_PUBLISH_MODE", "predict_and_export").strip().lower()
-)
-VALID_WORKER_PUBLISH_MODES = {
-    "predict_and_export",
-    "predict_only",
-    "export_only",
-}
 
 
 def resolve_worker_execution_role(raw_role: str) -> str:
@@ -649,9 +642,7 @@ def _load_runtime_metrics(path: Path = RUNTIME_METRICS_FILE) -> list[dict]:
 
     entries = payload.get("recent_cycles")
     if not isinstance(entries, list):
-        logger.error(
-            "Invalid runtime metrics format: recent_cycles is not a list."
-        )
+        logger.error("Invalid runtime metrics format: recent_cycles is not a list.")
         return []
     return entries
 
@@ -719,9 +710,7 @@ def _aggregate_ingest_source_metrics(
     underfill_guard_retrigger_events = 0
 
     for item in entries:
-        counts = _normalize_source_counts(
-            item.get("ingest_since_source_counts")
-        )
+        counts = _normalize_source_counts(item.get("ingest_since_source_counts"))
         cycle_has_rebootstrap = False
 
         for source, count in counts.items():
@@ -747,9 +736,7 @@ def _aggregate_ingest_source_metrics(
     }
 
 
-def _aggregate_reason_counts(
-    entries: list[dict], field_name: str
-) -> dict[str, int]:
+def _aggregate_reason_counts(entries: list[dict], field_name: str) -> dict[str, int]:
     """
     Args:
       - entries: run_time_metrics; recent_cycles
@@ -765,71 +752,8 @@ def _aggregate_reason_counts(
     return merged
 
 
-def initialize_boundary_schedule(
-    now: datetime, timeframes: list[str]
-) -> dict[str, datetime]:
-    """
-    각 timeframe의 현재 경계(open timestamp)를 초기 스케줄로 설정한다.
-
-    Called from:
-    - run_worker() 시작 시(경계 스케줄러 모드)
-    """
-    # 재시작 직후 "다음 경계만 대기"하면 장주기 TF(1d/1w/1M)가
-    # 다음 경계까지 오래 정체될 수 있다.
-    # 따라서 시작 시점에는 "현재 경계"를 기준점으로 잡아
-    # 놓친 경계를 첫 cycle에서 한 번 따라잡도록 한다.
-    return {
-        timeframe: next_timeframe_boundary(
-            last_closed_candle_open(now, timeframe), timeframe
-        )
-        for timeframe in timeframes
-    }
-
-
-def resolve_boundary_due_timeframes(
-    *,
-    now: datetime,
-    timeframes: list[str],
-    next_boundary_by_timeframe: dict[str, datetime],
-) -> tuple[list[str], int, datetime | None]:
-    """
-    현재 시각 기준으로 실행 due timeframe과 missed boundary 수를 계산한다.
-
-    Called from:
-    - run_worker() cycle 시작부
-    """
-    due_timeframes: list[str] = []
-    missed_boundary_count = 0
-
-    for timeframe in timeframes:
-        next_boundary = next_boundary_by_timeframe.get(timeframe)
-        if next_boundary is None:
-            next_boundary = next_timeframe_boundary(now, timeframe)
-            next_boundary_by_timeframe[timeframe] = next_boundary
-
-        # 봉 마감 미완료 된 데이터
-        if now < next_boundary:
-            continue
-
-        due_timeframes.append(timeframe)
-        boundary_advance_steps = 0
-        while next_boundary <= now:
-            # 워커 중단/지연 후 복귀 시 경계를 여러 개 건너뛸 수 있다.
-            # while로 다음 경계까지 따라잡고, 몇 개를 놓쳤는지 계측해
-            # 운영자가 missed boundary를 관찰할 수 있게 한다.
-            next_boundary = next_timeframe_boundary(next_boundary, timeframe)
-            boundary_advance_steps += 1
-
-        # 원본 변경
-        next_boundary_by_timeframe[timeframe] = next_boundary
-        missed_boundary_count += max(0, boundary_advance_steps - 1)
-
-    next_boundary_at = (
-        min(next_boundary_by_timeframe.values())
-        if next_boundary_by_timeframe
-        else None
-    )
-    return due_timeframes, missed_boundary_count, next_boundary_at
+# initialize_boundary_schedule, resolve_boundary_due_timeframes:
+# scripts.worker_scheduling으로 이동. import를 통해 이 모듈 네임스페이스에 재노출.
 
 
 def append_runtime_cycle_metrics(
@@ -895,14 +819,10 @@ def append_runtime_cycle_metrics(
     entries = entries[-effective_window:]
 
     samples = len(entries)
-    success_count = sum(
-        1 for item in entries if item.get("result") in {"ok", "idle"}
-    )
+    success_count = sum(1 for item in entries if item.get("result") in {"ok", "idle"})
     failure_count = samples - success_count
     overrun_count = sum(1 for item in entries if item.get("overrun") is True)
-    elapsed_values = [
-        float(item.get("elapsed_seconds", 0.0)) for item in entries
-    ]
+    elapsed_values = [float(item.get("elapsed_seconds", 0.0)) for item in entries]
     sleep_values = [float(item.get("sleep_seconds", 0.0)) for item in entries]
     avg_elapsed = round(sum(elapsed_values) / samples, 2) if samples else None
     avg_sleep = round(sum(sleep_values) / samples, 2) if samples else None
@@ -916,8 +836,7 @@ def append_runtime_cycle_metrics(
     )
     if resolved_boundary_mode == "boundary_scheduler":
         boundary_counts = [
-            max(0, int(item.get("missed_boundary_count") or 0))
-            for item in entries
+            max(0, int(item.get("missed_boundary_count") or 0)) for item in entries
         ]
         missed_boundary_total = sum(boundary_counts)
         missed_boundary_rate = (
@@ -931,18 +850,14 @@ def append_runtime_cycle_metrics(
         "samples": samples,
         "success_count": success_count,
         "failure_count": failure_count,
-        "success_rate": (
-            round(success_count / samples, 4) if samples else None
-        ),
+        "success_rate": (round(success_count / samples, 4) if samples else None),
         "avg_elapsed_seconds": avg_elapsed,
         "p95_elapsed_seconds": (
             round(p95_elapsed, 2) if p95_elapsed is not None else None
         ),
         "avg_sleep_seconds": avg_sleep,
         "overrun_count": overrun_count,
-        "overrun_rate": (
-            round(overrun_count / samples, 4) if samples else None
-        ),
+        "overrun_rate": (round(overrun_count / samples, 4) if samples else None),
         "missed_boundary_count": missed_boundary_total,
         "missed_boundary_rate": missed_boundary_rate,
         "ingest_since_source_counts": ingest_source_metrics["source_counts"],
@@ -1013,77 +928,9 @@ def _lookback_days_for_timeframe(timeframe: str) -> int:
     return LOOKBACK_DAYS
 
 
-def get_disk_usage_percent(path: Path = DISK_USAGE_PATH) -> float:
-    """
-    디스크 사용률(%)을 계산한다.
-
-    Called from:
-    - run_worker() ingest stage의 storage guard
-    """
-    usage = shutil.disk_usage(path)
-    if usage.total <= 0:
-        return 0.0
-    return round((usage.used / usage.total) * 100, 2)
-
-
-def resolve_disk_watermark_level(
-    usage_percent: float,
-    *,
-    warn_percent: int = DISK_WATERMARK_WARN_PERCENT,
-    critical_percent: int = DISK_WATERMARK_CRITICAL_PERCENT,
-    block_percent: int = DISK_WATERMARK_BLOCK_PERCENT,
-) -> str:
-    """
-    사용률을 watermark level(normal/warn/critical/block)로 변환한다.
-
-    Called from:
-    - run_worker() storage guard
-    """
-    if usage_percent >= block_percent:
-        return "block"
-    if usage_percent >= critical_percent:
-        return "critical"
-    if usage_percent >= warn_percent:
-        return "warn"
-    return "normal"
-
-
-def should_enforce_1m_retention(
-    last_enforced_at: datetime | None,
-    now: datetime,
-    *,
-    interval_seconds: int = RETENTION_ENFORCE_INTERVAL_SECONDS,
-) -> bool:
-    """
-    1m retention 실행 주기가 도래했는지 판단한다.
-
-    Called from:
-    - run_worker() cycle 초반
-    """
-    if last_enforced_at is None:
-        return True
-    return (now - last_enforced_at).total_seconds() >= interval_seconds
-
-
-def should_block_initial_backfill(
-    *,
-    disk_level: str,
-    timeframe: str,
-    state_since: datetime | None,
-    last_time: datetime | None,
-) -> bool:
-    """
-    디스크 block 상태에서 1m 초기 백필 차단 여부를 반환한다.
-
-    Called from:
-    - resolve_ingest_since
-    """
-    return (
-        disk_level == "block"
-        and timeframe == "1m"
-        and state_since is None
-        and last_time is None
-    )
+# get_disk_usage_percent, resolve_disk_watermark_level, should_enforce_1m_retention,
+# should_block_initial_backfill:
+# scripts.worker_guards로 이동. import를 통해 이 모듈 네임스페이스에 재노출.
 
 
 def resolve_ingest_since(
@@ -1118,18 +965,14 @@ def resolve_ingest_since(
     )
 
 
-def _minimum_required_lookback_rows(
-    timeframe: str, lookback_days: int
-) -> int | None:
+def _minimum_required_lookback_rows(timeframe: str, lookback_days: int) -> int | None:
     """
     coverage underfill 최소 row 기준 계산 래퍼.
 
     Called from:
     - run_worker() underfill guard
     """
-    return ingest_ops.minimum_required_lookback_rows(
-        _ctx(), timeframe, lookback_days
-    )
+    return ingest_ops.minimum_required_lookback_rows(_ctx(), timeframe, lookback_days)
 
 
 def get_lookback_close_count(
@@ -1146,44 +989,8 @@ def get_lookback_close_count(
     )
 
 
-def enforce_1m_retention(
-    delete_api,
-    symbols: list[str],
-    *,
-    now: datetime | None = None,
-    retention_days: int = RETENTION_1M_DEFAULT_DAYS,
-) -> None:
-    """
-    1m 원본 데이터의 보존 범위를 강제한다.
-    - 정책 범위 밖 값은 [14, 30]으로 clamp.
-    - measurement=ohlcv, timeframe=1m만 대상으로 삭제한다.
-    """
-    resolved_now = now or datetime.now(timezone.utc)
-    effective_days = max(
-        RETENTION_1M_DEFAULT_DAYS,
-        min(retention_days, RETENTION_1M_MAX_DAYS),
-    )
-    cutoff = (resolved_now - timedelta(days=effective_days)).replace(
-        microsecond=0
-    )
-    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
-
-    for symbol in symbols:
-        predicate = (
-            f'_measurement="ohlcv" AND symbol="{symbol}" AND timeframe="1m"'
-        )
-        delete_api.delete(
-            start=epoch,
-            stop=cutoff,
-            predicate=predicate,
-            bucket=INFLUXDB_BUCKET,
-            org=INFLUXDB_ORG,
-        )
-
-    logger.info(
-        f"[Retention] 1m retention enforced: days={effective_days}, "
-        f"cutoff={cutoff.strftime('%Y-%m-%dT%H:%M:%SZ')}, symbols={len(symbols)}"
-    )
+# enforce_1m_retention:
+# scripts.worker_guards로 이동. import를 통해 이 모듈 네임스페이스에 재노출.
 
 
 def _load_downsample_lineage(
@@ -1208,9 +1015,7 @@ def _load_downsample_lineage(
 
     entries = payload.get("entries")
     if not isinstance(entries, dict):
-        logger.error(
-            "Invalid downsample lineage format: entries is not a dict."
-        )
+        logger.error("Invalid downsample lineage format: entries is not a dict.")
         return {}
     return entries
 
@@ -1422,9 +1227,7 @@ def build_runtime_manifest(
     now: datetime | None = None,
     static_dir: Path | None = None,
     prediction_health_path: Path | None = None,
-    symbol_activation_entries: (
-        dict[str, SymbolActivationSnapshot | dict] | None
-    ) = None,
+    symbol_activation_entries: dict[str, SymbolActivationSnapshot | dict] | None = None,
 ) -> dict:
     """
     runtime manifest 생성 래퍼.
@@ -1459,9 +1262,7 @@ def write_runtime_manifest(
     now: datetime | None = None,
     static_dir: Path | None = None,
     prediction_health_path: Path | None = None,
-    symbol_activation_entries: (
-        dict[str, SymbolActivationSnapshot | dict] | None
-    ) = None,
+    symbol_activation_entries: dict[str, SymbolActivationSnapshot | dict] | None = None,
     path: Path | None = None,
 ) -> None:
     """
@@ -1511,9 +1312,7 @@ def _query_first_timestamp(query_api, query: str) -> datetime | None:
     return ingest_ops.query_first_timestamp(query_api, query)
 
 
-def get_first_timestamp(
-    query_api, symbol: str, timeframe: str
-) -> datetime | None:
+def get_first_timestamp(query_api, symbol: str, timeframe: str) -> datetime | None:
     """
     DB earliest 조회 래퍼.
 
@@ -1523,9 +1322,7 @@ def get_first_timestamp(
     return ingest_ops.get_first_timestamp(_ctx(), query_api, symbol, timeframe)
 
 
-def get_last_timestamp(
-    query_api, symbol, timeframe, *, full_range: bool = False
-):
+def get_last_timestamp(query_api, symbol, timeframe, *, full_range: bool = False):
     """
     DB latest 조회 래퍼.
 
@@ -1674,9 +1471,7 @@ def fetch_and_save(
     Called from:
     - run_ingest_step
     """
-    return ingest_ops.fetch_and_save(
-        _ctx(), write_api, symbol, since_ts, timeframe
-    )
+    return ingest_ops.fetch_and_save(_ctx(), write_api, symbol, since_ts, timeframe)
 
 
 def _fetch_ohlcv_paginated(
@@ -1735,18 +1530,14 @@ def _refill_detected_gaps(
     )
 
 
-def run_prediction_and_save(
-    write_api, symbol, timeframe
-) -> tuple[str, str | None]:
+def run_prediction_and_save(write_api, symbol, timeframe) -> tuple[str, str | None]:
     """
     prediction 실행 래퍼.
 
     Called from:
     - run_worker() predict stage
     """
-    return predict_ops.run_prediction_and_save(
-        _ctx(), write_api, symbol, timeframe
-    )
+    return predict_ops.run_prediction_and_save(_ctx(), write_api, symbol, timeframe)
 
 
 def run_prediction_and_save_outcome(
@@ -1775,9 +1566,7 @@ def update_full_history_file(query_api, symbol, timeframe) -> bool:
     Called from:
     - run_worker() export stage
     """
-    return export_ops.update_full_history_file(
-        _ctx(), query_api, symbol, timeframe
-    )
+    return export_ops.update_full_history_file(_ctx(), query_api, symbol, timeframe)
 
 
 @dataclass
@@ -1861,18 +1650,9 @@ def _record_ingest_outcome_state(
         )
 
 
-def _coerce_storage_guard_level(raw_level: str) -> StorageGuardLevel:
-    """
-    문자열 storage level을 Enum으로 정규화한다.
-    """
-    try:
-        return StorageGuardLevel(raw_level)
-    except ValueError:
-        logger.warning(
-            "[Storage Guard] unknown level=%s, fallback to normal.",
-            raw_level,
-        )
-        return StorageGuardLevel.NORMAL
+# _coerce_storage_guard_level:
+# scripts.worker_guards.coerce_storage_guard_level로 이동.
+# import 시 alias로 기존 이름을 유지한다.
 
 
 def _log_stage_failure_context(
@@ -1994,8 +1774,7 @@ def _evaluate_boundary_detection_gate(
             cycle_detection_skip_counts.get(gate_reason, 0) + 1
         )
         logger.info(
-            f"[{symbol} {timeframe}] detection gate skip "
-            f"(reason={gate_reason})"
+            f"[{symbol} {timeframe}] detection gate skip " f"(reason={gate_reason})"
         )
         if (
             gate_reason == DetectionGateReason.ALREADY_MATERIALIZED.value
@@ -2101,18 +1880,16 @@ def _run_ingest_timeframe_step(
     if scheduler_mode == "boundary":
         # XXX: 거래서 API 응답 지연 시.
         # 실제로는 새로운 봉이 생겼음에도, Skip 처리가 발생할 수 있음.
-        should_run_ingest, should_continue_publish = (
-            _evaluate_boundary_detection_gate(
-                query_api=query_api,
-                activation_exchange=activation_exchange,
-                symbol=symbol,
-                timeframe=timeframe,
-                cycle_now=cycle_now,
-                last_time=last_time,
-                state=state,
-                cycle_detection_skip_counts=cycle_detection_skip_counts,
-                cycle_detection_run_counts=cycle_detection_run_counts,
-            )
+        should_run_ingest, should_continue_publish = _evaluate_boundary_detection_gate(
+            query_api=query_api,
+            activation_exchange=activation_exchange,
+            symbol=symbol,
+            timeframe=timeframe,
+            cycle_now=cycle_now,
+            last_time=last_time,
+            state=state,
+            cycle_detection_skip_counts=cycle_detection_skip_counts,
+            cycle_detection_run_counts=cycle_detection_run_counts,
         )
         if not should_run_ingest:
             return should_continue_publish, symbol_activation
@@ -2131,14 +1908,11 @@ def _run_ingest_timeframe_step(
         disk_level=disk_level.value,
         force_rebootstrap=force_rebootstrap,
         bootstrap_since=(
-            exchange_earliest
-            if timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
-            else None
+            exchange_earliest if timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME else None
         ),
         enforce_full_backfill=(
             timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
-            and symbol_activation.visibility
-            == SymbolVisibility.HIDDEN_BACKFILLING
+            and symbol_activation.visibility == SymbolVisibility.HIDDEN_BACKFILLING
         ),
         now=cycle_now,
     )
@@ -2231,10 +2005,7 @@ def _run_ingest_timeframe_step(
             existing_entry=state.symbol_activation_entries.get(symbol),
         )
         state.symbol_activation_entries[symbol] = refreshed_activation
-        if (
-            refreshed_activation.visibility
-            == SymbolVisibility.HIDDEN_BACKFILLING
-        ):
+        if refreshed_activation.visibility == SymbolVisibility.HIDDEN_BACKFILLING:
             _remove_static_exports_for_symbol(
                 symbol,
                 TIMEFRAMES,
@@ -2360,9 +2131,7 @@ def _run_publish_timeframe_step(
         if prediction_outcome.result == PredictionExecutionResult.SKIPPED:
             return
 
-        prediction_ok = (
-            prediction_outcome.result == PredictionExecutionResult.OK
-        )
+        prediction_ok = prediction_outcome.result == PredictionExecutionResult.OK
         health, was_degraded, is_degraded = upsert_prediction_health(
             symbol,
             timeframe,
@@ -2462,9 +2231,7 @@ def _reload_publish_only_shared_state_for_cycle(
         # ingest worker가 아직 커밋하지 않은 메모리 상태는 볼 수 없으므로,
         # 최대 1 cycle 지연은 정상 동작 범위다.
         state.symbol_activation_entries = _load_symbol_activation()
-        state.ingest_watermarks = _load_watermark_entries(
-            INGEST_WATERMARK_FILE
-        )
+        state.ingest_watermarks = _load_watermark_entries(INGEST_WATERMARK_FILE)
 
 
 def _run_symbol_timeframe_cycle_stages(
@@ -2506,9 +2273,8 @@ def _run_symbol_timeframe_cycle_stages(
             state=state,
         )
 
-        if (
-            symbol_activation.visibility == SymbolVisibility.HIDDEN_BACKFILLING
-            and (run_ingest_stage or activation_loaded)
+        if symbol_activation.visibility == SymbolVisibility.HIDDEN_BACKFILLING and (
+            run_ingest_stage or activation_loaded
         ):
             _remove_static_exports_for_symbol(
                 symbol,
@@ -2594,9 +2360,7 @@ def _append_cycle_runtime_metrics_if_enabled(
             detection_gate_skip_counts=cycle_detection_skip_counts,
             detection_gate_run_counts=cycle_detection_run_counts,
             boundary_tracking_mode=(
-                "boundary_scheduler"
-                if scheduler_mode == "boundary"
-                else "poll_loop"
+                "boundary_scheduler" if scheduler_mode == "boundary" else "poll_loop"
             ),
             missed_boundary_count=cycle_missed_boundary_count,
         )
@@ -2626,12 +2390,8 @@ def run_worker():
     run_ingest_stage = worker_role_runs_ingest(worker_role)
     run_publish_stage = worker_role_runs_publish(worker_role)
     publish_mode = resolve_worker_publish_mode(WORKER_PUBLISH_MODE)
-    run_predict_stage = run_publish_stage and publish_mode_runs_predict(
-        publish_mode
-    )
-    run_export_stage = run_publish_stage and publish_mode_runs_export(
-        publish_mode
-    )
+    run_predict_stage = run_publish_stage and publish_mode_runs_predict(publish_mode)
+    run_export_stage = run_publish_stage and publish_mode_runs_export(publish_mode)
     write_runtime_metrics = run_ingest_stage
 
     logger.info(
@@ -2763,9 +2523,7 @@ def run_worker():
                             send_alert(msg)
                     previous_disk_level = disk_level
                 except OSError as e:
-                    logger.error(
-                        f"[Storage Guard] disk usage check failed: {e}"
-                    )
+                    logger.error(f"[Storage Guard] disk usage check failed: {e}")
 
             if (
                 run_ingest_stage

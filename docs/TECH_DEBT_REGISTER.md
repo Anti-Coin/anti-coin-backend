@@ -1,6 +1,6 @@
 # Coin Predict Technical Debt Register
 
-- Last Updated: 2026-02-20
+- Last Updated: 2026-02-21
 - Purpose: 기술 부채를 세션 간 누락 없이 추적
 
 ## 1. 운용 규칙
@@ -22,7 +22,7 @@
 | TD-009 | Deployment | dev push 즉시 배포 구조 | 운영 실수 영향 확대 | open | (TBD) | CI/CD 정책 분리 문서화 후 적용 |
 | TD-010 | Modeling | 모델 인터페이스 미구현 | 모델 교체 비용 증가 | open | D-001 | BaseModel 추상화 도입 |
 | TD-011 | Modeling | shadow 추론/평가 파이프라인 미구현 | 모델 비교 근거 부족 | open | D-003,D-004 | shadow 결과 저장/리포트 구현 |
-| TD-012 | Modeling | 자동 재학습/승격 게이트 미구현 | 모델 운영 수작업 부담 | open | C-004,D-006,D-007,D-005 | `C-004`로 수동 one-shot 학습 경계는 확보됨. 자동 트리거/스케줄/승격 게이트는 D 태스크에서 후속 구현 |
+| TD-012 | Modeling | 자동 재학습/승격 게이트 미구현 | 모델 운영 수작업 부담 | open | C-004,D-005,D-006,D-007,D-012,D-013,D-014,D-015 | `C-004`로 수동 one-shot 학습 경계는 확보됨. Influx SoT 학습 입력/재학습 트리거/실행 락/학습 관측성은 D 태스크에서 후속 구현 |
 | TD-013 | Reliability | atomic JSON 권한 이슈 (회귀 위험) | nginx 읽기 실패 재발 가능 | mitigated | A-007,A-011-2 | 회귀 테스트 유지 및 CI 연동 |
 | TD-014 | Deployment | worker 이미지 ENTRYPOINT 고정으로 monitor 커맨드 충돌 | monitor 오작동/중복 worker 실행 가능 | resolved | A-010-6 | 범용 ENTRYPOINT + worker 기본 CMD로 분리 적용 |
 | TD-015 | Data Consistency | Influx-JSON 최신 시각 불일치 검증 미구현 | 운영자가 오래된 JSON을 정상으로 오해할 수 있음 | resolved | A-014 | Influx 최신 시각 vs static `updated_at` 비교/승격 로직 구현 + `/predict` 미래값 운영 스모크체크(전체 심볼) 확인 완료 |
@@ -30,7 +30,7 @@
 | TD-017 | Runtime Guard | Phase B 이전 다중 timeframe 설정 방어 미구현 | `missing` 오탐 증가 및 운영 판단 혼선 | resolved | A-015 | `INGEST_TIMEFRAMES=1h` fail-fast 가드 적용 완료 |
 | TD-018 | Serving Policy | API-SSG 경계 및 endpoint sunset 기준의 운영 계약(필드/경로) 미확정 | 사용자/운영 경로 혼선, 불필요한 유지비 지속 | resolved | A-016,B-005 | `/history`/`/predict` sunset(`410`) 완료 + 오너 확인 기반 fallback 비의존 운영 검증 반영. 재발 시 rollback runbook으로 즉시 복구 후 재평가 |
 | TD-019 | Worker Architecture | ingest/predict/export 단일 worker 결합 구조 | 특정 단계 지연/장애가 전체 파이프라인 SLA를 악화 | mitigated | C-005 | `worker-ingest`/`worker-publish` 2-service 분리 + 엔트리포인트 분리(`ingest/predict/export`) + 코드 레벨 도메인 분리(`workers/ingest.py`,`workers/predict.py`,`workers/export.py`) 적용 완료. publish 내부 predict/export를 별도 프로세스로 완전 분리하는 승격은 backlog/리소스 관측 후 판단 |
-| TD-020 | Scheduling | 고정 간격 while-loop 중심 스케줄 | timeframe별 리소스 낭비/경계 불일치 가능 | open | C-006,C-007 | `D-2026-02-13-33` 기준으로 `C-006(UTC boundary scheduler) -> C-007(new closed candle detection gate)` 순서로 전환 |
+| TD-020 | Scheduling | 고정 간격 while-loop 중심 스케줄 | timeframe별 리소스 낭비/경계 불일치 가능 | mitigated | C-006,C-007,C-011 | `C-006/C-007/C-011`로 boundary+detection+restart catch-up 전환이 완료됨. 잔여 리스크는 `missed_boundary_count/rate` 운영 추세 감시로 관리 |
 | TD-021 | Failure Signaling | predict 실패 시 degraded 상태/알림 표준 미구현 | 마지막 정상값 제공 중 실패 사실이 숨겨질 수 있음 | resolved | A-017 | worker predict 실패/복구 상태전이 알림 + `/status` degraded/last success/failure 노출 적용 완료 |
 | TD-022 | Freshness Semantics | prediction 파일 `updated_at` 기반 fresh 판정이 입력 데이터 stale을 가릴 수 있음 | freshness honesty 훼손 및 운영 오판 가능 | open | A-014,A-017 | A-014 정합성 체크 운영 검증은 완료, 입력 데이터 최신 시각(`ohlcv_last`)의 사용자 노출 경로 추가 검토 필요 |
 | TD-023 | Status Consistency | API와 monitor의 prediction 파일 선택/판정 경로가 분리됨 | 동일 시점 상태 불일치 및 경보 혼선 가능 | resolved | A-018 | `utils/prediction_status.py` 공통 evaluator 도입 및 API/monitor 공용 경로 통합 완료 |
@@ -41,7 +41,7 @@
 | TD-028 | Storage Budget | 다중 심볼 `1m` 원본 장기 보관 전략 부재 | Free Tier 50GB 초과로 쓰기 실패/운영 중단 가능 | resolved | B-006 | `1m` rolling retention(`14d default / 30d cap`) + disk watermark(70/85/90) 경보/차단 + `block` 레벨 초기 백필 차단 반영 |
 | TD-029 | Data Lineage | `1h->1d/1w/1M` downsample 경로/검증 기준 미정 | timeframe 간 정합성 불일치, 재현성 저하 | resolved | B-001,B-006 | `1h->1d/1w/1M` downsample 집계 경로 구현 + `downsample_lineage.json` 기록 + incomplete bucket 검증/회귀 테스트 반영 |
 | TD-030 | Modeling Guard | 장기 timeframe 최소 샘플 부족 시 예측 차단/품질표시 정책 미구현 | 통계적 신뢰도 부족한 예측이 정상처럼 노출될 수 있음 | open | D-010 | Hard Gate(`insufficient_data`) + Accuracy Signal(`mae/smape/directional/sample_count`) 표준화 |
-| TD-031 | Maintainability | `scripts/pipeline_worker.py` 책임 집중(2.8k LOC + 장문 함수) | 작은 수정에도 영향 범위 예측 실패/리뷰 비용 증가 | mitigated | C-013 | timeboxed micro-refactor로 ingest detection gate/underfill helper 분해 완료. 추가 대규모 분해는 오버엔지니어링 방지 원칙 하에 필요 시 재평가 |
+| TD-031 | Maintainability | `scripts/pipeline_worker.py` 책임 집중(2.6k LOC + 장문 함수) | 작은 수정에도 영향 범위 예측 실패/리뷰 비용 증가 | mitigated | C-013,D-016,D-017 | config/guards/scheduling 분리 완료(2887→2644줄). 상태 관리 분리(`D-016`)와 ctx 래퍼 해소(`D-017`)는 D-001/D-002 후 후속 수행 |
 
 ## 3. 상태 정의
 1. `open`: 미해결
