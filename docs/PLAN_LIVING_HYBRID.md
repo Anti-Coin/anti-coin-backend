@@ -1,6 +1,6 @@
 # Coin Predict Living Plan (Hybrid)
 
-- Last Updated: 2026-02-20
+- Last Updated: 2026-02-21
 - Owner: Backend/Platform
 - Status: Active
 - Full Phase A History: `docs/archive/phase_a/PLAN_LIVING_HYBRID_PHASE_A_FULL_2026-02-12.md`
@@ -50,14 +50,15 @@
 5. 관련 정책 상세는 `D-2026-02-13-32`, 구현 단위는 `D-011`에서 관리하되, `D-011`의 우선순위를 조정한다.
 
 ## 5. Next Cycle (Recommended)
-1. `D-018` 수행: `1d/1w/1M` direct fetch 전환(downsample 폐기)
+1. `D-018` 완료(2026-02-21): `1d/1w/1M` direct fetch 전환(downsample 폐기)
 2. `D-012` 수행: 학습 데이터 SoT 정렬(Influx 기반 closed-candle snapshot + chunk 기반 OOM 방어 추출)
 3. `D-001` 수행: 모델 계약 명시화(`fit/predict/save/load`, 추상 인터페이스 도입은 보류)
 4. `D-002` 수행: 모델 메타데이터/버전 스키마 정의
 
 ## 5.1 Cycle KPI (Locked 2026-02-21)
-1. `D-018` + `D-012` 완료
-2. 전체 회귀 통과: `PYENV_VERSION=coin pytest -q`
+1. `D-018` 완료
+2. `D-012` 완료
+3. 전체 회귀 통과: `PYENV_VERSION=coin pytest -q`
 
 ## 6. Portfolio Capability Matrix (Current vs Next)
 | Capability | Current Evidence | Next Strengthening |

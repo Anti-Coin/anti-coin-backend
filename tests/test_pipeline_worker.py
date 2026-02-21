@@ -13,6 +13,7 @@ from scripts.pipeline_worker import (
     _record_ingest_outcome_state,
     _refill_detected_gaps,
     _run_ingest_timeframe_step,
+    _run_publish_timeframe_step,
     WorkerPersistentState,
     append_runtime_cycle_metrics,
     build_runtime_manifest,
@@ -37,6 +38,7 @@ from scripts.pipeline_worker import (
     should_run_publish_from_ingest_watermark,
     should_block_initial_backfill,
     should_enforce_1m_retention,
+    update_full_history_file,
     upsert_prediction_health,
     worker_role_runs_ingest,
     worker_role_runs_publish,
@@ -46,6 +48,7 @@ from utils.ingest_state import IngestStateStore
 from utils.pipeline_contracts import (
     IngestExecutionOutcome,
     IngestExecutionResult,
+    PredictionExecutionResult,
     StorageGuardLevel,
     SymbolActivationSnapshot,
 )
@@ -918,6 +921,43 @@ def test_resolve_ingest_since_uses_exchange_earliest_for_1h_state_drift():
     assert since == earliest
 
 
+def test_resolve_ingest_since_uses_exchange_earliest_for_1d_bootstrap():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1d",
+        state_since=None,
+        last_time=None,
+        disk_level="normal",
+        bootstrap_since=earliest,
+        now=now,
+    )
+
+    assert source == "bootstrap_exchange_earliest"
+    assert since == earliest
+
+
+def test_resolve_ingest_since_uses_exchange_earliest_for_1w_state_drift():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    earliest = datetime(2020, 1, 6, 0, 0, tzinfo=timezone.utc)
+    state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1w",
+        state_since=state_since,
+        last_time=None,
+        disk_level="normal",
+        bootstrap_since=earliest,
+        now=now,
+    )
+
+    assert source == "state_drift_rebootstrap_exchange_earliest"
+    assert since == earliest
+
+
 def test_resolve_ingest_since_enforces_full_backfill_for_hidden_1h():
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
     earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -1277,6 +1317,70 @@ def test_run_ingest_timeframe_step_blocked_storage_guard_stops_without_watermark
     assert key not in state.ingest_watermarks
 
 
+def test_run_ingest_timeframe_step_reads_db_last_with_full_range_for_1d(
+    monkeypatch, tmp_path
+):
+    symbol = "BTC/USDT"
+    timeframe = "1d"
+    now = datetime(2026, 2, 19, 12, 0, tzinfo=timezone.utc)
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={},
+        predict_watermarks={},
+        export_watermarks={},
+    )
+    ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
+    activation = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-02-19T11:00:00Z",
+        },
+        fallback_now=now,
+    )
+
+    last_timestamp_calls: list[bool] = []
+
+    def fake_get_last_timestamp(*args, **kwargs):
+        last_timestamp_calls.append(bool(kwargs.get("full_range", False)))
+        return None
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.get_last_timestamp",
+        fake_get_last_timestamp,
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.resolve_ingest_since",
+        lambda **kwargs: (None, "blocked_storage_guard"),
+    )
+
+    should_continue_publish, next_activation = _run_ingest_timeframe_step(
+        write_api=object(),
+        query_api=object(),
+        activation_exchange=object(),
+        ingest_state_store=ingest_state_store,
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        scheduler_mode="poll_loop",
+        symbol_activation=activation,
+        exchange_earliest=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        disk_level=StorageGuardLevel.BLOCK,
+        disk_usage_percent=92.5,
+        state=state,
+        cycle_since_source_counts={},
+        cycle_detection_skip_counts={},
+        cycle_detection_run_counts={},
+    )
+
+    assert should_continue_publish is False
+    assert next_activation == activation
+    assert last_timestamp_calls == [True]
+
+
 def test_run_ingest_timeframe_step_long_tf_skip_syncs_watermark_and_allows_publish(
     monkeypatch, tmp_path
 ):
@@ -1456,3 +1560,292 @@ def test_run_ingest_step_routes_base_to_exchange_fetch(monkeypatch):
 
     assert latest == expected_latest
     assert result == "saved"
+
+
+def test_run_publish_timeframe_step_self_heals_missing_history_on_gate_skip(
+    monkeypatch, tmp_path
+):
+    symbol = "BTC/USDT"
+    timeframe = "1d"
+    now = datetime(2026, 2, 21, 10, 0, tzinfo=timezone.utc)
+    key = f"{symbol}|{timeframe}"
+    watermark_text = "2026-02-21T00:00:00Z"
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={key: watermark_text},
+        predict_watermarks={},
+        export_watermarks={key: watermark_text},
+    )
+    activation = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-02-21T09:00:00Z",
+        },
+        fallback_now=now,
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
+
+    history_calls = {"count": 0}
+
+    def fake_update_full_history_file(query_api, target_symbol, target_timeframe):
+        assert target_symbol == symbol
+        assert target_timeframe == timeframe
+        history_calls["count"] += 1
+        return True
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.update_full_history_file",
+        fake_update_full_history_file,
+    )
+
+    cycle_export_gate_skip_counts: dict[str, int] = {}
+    _run_publish_timeframe_step(
+        write_api=object(),
+        query_api=object(),
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        symbol_activation=activation,
+        run_export_stage=True,
+        run_predict_stage=False,
+        state=state,
+        cycle_export_gate_skip_counts=cycle_export_gate_skip_counts,
+        cycle_predict_gate_skip_counts={},
+    )
+
+    assert history_calls["count"] == 1
+    assert cycle_export_gate_skip_counts == {"up_to_date_ingest_watermark": 1}
+
+
+def test_run_publish_timeframe_step_self_heals_missing_prediction_with_last_success(
+    monkeypatch, tmp_path
+):
+    symbol = "BTC/USDT"
+    timeframe = "1d"
+    now = datetime(2026, 2, 21, 10, 0, tzinfo=timezone.utc)
+    key = f"{symbol}|{timeframe}"
+    watermark_text = "2026-02-21T00:00:00Z"
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={key: watermark_text},
+        predict_watermarks={key: watermark_text},
+        export_watermarks={},
+    )
+    activation = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-02-21T09:00:00Z",
+        },
+        fallback_now=now,
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
+    health_path = tmp_path / "prediction_health.json"
+    health_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-02-21T09:00:00Z",
+                "entries": {
+                    key: {
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "degraded": False,
+                        "last_success_at": "2026-02-20T00:00:00Z",
+                        "last_failure_at": None,
+                        "consecutive_failures": 0,
+                        "last_error": None,
+                        "updated_at": "2026-02-21T09:00:00Z",
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.PREDICTION_HEALTH_FILE", health_path)
+
+    prediction_calls = {"run": 0, "health": 0}
+
+    def fake_run_prediction_and_save_outcome(*args, **kwargs):
+        prediction_calls["run"] += 1
+        return SimpleNamespace(
+            result=PredictionExecutionResult.OK,
+            error=None,
+        )
+
+    def fake_upsert_prediction_health(*args, **kwargs):
+        prediction_calls["health"] += 1
+        return {"degraded": False}, False, False
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.run_prediction_and_save_outcome",
+        fake_run_prediction_and_save_outcome,
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.upsert_prediction_health",
+        fake_upsert_prediction_health,
+    )
+
+    cycle_predict_gate_skip_counts: dict[str, int] = {}
+    _run_publish_timeframe_step(
+        write_api=object(),
+        query_api=object(),
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        symbol_activation=activation,
+        run_export_stage=False,
+        run_predict_stage=True,
+        state=state,
+        cycle_export_gate_skip_counts={},
+        cycle_predict_gate_skip_counts=cycle_predict_gate_skip_counts,
+    )
+
+    assert prediction_calls == {"run": 1, "health": 1}
+    assert cycle_predict_gate_skip_counts == {"up_to_date_ingest_watermark": 1}
+    assert state.predict_watermarks[key] == watermark_text
+
+
+def test_run_publish_timeframe_step_does_not_self_heal_prediction_without_success(
+    monkeypatch, tmp_path
+):
+    symbol = "BTC/USDT"
+    timeframe = "1d"
+    now = datetime(2026, 2, 21, 10, 0, tzinfo=timezone.utc)
+    key = f"{symbol}|{timeframe}"
+    watermark_text = "2026-02-21T00:00:00Z"
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={key: watermark_text},
+        predict_watermarks={key: watermark_text},
+        export_watermarks={},
+    )
+    activation = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-02-21T09:00:00Z",
+        },
+        fallback_now=now,
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
+    health_path = tmp_path / "prediction_health.json"
+    health_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-02-21T09:00:00Z",
+                "entries": {
+                    key: {
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "degraded": True,
+                        "last_success_at": None,
+                        "last_failure_at": "2026-02-21T08:00:00Z",
+                        "consecutive_failures": 3,
+                        "last_error": "model_missing",
+                        "updated_at": "2026-02-21T09:00:00Z",
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.PREDICTION_HEALTH_FILE", health_path)
+
+    called = {"run_prediction": False}
+
+    def fail_if_called(*args, **kwargs):
+        called["run_prediction"] = True
+        raise AssertionError("prediction self-heal should not run")
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.run_prediction_and_save_outcome",
+        fail_if_called,
+    )
+
+    cycle_predict_gate_skip_counts: dict[str, int] = {}
+    _run_publish_timeframe_step(
+        write_api=object(),
+        query_api=object(),
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        symbol_activation=activation,
+        run_export_stage=False,
+        run_predict_stage=True,
+        state=state,
+        cycle_export_gate_skip_counts={},
+        cycle_predict_gate_skip_counts=cycle_predict_gate_skip_counts,
+    )
+
+    assert called["run_prediction"] is False
+    assert cycle_predict_gate_skip_counts == {"up_to_date_ingest_watermark": 1}
+
+
+def test_update_full_history_file_uses_full_range_for_long_timeframes(monkeypatch):
+    captured_queries: list[str] = []
+    sample_df = pd.DataFrame(
+        [
+            {
+                "_time": datetime(2026, 2, 1, 0, 0, tzinfo=timezone.utc),
+                "open": 1.0,
+                "high": 2.0,
+                "low": 0.5,
+                "close": 1.5,
+                "volume": 10.0,
+            }
+        ]
+    )
+
+    class FakeQueryAPI:
+        def query_data_frame(self, query: str):
+            captured_queries.append(query)
+            return sample_df.copy()
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.export_ops.save_history_to_json",
+        lambda ctx, df, symbol, timeframe: None,
+    )
+
+    query_api = FakeQueryAPI()
+    assert update_full_history_file(query_api, "BTC/USDT", "1d") is True
+    assert "|> range(start: 0)" in captured_queries[0]
+
+
+def test_update_full_history_file_keeps_lookback_range_for_1h(monkeypatch):
+    captured_queries: list[str] = []
+    sample_df = pd.DataFrame(
+        [
+            {
+                "_time": datetime(2026, 2, 1, 0, 0, tzinfo=timezone.utc),
+                "open": 1.0,
+                "high": 2.0,
+                "low": 0.5,
+                "close": 1.5,
+                "volume": 10.0,
+            }
+        ]
+    )
+
+    class FakeQueryAPI:
+        def query_data_frame(self, query: str):
+            captured_queries.append(query)
+            return sample_df.copy()
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.export_ops.save_history_to_json",
+        lambda ctx, df, symbol, timeframe: None,
+    )
+
+    query_api = FakeQueryAPI()
+    assert update_full_history_file(query_api, "BTC/USDT", "1h") is True
+    assert "|> range(start: -30d)" in captured_queries[0]

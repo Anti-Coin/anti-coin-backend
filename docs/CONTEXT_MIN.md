@@ -1,6 +1,6 @@
 # Coin Predict Context (Minimum)
 
-- Last Updated: 2026-02-20
+- Last Updated: 2026-02-21
 - Purpose: 새 세션에서 최소 토큰으로 현재 상태를 정렬하기 위한 요약
 
 ## 1. Snapshot
@@ -33,7 +33,8 @@
 3. `C-015`: non-primary prediction fallback 오염 차단
 4. `C-016`: monitor escalation(`*_escalated`) + runbook 고정
 5. `C-004`: 학습 one-shot 경계(`worker-train`) 및 runbook 고정
-6. 기준선 회귀: `PYENV_VERSION=coin pytest -q` 통과(`137 passed`)
+6. `D-018`: `1d/1w/1M` direct fetch 전환 + downsample/lineage 코드 비참조화
+7. 기준선 회귀: `PYENV_VERSION=coin pytest -q` 통과(`140 passed`)
 
 ## 6. Non-Negotiables
 1. 우선순위: Stability > Cost > Performance.
@@ -49,7 +50,7 @@
 ## 8. Current Risk Focus
 1. `TD-012`: 자동 재학습/승격 게이트 미구현
 2. `TD-010`: 모델 인터페이스 미구현
-3. `TD-030`: 장기 TF 샘플 부족 차단/품질표시 미구현
+3. `TD-022`: prediction freshness 의미론(입력 stale 은닉 가능성) 정렬 필요
 4. `TD-009`: dev push 즉시 배포 구조 리스크
 
 ## 9. Deep References

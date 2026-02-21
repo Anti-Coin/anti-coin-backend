@@ -37,6 +37,10 @@ TIMEFRAMES = INGEST_TIMEFRAMES if INGEST_TIMEFRAMES else [PRIMARY_TIMEFRAME]
 LOOKBACK_DAYS = 30  # 과거 30일치 데이터 유지
 # PRIMARY_TIMEFRAME은 utils.config에서 가져오되, 여기서도 재노출한다.
 PRIMARY_TIMEFRAME = PRIMARY_TIMEFRAME
+# DB full-fill 대상 timeframe (1m retention 정책 제외).
+DB_FULL_FILL_TIMEFRAMES = {"1h", "1d", "1w", "1M"}
+# history full-range export 대상 timeframe.
+FULL_HISTORY_EXPORT_TIMEFRAMES = {"1d", "1w", "1M"}
 
 # ── State file paths ──
 INGEST_STATE_FILE = STATIC_DIR / "ingest_state.json"

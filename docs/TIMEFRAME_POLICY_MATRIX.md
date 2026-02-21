@@ -22,15 +22,17 @@
 |---|---|---|---|---|---|
 | `1m` | Exchange closed candles | `14d` default, `30d` cap | SSG + Hybrid API(latest window only) | Disabled(default) | 고빈도 특성상 지연/비용 리스크 우선 차단 |
 | `1h` | Exchange closed candles (activation canonical) | full-first(`exchange earliest -> now`) | SSG primary | Enabled | symbol activation 기준 TF(`SYMBOL_ACTIVATION_SOURCE_TIMEFRAME`) |
-| `1d` | Exchange closed candles (direct fetch) | Timeframe-native retention | SSG primary | Enabled(샘플 gate 통과 시) | downsample 미사용 |
-| `1w` | Exchange closed candles (direct fetch) | Timeframe-native retention | SSG primary | Enabled(샘플 gate 통과 시) | downsample 미사용 |
-| `1M` | Exchange closed candles (direct fetch) | Timeframe-native retention | SSG primary | Enabled(샘플 gate 통과 시) | downsample 미사용 |
+| `1d` | Exchange closed candles (direct fetch) | full-fill(`exchange earliest -> now`) | SSG primary(full-range history) | Enabled(샘플 gate 통과 시) | downsample 미사용 |
+| `1w` | Exchange closed candles (direct fetch) | full-fill(`exchange earliest -> now`) | SSG primary(full-range history) | Enabled(샘플 gate 통과 시) | downsample 미사용 |
+| `1M` | Exchange closed candles (direct fetch) | full-fill(`exchange earliest -> now`) | SSG primary(full-range history) | Enabled(샘플 gate 통과 시) | downsample 미사용 |
 
 ## 3.1 Ingest Routing Guard
 1. Exchange fetch는 모든 운영 timeframe(`1m`,`1h`,`1d`,`1w`,`1M`)에 허용한다.
 2. `1d/1w/1M`은 direct fetch로 수집하며 downsample materialization을 사용하지 않는다.
 3. worker 공용 ingest 진입점(`run_ingest_step`)은 timeframe 분기 없이 `fetch_and_save`를 호출한다.
 4. 장주기 TF의 publish starvation 완화는 detection gate skip(`no_new_closed_candle`) 시 ingest watermark sync로 처리한다.
+5. DB full-fill 대상은 `1h/1d/1w/1M`이며, DB empty/state drift 시 exchange earliest bootstrap을 우선한다.
+6. `1m`은 full-fill 대상에서 제외하고 retention 정책(`14d default / 30d cap`)을 유지한다.
 
 ## 3.2 Symbol Activation Gate (`1h` Full-First)
 1. 적용 범위: 현재 및 미래의 모든 심볼.
@@ -63,6 +65,12 @@
 2. detection gate는 거래소 latest closed candle 기준으로 실행/스킵을 판단한다.
 3. skip 사유가 `no_new_closed_candle`이고 long TF + `last_time` 존재 시 ingest watermark를 `last_time`으로 동기화해 publish starvation을 완화한다.
 4. 데이터 품질은 downsample deterministic 검증 대신 거래소 데이터 계약(누락/지연/갭) 기반으로 감시한다.
+
+## 6.1 Static Serving / Self-Heal Contract
+1. `history` full-range serving은 `1d/1w/1M`에만 적용한다.
+2. `1h/1m` history export는 lookback window를 유지한다.
+3. publish gate skip(`up_to_date_ingest_watermark`)라도 canonical history 파일 누락 시 export self-heal을 수행한다.
+4. prediction self-heal은 canonical prediction 파일 누락 + `prediction_health.last_success_at` 존재 조건에서만 수행한다.
 
 ## 7. Serving Policy: Hard Gate + Accuracy Signal
 ### 7.1 Hard Gate (`serve 금지`)

@@ -1,15 +1,15 @@
 # Coin Predict Session Handoff
 
-- Last Updated: 2026-02-20
+- Last Updated: 2026-02-21
 - Branch: `dev`
 
 ## 1. Current Snapshot
-1. Phase A 완료(2026-02-12), Phase B 완료(2026-02-19), Phase C 완료(2026-02-20).
+1. Phase A 완료(2026-02-12), Phase B 완료(2026-02-19), Phase C 완료(2026-02-20), `D-018` 완료(2026-02-21).
 2. 핵심 기준: 안정성 > 비용 > 성능, SSG 사용자 플레인 + InfluxDB SoT 유지.
 3. `/status`는 운영 신호 경로, `/history`/`/predict`는 sunset tombstone(`410`).
 4. `C-004` 완료: `worker-train` one-shot 실행 경계 + `train_model` CLI + runbook(`docs/RUNBOOK_TRAIN_JOB.md`) 고정.
 5. `C-013`~`C-016` 완료: stale RCA 후속과 monitor escalation, timeboxed 가독성 분해까지 잠금.
-6. 완료 증거: `PYENV_VERSION=coin pytest -q` 통과(`137 passed`, 2026-02-20).
+6. 완료 증거: `PYENV_VERSION=coin pytest -q` 통과(`140 passed`, 2026-02-21).
 7. Phase C 상세 원문은 `docs/archive/phase_c/*`로 이동했다.
 
 ## 2. Runtime Baseline (Post-Phase C)
@@ -17,6 +17,7 @@
 2. worker topology: `worker-ingest`/`worker-publish` 2-service
 3. publish trigger: ingest watermark advance gate
 4. monitor consistency: `symbol+timeframe` 기준 + `PRIMARY_TIMEFRAME` legacy fallback
+5. ingest routing: `1d/1w/1M` 포함 전 timeframe direct fetch(derived downsample 경로 제거)
 
 ## 3. Next Priority Tasks
 1. `D-001`: 모델 인터페이스 계약(`fit/predict/save/load`) 고정

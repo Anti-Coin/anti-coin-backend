@@ -332,7 +332,7 @@ def resolve_ingest_since(
 
     Source code examples:
     - "db_last": DB latest를 그대로 이어받는 정상 증분 수집
-    - "bootstrap_exchange_earliest": canonical 1h 최초 전체 백필 시작
+    - "bootstrap_exchange_earliest": full-fill 대상 TF의 최초 전체 백필 시작
     - "underfilled_rebootstrap": lookback row 부족으로 재부트스트랩
     - "blocked_storage_guard": 저장소 가드로 초기 백필 차단
     """
@@ -391,11 +391,8 @@ def resolve_ingest_since(
     ):
         return None, "blocked_storage_guard"
 
-    if (
-        timeframe == ctx.SYMBOL_ACTIVATION_SOURCE_TIMEFRAME
-        and bootstrap_since is not None
-    ):
-        # canonical 1h + exchange earliest가 있으면 lookback보다 earliest를 우선한다.
+    if timeframe in ctx.DB_FULL_FILL_TIMEFRAMES and bootstrap_since is not None:
+        # full-fill 대상 TF는 exchange earliest를 우선해 lookback truncation을 방지한다.
         if source == "state_drift_rebootstrap":
             return (
                 bootstrap_since,

@@ -66,6 +66,7 @@ from workers import predict as predict_ops
 from scripts.worker_config import (  # noqa: F401
     BASE_DIR,
     CYCLE_TARGET_SECONDS,
+    DB_FULL_FILL_TIMEFRAMES,
     DISCORD_WEBHOOK_URL,
     DISK_USAGE_PATH,
     DISK_WATERMARK_BLOCK_PERCENT,
@@ -73,6 +74,7 @@ from scripts.worker_config import (  # noqa: F401
     DISK_WATERMARK_WARN_PERCENT,
     EXPORT_WATERMARK_FILE,
     FULL_BACKFILL_TOLERANCE_HOURS,
+    FULL_HISTORY_EXPORT_TIMEFRAMES,
     INGEST_STATE_FILE,
     INGEST_WATERMARK_FILE,
     INFLUXDB_BUCKET,
@@ -290,6 +292,41 @@ def _static_export_paths(
     if canonical == legacy:
         return canonical, None
     return canonical, legacy
+
+
+def _canonical_static_export_missing(
+    kind: str,
+    symbol: str,
+    timeframe: str,
+    *,
+    static_dir: Path | None = None,
+) -> bool:
+    """
+    canonical 정적 산출물 파일 누락 여부를 반환한다.
+    """
+    canonical_path, _ = _static_export_paths(
+        kind,
+        symbol,
+        timeframe,
+        static_dir=static_dir or STATIC_DIR,
+    )
+    return not canonical_path.exists()
+
+
+def _has_prediction_last_success(
+    symbol: str,
+    timeframe: str,
+    *,
+    path: Path | None = None,
+) -> bool:
+    """
+    prediction self-heal 허용 조건(last_success_at 존재)을 확인한다.
+    """
+    entries = _load_prediction_health(path=path or PREDICTION_HEALTH_FILE)
+    entry = entries.get(_prediction_health_key(symbol, timeframe), {})
+    if not isinstance(entry, dict):
+        return False
+    return bool(entry.get("last_success_at"))
 
 
 def prediction_enabled_for_timeframe(timeframe: str) -> bool:
@@ -1735,7 +1772,12 @@ def _run_ingest_timeframe_step(
     4) ingest watermark는 메모리에서만 전진시키고 cycle 종료에 파일 커밋한다.
     """
     state_since = ingest_state_store.get_last_closed(symbol, timeframe)
-    last_time = get_last_timestamp(query_api, symbol, timeframe)
+    last_time = get_last_timestamp(
+        query_api,
+        symbol,
+        timeframe,
+        full_range=timeframe in DB_FULL_FILL_TIMEFRAMES,
+    )
 
     if scheduler_mode == "boundary":
         # XXX: 거래서 API 응답 지연 시.
@@ -1769,7 +1811,7 @@ def _run_ingest_timeframe_step(
         force_rebootstrap=force_rebootstrap,
         bootstrap_since=(
             exchange_earliest
-            if timeframe == SYMBOL_ACTIVATION_SOURCE_TIMEFRAME
+            if timeframe in DB_FULL_FILL_TIMEFRAMES
             else None
         ),
         enforce_full_backfill=(
@@ -1921,6 +1963,31 @@ def _run_publish_timeframe_step(
             cycle_export_gate_skip_counts[export_gate_reason] = (
                 cycle_export_gate_skip_counts.get(export_gate_reason, 0) + 1
             )
+            should_self_heal_export = (
+                export_gate_reason
+                == PublishGateReason.UP_TO_DATE_INGEST_WATERMARK.value
+                and _canonical_static_export_missing("history", symbol, timeframe)
+            )
+            if should_self_heal_export:
+                logger.warning(
+                    f"[{symbol} {timeframe}] history artifact missing while "
+                    f"publish gate skipped ({export_gate_reason}); running self-heal export."
+                )
+                export_ok = update_full_history_file(query_api, symbol, timeframe)
+                if not export_ok:
+                    _log_stage_failure_context(
+                        "export",
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        now=cycle_now,
+                        last_closed_ts=export_decision.ingest_closed_at,
+                        error="export_result_failed",
+                        extra={"gate_reason": export_gate_reason},
+                    )
+                    logger.warning(
+                        f"[{symbol} {timeframe}] export self-heal failed. "
+                        "watermark cursor is not advanced."
+                    )
         else:
             export_ok = update_full_history_file(query_api, symbol, timeframe)
             if export_ok and export_decision.ingest_closed_at is not None:
@@ -1953,11 +2020,23 @@ def _run_publish_timeframe_step(
             publish_entries=state.predict_watermarks,
         )
         predict_gate_reason = predict_decision.reason.value
+        prediction_self_heal = False
         if not predict_decision.should_run:
             cycle_predict_gate_skip_counts[predict_gate_reason] = (
                 cycle_predict_gate_skip_counts.get(predict_gate_reason, 0) + 1
             )
-            return
+            prediction_self_heal = (
+                predict_gate_reason
+                == PublishGateReason.UP_TO_DATE_INGEST_WATERMARK.value
+                and _canonical_static_export_missing("prediction", symbol, timeframe)
+                and _has_prediction_last_success(symbol, timeframe)
+            )
+            if not prediction_self_heal:
+                return
+            logger.warning(
+                f"[{symbol} {timeframe}] prediction artifact missing while "
+                f"publish gate skipped ({predict_gate_reason}); running self-heal prediction."
+            )
 
         prediction_outcome = run_prediction_and_save_outcome(
             write_api,
@@ -1981,7 +2060,7 @@ def _run_publish_timeframe_step(
             )
             return
 
-        if predict_decision.ingest_closed_at is not None:
+        if not prediction_self_heal and predict_decision.ingest_closed_at is not None:
             # prediction success/skip 이후에만 predict watermark를 전진시킨다.
             # 실패 시 cursor를 멈춰 다음 cycle에서 동일 입력 재시도를 허용한다.
             _upsert_watermark(

@@ -17,7 +17,9 @@
 3. Phase C(Scale and Ops) 완료 (2026-02-20)
 4. `R-005` 완료 (2026-02-19): SLA-lite baseline을 user plane availability 중심으로 고정
 5. `C-004` 완료 (2026-02-20): 학습 one-shot 실행 경계(`worker-train`) 잠금
-6. 현재 활성 구현 트랙은 Phase D(Model Evolution)이다.
+6. `D-018` 완료 (2026-02-21): `1d/1w/1M` direct fetch 단일 경로 전환 및 downsample/lineage 코드 비참조화
+7. `D-019` 완료 (2026-02-21): static 파일 self-heal + 장주기 full-fill/full-serving 정렬
+8. 현재 활성 구현 트랙은 Phase D(Model Evolution)이다.
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -81,20 +83,22 @@
 | D-015 | P2 | 학습 실행 관측성/알림 baseline | open | 학습 실행시간/성공-실패/최근성 메트릭과 장애 알림 기준이 운영 문서와 함께 반영됨 |
 | D-016 | P2 | `pipeline_worker.py` 상태 관리 분리(`worker_state.py`) | open | watermark/prediction_health/symbol_activation/runtime_metrics load/save/upsert가 `scripts/worker_state.py`로 이동, 회귀 테스트 통과 |
 | D-017 | P2 | `pipeline_worker.py` `_ctx()` 래퍼 패턴 해소 | open | 테스트가 `workers.*` 직접 참조로 전환되고 `_ctx()` 래퍼 함수 ~30개가 제거됨, 회귀 테스트 통과 |
-| D-018 | P1 | `1d/1w/1M` direct fetch 전환 (downsample 폐기) | open | `1d/1w/1M`이 거래소 direct fetch로 수집, downsample 코드/lineage 제거, 기존 InfluxDB downsample 데이터 삭제 후 재수집 완료, 회귀 테스트 통과 |
+| D-018 | P1 | `1d/1w/1M` direct fetch 전환 (downsample 폐기) | done (2026-02-21) | `run_ingest_step`가 timeframe 분기 없이 direct fetch로 고정되고 downsample/lineage 코드 참조가 제거되며, 회귀 테스트(`PYENV_VERSION=coin pytest -q`)가 통과함 |
+| D-019 | P1 | static 파일 self-heal + 장주기 full-fill/full-serving 정렬 | done (2026-02-21) | publish gate skip 상태에서도 canonical history 누락은 self-heal export, canonical prediction 누락은 `last_success_at` 존재 시 self-heal prediction을 수행하며, `1d/1w/1M` DB empty/state drift는 exchange earliest 기준 full-fill을 사용한다. 회귀 테스트(`PYENV_VERSION=coin pytest -q`) 통과 |
 
 > **Discussion Reference**: `docs/DISCUSSION_PHASE_D_AUDIT_2026-02-21.md`
 
 ## 3. Immediate Bundle (Revised 2026-02-21)
 1. `D-010` — min sample gate (완료됨)
-2. `D-018` — 1d/1w/1M direct fetch 전환
+2. `D-018` — 1d/1w/1M direct fetch 전환 (완료됨)
 3. `D-012` — 학습 데이터 SoT 정렬 + **Chunk 기반 OOM 방어 데이터 추출 메커니즘** (최우선)
 4. `D-001` — 모델 계약 명시화 (scope 축소)
 5. `D-002` — 메타데이터/버전 스키마
 
 ## 3.1 Cycle KPI (Locked 2026-02-21)
-1. `D-018` + `D-012` 완료
-2. 전체 회귀 통과: `PYENV_VERSION=coin pytest -q`
+1. `D-018` 완료
+2. `D-012` 완료
+3. 전체 회귀 통과: `PYENV_VERSION=coin pytest -q`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
