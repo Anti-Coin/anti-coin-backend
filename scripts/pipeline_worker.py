@@ -71,10 +71,6 @@ from scripts.worker_config import (  # noqa: F401
     DISK_WATERMARK_BLOCK_PERCENT,
     DISK_WATERMARK_CRITICAL_PERCENT,
     DISK_WATERMARK_WARN_PERCENT,
-    DOWNSAMPLE_LINEAGE_FILE,
-    DOWNSAMPLE_SOURCE_LOOKBACK_DAYS,
-    DOWNSAMPLE_SOURCE_TIMEFRAME,
-    DOWNSAMPLE_TARGET_TIMEFRAMES,
     EXPORT_WATERMARK_FILE,
     FULL_BACKFILL_TOLERANCE_HOURS,
     INGEST_STATE_FILE,
@@ -86,6 +82,7 @@ from scripts.worker_config import (  # noqa: F401
     LOOKBACK_DAYS,
     LOOKBACK_MIN_ROWS_RATIO,
     MANIFEST_FILE,
+    MIN_SAMPLE_BY_TIMEFRAME,
     MODELS_DIR,
     PREDICT_WATERMARK_FILE,
     PREDICTION_DISABLED_TIMEFRAMES,
@@ -99,6 +96,7 @@ from scripts.worker_config import (  # noqa: F401
     SERVE_ALLOWED_STATUSES,
     STATIC_DIR,
     SYMBOL_ACTIVATION_FILE,
+    SYMBOL_ACTIVATION_SOURCE_TIMEFRAME,
     TARGET_COINS,
     TIMEFRAMES,
     VALID_WORKER_EXECUTION_ROLES,
@@ -993,153 +991,6 @@ def get_lookback_close_count(
 # scripts.worker_guards로 이동. import를 통해 이 모듈 네임스페이스에 재노출.
 
 
-def _load_downsample_lineage(
-    path: Path | None = None,
-) -> dict[str, dict]:
-    """
-    downsample lineage 파일 로드.
-
-    Called from:
-    - upsert_downsample_lineage
-    """
-    resolved_path = path or DOWNSAMPLE_LINEAGE_FILE
-    if not resolved_path.exists():
-        return {}
-
-    try:
-        with open(resolved_path, "r") as f:
-            payload = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        logger.error(f"Failed to load downsample lineage file: {e}")
-        return {}
-
-    entries = payload.get("entries")
-    if not isinstance(entries, dict):
-        logger.error("Invalid downsample lineage format: entries is not a dict.")
-        return {}
-    return entries
-
-
-def _save_downsample_lineage(
-    entries: dict[str, dict],
-    path: Path | None = None,
-) -> None:
-    """
-    downsample lineage 파일 저장.
-
-    Called from:
-    - upsert_downsample_lineage
-    """
-    resolved_path = path or DOWNSAMPLE_LINEAGE_FILE
-    payload = {
-        "version": 1,
-        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "entries": entries,
-    }
-    atomic_write_json(resolved_path, payload, indent=2)
-
-
-def upsert_downsample_lineage(
-    *,
-    symbol: str,
-    target_timeframe: str,
-    source_timeframe: str,
-    source_rows: int,
-    total_buckets: int,
-    complete_buckets: int,
-    incomplete_buckets: int,
-    last_bucket_open: datetime | None,
-    status: str,
-    path: Path | None = None,
-) -> None:
-    """
-    심볼/타임프레임별 downsample lineage 스냅샷을 갱신한다.
-
-    Called from:
-    - workers.ingest.run_downsample_and_save
-    """
-    entries = _load_downsample_lineage(path=path)
-    key = _prediction_health_key(symbol, target_timeframe)
-    now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    entries[key] = {
-        "symbol": symbol,
-        "timeframe": target_timeframe,
-        "source_timeframe": source_timeframe,
-        "source_rows": source_rows,
-        "total_buckets": total_buckets,
-        "complete_buckets": complete_buckets,
-        "incomplete_buckets": incomplete_buckets,
-        "last_bucket_open": (
-            last_bucket_open.strftime("%Y-%m-%dT%H:%M:%SZ")
-            if last_bucket_open is not None
-            else None
-        ),
-        "status": status,
-        "updated_at": now_utc,
-    }
-    _save_downsample_lineage(entries, path=path)
-
-
-def _query_ohlcv_frame(
-    query_api,
-    *,
-    symbol: str,
-    timeframe: str,
-    lookback_days: int,
-) -> pd.DataFrame:
-    """
-    downsample source 조회 래퍼.
-
-    Called from:
-    - run_downsample_and_save wrapper 경유 테스트/호환 경로
-    """
-    return ingest_ops.query_ohlcv_frame(
-        _ctx(),
-        query_api,
-        symbol=symbol,
-        timeframe=timeframe,
-        lookback_days=lookback_days,
-    )
-
-
-def downsample_ohlcv_frame(
-    source_df: pd.DataFrame,
-    *,
-    target_timeframe: str,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    downsample 집계 래퍼.
-
-    Called from:
-    - run_downsample_and_save wrapper 경유 테스트/호환 경로
-    """
-    return ingest_ops.downsample_ohlcv_frame(
-        _ctx(), source_df, target_timeframe=target_timeframe
-    )
-
-
-def run_downsample_and_save(
-    write_api,
-    query_api,
-    *,
-    symbol: str,
-    target_timeframe: str,
-) -> tuple[datetime | None, str]:
-    """
-    derived timeframe materialization 래퍼.
-
-    Called from:
-    - run_ingest_step
-    """
-    return ingest_ops.run_downsample_and_save(
-        _ctx(),
-        write_api,
-        query_api,
-        symbol=symbol,
-        target_timeframe=target_timeframe,
-    )
-
-
 def run_ingest_step(
     write_api,
     query_api,
@@ -1149,17 +1000,8 @@ def run_ingest_step(
     since: datetime | None,
 ) -> tuple[datetime | None, str]:
     """
-    timeframe routing boundary:
-    - base timeframe(`1m`,`1h`): exchange ingest
-    - derived timeframe(`1d`,`1w`,`1M`): downsample materialization only
+    모든 timeframe ingest를 direct exchange fetch 경로로 실행한다.
     """
-    if timeframe in DOWNSAMPLE_TARGET_TIMEFRAMES:
-        return run_downsample_and_save(
-            write_api,
-            query_api,
-            symbol=symbol,
-            target_timeframe=timeframe,
-        )
     return fetch_and_save(write_api, symbol, since, timeframe)
 
 
@@ -1530,18 +1372,35 @@ def _refill_detected_gaps(
     )
 
 
-def run_prediction_and_save(write_api, symbol, timeframe) -> tuple[str, str | None]:
+def count_ohlcv_rows(query_api, *, symbol: str, timeframe: str) -> int:
+    """
+    OHLCV 총 행 수 조회 래퍼.
+
+    Called from:
+    - workers.predict.run_prediction_and_save (D-010 min sample gate)
+    """
+    return ingest_ops.count_ohlcv_rows(
+        _ctx(), query_api, symbol=symbol, timeframe=timeframe
+    )
+
+
+def run_prediction_and_save(
+    write_api, query_api, symbol, timeframe
+) -> tuple[str, str | None]:
     """
     prediction 실행 래퍼.
 
     Called from:
     - run_worker() predict stage
     """
-    return predict_ops.run_prediction_and_save(_ctx(), write_api, symbol, timeframe)
+    return predict_ops.run_prediction_and_save(
+        _ctx(), write_api, query_api, symbol, timeframe
+    )
 
 
 def run_prediction_and_save_outcome(
     write_api,
+    query_api,
     symbol: str,
     timeframe: str,
 ) -> PredictionExecutionOutcome:
@@ -1550,6 +1409,7 @@ def run_prediction_and_save_outcome(
     """
     raw_result, prediction_error = run_prediction_and_save(
         write_api,
+        query_api,
         symbol,
         timeframe,
     )
@@ -1704,7 +1564,7 @@ def _prepare_symbol_activation_for_cycle(
         exchange_earliest = get_exchange_earliest_closed_timestamp(
             activation_exchange,
             symbol,
-            DOWNSAMPLE_SOURCE_TIMEFRAME,
+            SYMBOL_ACTIVATION_SOURCE_TIMEFRAME,
             now=cycle_now,
         )
         activation = build_symbol_activation_entry(
@@ -1777,12 +1637,12 @@ def _evaluate_boundary_detection_gate(
             f"[{symbol} {timeframe}] detection gate skip " f"(reason={gate_reason})"
         )
         if (
-            gate_reason == DetectionGateReason.ALREADY_MATERIALIZED.value
+            gate_reason == DetectionGateReason.NO_NEW_CLOSED_CANDLE.value
+            and timeframe in {"1d", "1w", "1M"}
             and last_time is not None
         ):
-            # derived TF가 이미 materialized된 경우,
-            # ingest는 skip하더라도 ingest watermark를 DB latest로 동기화해
-            # publish gate(export/predict catch-up)가 정체되지 않도록 한다.
+            # 장주기 TF는 boundary 시점에 거래소 최신 봉이 없을 때도
+            # DB latest를 ingest watermark에 동기화해 publish starvation을 방지한다.
             _upsert_watermark(
                 state.ingest_watermarks,
                 symbol=symbol,
@@ -1791,7 +1651,7 @@ def _evaluate_boundary_detection_gate(
             )
             logger.info(
                 f"[{symbol} {timeframe}] synced ingest watermark from "
-                f"already_materialized gate: {_format_utc(last_time)}"
+                f"no_new_closed_candle gate: {_format_utc(last_time)}"
             )
             return False, True
         return False, False
@@ -1908,10 +1768,12 @@ def _run_ingest_timeframe_step(
         disk_level=disk_level.value,
         force_rebootstrap=force_rebootstrap,
         bootstrap_since=(
-            exchange_earliest if timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME else None
+            exchange_earliest
+            if timeframe == SYMBOL_ACTIVATION_SOURCE_TIMEFRAME
+            else None
         ),
         enforce_full_backfill=(
-            timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
+            timeframe == SYMBOL_ACTIVATION_SOURCE_TIMEFRAME
             and symbol_activation.visibility == SymbolVisibility.HIDDEN_BACKFILLING
         ),
         now=cycle_now,
@@ -1994,7 +1856,7 @@ def _run_ingest_timeframe_step(
         )
 
     if (
-        timeframe == DOWNSAMPLE_SOURCE_TIMEFRAME
+        timeframe == SYMBOL_ACTIVATION_SOURCE_TIMEFRAME
         and symbol_activation.visibility == SymbolVisibility.HIDDEN_BACKFILLING
     ):
         refreshed_activation = build_symbol_activation_entry(
@@ -2099,6 +1961,7 @@ def _run_publish_timeframe_step(
 
         prediction_outcome = run_prediction_and_save_outcome(
             write_api,
+            query_api,
             symbol,
             timeframe,
         )

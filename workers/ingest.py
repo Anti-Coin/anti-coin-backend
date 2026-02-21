@@ -1,11 +1,10 @@
 """
-Ingest/downsample domain logic.
+Ingest domain logic.
 
 Why this module exists:
 - `scripts.pipeline_worker`는 orchestration에 집중하고,
   실제 ingest 계산/판정은 여기로 모아 변경 영향 범위를 축소한다.
-- derived timeframe(`1d`,`1w`,`1M`)은 canonical source(`1h`)에서만 파생해
-  데이터 lineage와 재현성을 유지한다.
+- 모든 timeframe을 거래소 direct fetch로 수집해 ingest 경로를 단순화한다.
 """
 
 from __future__ import annotations
@@ -23,268 +22,37 @@ from utils.pipeline_contracts import (
 )
 
 
-def query_ohlcv_frame(
-    ctx,
-    query_api,
-    *,
-    symbol: str,
-    timeframe: str,
-    lookback_days: int,
-) -> pd.DataFrame:
+def count_ohlcv_rows(ctx, query_api, *, symbol: str, timeframe: str) -> int:
     """
-    downsample source frame을 InfluxDB에서 조회하고 표준 OHLCV DataFrame으로 정규화한다.
+    symbol+timeframe의 OHLCV 총 행 수를 반환한다.
 
     Called from:
-    - `run_downsample_and_save` (derived materialization 단계)
+    - `scripts.pipeline_worker.count_ohlcv_rows` (D-010 min sample gate)
 
     Why:
-    - source 스키마를 이 함수에서 강제해 집계 경로를 deterministic하게 유지한다.
+    - 예측 실행 전 최소 샘플 수 충족 여부를 판단하기 위한 전제 데이터.
     """
     query = f"""
     from(bucket: "{ctx.INFLUXDB_BUCKET}")
-      |> range(start: -{lookback_days}d)
+      |> range(start: 0)
       |> filter(fn: (r) => r["_measurement"] == "ohlcv")
       |> filter(fn: (r) => r["symbol"] == "{symbol}")
       |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
-      |> pivot(rowKey:["_time"], columnKey: ["_field"], valueColumn: "_value")
-      |> sort(columns: ["_time"], desc: false)
+      |> filter(fn: (r) => r["_field"] == "close")
+      |> count()
     """
-    result = query_api.query_data_frame(query)
-    if isinstance(result, list):
-        frames = [
-            frame
-            for frame in result
-            if isinstance(frame, pd.DataFrame) and not frame.empty
-        ]
-        if not frames:
-            return pd.DataFrame()
-        df = pd.concat(frames, ignore_index=True)
-    else:
-        df = result
-
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        return pd.DataFrame()
-
-    required = {"_time", "open", "high", "low", "close", "volume"}
-    if not required.issubset(df.columns):
-        missing = sorted(required - set(df.columns))
-        ctx.logger.error(
-            f"[{symbol} {timeframe}] Downsample source columns missing: {missing}"
-        )
-        return pd.DataFrame()
-
-    source = df[list(required)].copy()
-    source.rename(columns={"_time": "timestamp"}, inplace=True)
-    source["timestamp"] = pd.to_datetime(source["timestamp"], utc=True)
-    source.drop_duplicates(subset=["timestamp"], keep="last", inplace=True)
-    source.sort_values(by="timestamp", inplace=True)
-    source.set_index("timestamp", inplace=True)
-    return source[["open", "high", "low", "close", "volume"]]
-
-
-def _downsample_rule(timeframe: str) -> str:
-    """
-    내부 timeframe 식별자를 pandas resample rule로 매핑한다.
-
-    Called from:
-    - `downsample_ohlcv_frame`
-
-    Why:
-    - 집계 규칙을 한 곳에 고정해 정책/코드 불일치를 방지한다.
-    """
-    if timeframe == "1d":
-        return "1D"
-    if timeframe == "1w":
-        return "1W-MON"
-    if timeframe == "1M":
-        return "1MS"
-    raise ValueError(f"Unsupported downsample target timeframe: {timeframe}")
-
-
-def _expected_source_count(
-    ctx, bucket_open: datetime, target_timeframe: str
-) -> int:
-    """
-    target bucket 완성에 필요한 source(1h) candle 개수를 계산한다.
-
-    Called from:
-    - `downsample_ohlcv_frame`
-
-    Why:
-    - complete/incomplete bucket 분리를 위해 기대 개수를 명시적으로 계산한다.
-    """
-    next_boundary = ctx.next_timeframe_boundary(bucket_open, target_timeframe)
-    step_seconds = int((next_boundary - bucket_open).total_seconds())
-    if step_seconds <= 0:
+    try:
+        tables = query_api.query(query)
+    except Exception as e:
+        ctx.logger.error(f"[{symbol} {timeframe}] sample count query failed: {e}")
         return 0
-    return step_seconds // 3600
-
-
-def downsample_ohlcv_frame(
-    ctx,
-    source_df: pd.DataFrame,
-    *,
-    target_timeframe: str,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    source(1h) 데이터를 target timeframe으로 집계해 complete/incomplete를 분리한다.
-
-    Called from:
-    - `run_downsample_and_save`
-
-    Why:
-    - incomplete bucket을 저장하지 않기 위해 집계와 완전성 판정을 함께 수행한다.
-    """
-    if source_df.empty:
-        return pd.DataFrame(), pd.DataFrame()
-
-    grouped = source_df.resample(
-        _downsample_rule(target_timeframe), label="left", closed="left"
-    )
-    aggregated = grouped.agg(
-        {
-            "open": "first",
-            "high": "max",
-            "low": "min",
-            "close": "last",
-            "volume": "sum",
-        }
-    )
-    counts = grouped["open"].count().rename("source_count")
-    aggregated = aggregated.join(counts)
-    aggregated.dropna(subset=["open", "high", "low", "close"], inplace=True)
-    if aggregated.empty:
-        return pd.DataFrame(), pd.DataFrame()
-
-    expected = [
-        _expected_source_count(
-            ctx,
-            bucket_open.to_pydatetime().astimezone(timezone.utc),
-            target_timeframe,
-        )
-        for bucket_open in aggregated.index
-    ]
-    aggregated["expected_count"] = expected
-    complete = aggregated[
-        aggregated["source_count"] == aggregated["expected_count"]
-    ].copy()
-    incomplete = aggregated[
-        aggregated["source_count"] != aggregated["expected_count"]
-    ].copy()
-
-    return (
-        complete[["open", "high", "low", "close", "volume"]],
-        incomplete[
-            [
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume",
-                "source_count",
-                "expected_count",
-            ]
-        ],
-    )
-
-
-def run_downsample_and_save(
-    ctx,
-    write_api,
-    query_api,
-    *,
-    symbol: str,
-    target_timeframe: str,
-) -> tuple[datetime | None, str]:
-    """
-    derived timeframe materialization 전체를 실행한다.
-
-    Called from:
-    - `scripts.pipeline_worker.run_ingest_step` (timeframe이 derived일 때)
-
-    Why:
-    - direct ingest 대신 downsample 경로를 강제해 데이터 정합성을 보존한다.
-
-    Lineage example key:
-    - BTC/USDT|1d
-    - fields: source_rows, total_buckets, complete_buckets, incomplete_buckets,
-      last_bucket_open, status
-    - status=ok 이어도 incomplete_buckets>0 일 수 있으며, 이 경우 complete bucket만 저장한다.
-    """
-    if target_timeframe not in ctx.DOWNSAMPLE_TARGET_TIMEFRAMES:
-        return None, "unsupported"
-
-    source_df = query_ohlcv_frame(
-        ctx,
-        query_api,
-        symbol=symbol,
-        timeframe=ctx.DOWNSAMPLE_SOURCE_TIMEFRAME,
-        lookback_days=ctx.DOWNSAMPLE_SOURCE_LOOKBACK_DAYS,
-    )
-    if source_df.empty:
-        # source 자체가 비어 있으면 lineage를 no_source_data로 남기고 종료한다.
-        ctx.upsert_downsample_lineage(
-            symbol=symbol,
-            target_timeframe=target_timeframe,
-            source_timeframe=ctx.DOWNSAMPLE_SOURCE_TIMEFRAME,
-            source_rows=0,
-            total_buckets=0,
-            complete_buckets=0,
-            incomplete_buckets=0,
-            last_bucket_open=None,
-            status="no_source_data",
-        )
-        return None, "no_data"
-
-    complete_df, incomplete_df = downsample_ohlcv_frame(
-        ctx, source_df, target_timeframe=target_timeframe
-    )
-    last_bucket_open = (
-        complete_df.index[-1].to_pydatetime().astimezone(timezone.utc)
-        if not complete_df.empty
-        else None
-    )
-
-    ctx.upsert_downsample_lineage(
-        symbol=symbol,
-        target_timeframe=target_timeframe,
-        source_timeframe=ctx.DOWNSAMPLE_SOURCE_TIMEFRAME,
-        source_rows=len(source_df),
-        total_buckets=len(complete_df) + len(incomplete_df),
-        complete_buckets=len(complete_df),
-        incomplete_buckets=len(incomplete_df),
-        last_bucket_open=last_bucket_open,
-        status="ok" if not complete_df.empty else "incomplete_only",
-    )
-
-    if not incomplete_df.empty:
-        # incomplete bucket은 저장하지 않는다.
-        # (예: 1d bucket이 24개 1h candle을 채우지 못한 경우)
-        ctx.logger.warning(
-            f"[{symbol} {target_timeframe}] Downsample incomplete buckets: "
-            f"{len(incomplete_df)}"
-        )
-
-    if complete_df.empty:
-        # lineage는 남았지만 저장 가능한 complete bucket이 없다는 뜻이다.
-        return None, "no_data"
-
-    export_df = complete_df.copy()
-    export_df["symbol"] = symbol
-    export_df["timeframe"] = target_timeframe
-    write_api.write(
-        bucket=ctx.INFLUXDB_BUCKET,
-        org=ctx.INFLUXDB_ORG,
-        record=export_df,
-        data_frame_measurement_name="ohlcv",
-        data_frame_tag_columns=["symbol", "timeframe"],
-    )
-    ctx.logger.info(
-        f"[{symbol} {target_timeframe}] Downsample saved "
-        f"(source_rows={len(source_df)}, complete={len(complete_df)}, "
-        f"incomplete={len(incomplete_df)})"
-    )
-    return last_bucket_open, "saved"
+    for table in tables:
+        for record in table.records:
+            try:
+                return int(record.get_value())
+            except (TypeError, ValueError):
+                return 0
+    return 0
 
 
 def fetch_ohlcv_paginated(
@@ -312,9 +80,7 @@ def fetch_ohlcv_paginated(
     chunks: list[pd.DataFrame] = []
 
     while cursor <= until_ms:
-        ohlcv = exchange.fetch_ohlcv(
-            symbol, timeframe, since=cursor, limit=fetch_limit
-        )
+        ohlcv = exchange.fetch_ohlcv(symbol, timeframe, since=cursor, limit=fetch_limit)
         if not ohlcv:
             break
 
@@ -372,8 +138,7 @@ def detect_gaps_from_ms_timestamps(
     - 수집 누락을 즉시 감지해 silent hole을 줄이기 위함이다.
     """
     candle_opens = [
-        datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc)
-        for ts in timestamps_ms
+        datetime.fromtimestamp(int(ts) / 1000, tz=timezone.utc) for ts in timestamps_ms
     ]
     return ctx.detect_timeframe_gaps(candle_opens, timeframe)
 
@@ -505,18 +270,16 @@ def fetch_and_save(
                 timeframe=timeframe,
             )
             if remaining_gaps:
-                remaining_missing = sum(
-                    gap.missing_count for gap in remaining_gaps
-                )
+                remaining_missing = sum(gap.missing_count for gap in remaining_gaps)
                 ctx.logger.warning(
                     f"[{symbol} {timeframe}] Gap 잔존: windows={len(remaining_gaps)}, missing={remaining_missing}"
                 )
             else:
                 ctx.logger.info(f"[{symbol} {timeframe}] Gap refill 완료.")
 
-        df["timestamp"] = pd.to_datetime(
-            df["timestamp"], unit="ms"
-        ).dt.tz_localize("UTC")
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms").dt.tz_localize(
+            "UTC"
+        )
         df.set_index("timestamp", inplace=True)
         df["symbol"] = symbol
         df["timeframe"] = timeframe
@@ -576,7 +339,7 @@ def resolve_ingest_since(
     resolved_now = now or datetime.now(timezone.utc)
     if (
         enforce_full_backfill
-        and timeframe == ctx.DOWNSAMPLE_SOURCE_TIMEFRAME
+        and timeframe == ctx.SYMBOL_ACTIVATION_SOURCE_TIMEFRAME
         and bootstrap_since is not None
     ):
         # hidden_backfilling 상태에서는 canonical 1h를 거래소 earliest부터 강제 수집한다.
@@ -629,7 +392,7 @@ def resolve_ingest_since(
         return None, "blocked_storage_guard"
 
     if (
-        timeframe == ctx.DOWNSAMPLE_SOURCE_TIMEFRAME
+        timeframe == ctx.SYMBOL_ACTIVATION_SOURCE_TIMEFRAME
         and bootstrap_since is not None
     ):
         # canonical 1h + exchange earliest가 있으면 lookback보다 earliest를 우선한다.
@@ -695,9 +458,7 @@ def get_lookback_close_count(
     try:
         result = query_api.query(query=query)
     except Exception as e:
-        ctx.logger.error(
-            f"[{symbol} {timeframe}] lookback count query failed: {e}"
-        )
+        ctx.logger.error(f"[{symbol} {timeframe}] lookback count query failed: {e}")
         return None
 
     if not result:
@@ -778,9 +539,7 @@ def get_first_timestamp(
             first_time = ctx._query_first_timestamp(query_api, legacy_query)
         return first_time
     except Exception as e:
-        ctx.logger.error(
-            f"[{symbol} {timeframe}] DB earliest 조회 중 에러: {e}"
-        )
+        ctx.logger.error(f"[{symbol} {timeframe}] DB earliest 조회 중 에러: {e}")
         return None
 
 
@@ -866,9 +625,7 @@ def get_exchange_earliest_closed_timestamp(
         return None
 
     try:
-        first_open = datetime.fromtimestamp(
-            int(rows[0][0]) / 1000, tz=timezone.utc
-        )
+        first_open = datetime.fromtimestamp(int(rows[0][0]) / 1000, tz=timezone.utc)
     except (TypeError, ValueError):
         return None
 
@@ -891,15 +648,13 @@ def get_exchange_latest_closed_timestamp(
     거래소 latest *closed* candle open을 조회한다.
 
     Called from:
-    - `evaluate_detection_gate` (base timeframe)
+    - `evaluate_detection_gate`
 
     Why:
     - open candle을 포함하면 detection gate가 중복 실행/오판을 유발할 수 있다.
     """
     resolved_now = now or datetime.now(timezone.utc)
-    expected_latest_closed = ctx.last_closed_candle_open(
-        resolved_now, timeframe
-    )
+    expected_latest_closed = ctx.last_closed_candle_open(resolved_now, timeframe)
     try:
         rows = exchange.fetch_ohlcv(symbol, timeframe, limit=3)
     except Exception as e:
@@ -911,9 +666,7 @@ def get_exchange_latest_closed_timestamp(
     latest_closed: datetime | None = None
     for row in rows:
         try:
-            open_at = datetime.fromtimestamp(
-                int(row[0]) / 1000, tz=timezone.utc
-            )
+            open_at = datetime.fromtimestamp(int(row[0]) / 1000, tz=timezone.utc)
         except (TypeError, ValueError, IndexError):
             continue
 
@@ -945,24 +698,6 @@ def evaluate_detection_gate(
     - boundary + detection 하이브리드 정책에서 불필요 cycle을 줄이면서
       경계 정합성을 유지하기 위한 핵심 게이트다.
     """
-    if timeframe in ctx.DOWNSAMPLE_TARGET_TIMEFRAMES:
-        expected_latest_closed = ctx.last_closed_candle_open(now, timeframe)
-        target_last = ctx.get_last_timestamp(
-            query_api,
-            symbol,
-            timeframe,
-            full_range=True,
-        )
-        if target_last is not None and target_last >= expected_latest_closed:
-            return DetectionGateDecision(
-                should_run=False,
-                reason=DetectionGateReason.ALREADY_MATERIALIZED,
-            )
-        return DetectionGateDecision(
-            should_run=True,
-            reason=DetectionGateReason.MATERIALIZATION_DUE,
-        )
-
     latest_closed = ctx.get_exchange_latest_closed_timestamp(
         detection_exchange,
         symbol,
@@ -1009,11 +744,9 @@ def build_symbol_activation_entry(
     Why:
     - full-backfill 완료 전 심볼 비노출 정책을 코드 레벨에서 강제하기 위함이다.
     """
-    canonical_tf = ctx.DOWNSAMPLE_SOURCE_TIMEFRAME
+    canonical_tf = ctx.SYMBOL_ACTIVATION_SOURCE_TIMEFRAME
     db_first = ctx.get_first_timestamp(query_api, symbol, canonical_tf)
-    db_last = ctx.get_last_timestamp(
-        query_api, symbol, canonical_tf, full_range=True
-    )
+    db_last = ctx.get_last_timestamp(query_api, symbol, canonical_tf, full_range=True)
 
     if isinstance(existing_entry, SymbolActivationSnapshot):
         prev_entry = existing_entry

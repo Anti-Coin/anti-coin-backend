@@ -36,14 +36,12 @@ TARGET_COINS = TARGET_SYMBOLS
 TIMEFRAMES = INGEST_TIMEFRAMES if INGEST_TIMEFRAMES else [PRIMARY_TIMEFRAME]
 LOOKBACK_DAYS = 30  # 과거 30일치 데이터 유지
 # PRIMARY_TIMEFRAME은 utils.config에서 가져오되, 여기서도 재노출한다.
-# 이유: pipeline_worker 모듈 속성으로 테스트가 monkeypatch하기 때문이다.
 PRIMARY_TIMEFRAME = PRIMARY_TIMEFRAME
 
 # ── State file paths ──
 INGEST_STATE_FILE = STATIC_DIR / "ingest_state.json"
 PREDICTION_HEALTH_FILE = STATIC_DIR / "prediction_health.json"
 MANIFEST_FILE = STATIC_DIR / "manifest.json"
-DOWNSAMPLE_LINEAGE_FILE = STATIC_DIR / "downsample_lineage.json"
 RUNTIME_METRICS_FILE = STATIC_DIR / "runtime_metrics.json"
 SYMBOL_ACTIVATION_FILE = STATIC_DIR / "symbol_activation.json"
 INGEST_WATERMARK_FILE = STATIC_DIR / "ingest_watermarks.json"
@@ -67,10 +65,9 @@ DISK_WATERMARK_BLOCK_PERCENT = 90
 DISK_USAGE_PATH = Path(os.getenv("DISK_USAGE_PATH", "/"))
 RETENTION_ENFORCE_INTERVAL_SECONDS = 60 * 60
 
-# ── Downsample ──
-DOWNSAMPLE_TARGET_TIMEFRAMES = {"1d", "1w", "1M"}
-DOWNSAMPLE_SOURCE_TIMEFRAME = "1h"
-DOWNSAMPLE_SOURCE_LOOKBACK_DAYS = 120
+# ── Symbol activation policy ──
+# full-first onboarding canonical source timeframe.
+SYMBOL_ACTIVATION_SOURCE_TIMEFRAME = "1h"
 
 # ── Backfill ──
 FULL_BACKFILL_TOLERANCE_HOURS = 1
@@ -81,6 +78,14 @@ RUNTIME_METRICS_WINDOW_SIZE = int(os.getenv("RUNTIME_METRICS_WINDOW_SIZE", "240"
 
 # ── Coverage guard ──
 LOOKBACK_MIN_ROWS_RATIO = float(os.getenv("LOOKBACK_MIN_ROWS_RATIO", "0.8"))
+
+# ── Min sample gate (D-010, TIMEFRAME_POLICY_MATRIX §7.3) ──
+MIN_SAMPLE_BY_TIMEFRAME: dict[str, int] = {
+    "1h": 240,
+    "1d": 120,
+    "1w": 52,
+    "1M": 24,
+}
 
 # ── Scheduler ──
 WORKER_SCHEDULER_MODE = os.getenv("WORKER_SCHEDULER_MODE", "boundary").strip().lower()

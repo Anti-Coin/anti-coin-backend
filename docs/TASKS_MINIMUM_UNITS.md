@@ -64,28 +64,37 @@
 ### Phase D (Model Evolution) - Active
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
-| D-001 | P1 | 모델 인터페이스 정의(`fit/predict/save/load`) | open | 기존 모델 호환 인터페이스 경유 |
+| D-001 | P1 | 모델 계약 명시화(`fit/predict/save/load` 입출력 계약 문서화) | open | 현재 Prophet 경로의 계약이 문서/테스트로 고정됨 (추상 인터페이스가 아닌 계약 수준) |
 | D-002 | P1 | 모델 메타데이터/버전 스키마 정의 | open | 버전/학습시간/데이터 범위 기록 |
-| D-003 | P1 | Shadow 추론 파이프라인 도입 | open | shadow 결과 생성, 사용자 서빙 미반영 |
+| D-003 | P1 | Shadow 추론 파이프라인 도입 | open | shadow 결과 생성, 사용자 서빙 미반영. **분해 예정**(D-003a: Shadow 실행 경로, D-003b: Shadow 결과 저장, D-003c: 격리 보장) |
 | D-004 | P1 | Champion vs Shadow 평가 리포트 | open | 최소 1개 지표 일별 산출 |
 | D-005 | P1 | 승격 게이트 정책 구현 | open | 게이트 미달 시 승격 차단 |
 | D-006 | P2 | 자동 재학습 잡(수동 트리거) | open | 운영자 수동 재학습 가능 |
 | D-007 | P2 | 자동 재학습 스케줄링 | open | 설정 기반 주기 재학습 가능 |
 | D-008 | P2 | 모델 롤백 절차/코드 추가 | open | 이전 champion 복귀 가능 |
 | D-009 | P2 | Drift 알림 연동 | open | 임계 초과 시 경고 발송 |
-| D-010 | P1 | 장기 timeframe 최소 샘플 gate 구현 | open | 최소 샘플 미달 TF는 `insufficient_data`로 표시하고 예측 서빙 차단 |
-| D-011 | P1 | Model Coverage Matrix + Fallback Resolver 구현 | open | `dedicated -> shared -> insufficient_data` fallback 체인이 코드/메타데이터/테스트로 검증됨 |
-| D-012 | P1 | 학습 데이터 SoT 정렬(Influx 기반 closed-candle snapshot) | open | 학습 입력이 Influx SoT 기준으로 고정되고 직접 exchange fetch 경로가 학습 코드에서 제거됨 |
+| D-010 | **P0** | 장기 timeframe 최소 샘플 gate 구현 | **done (2026-02-21)** | `MIN_SAMPLE_BY_TIMEFRAME` config + `count_ohlcv_rows` query + `run_prediction_and_save` gate 삽입, 회귀 테스트 140 passed |
+| D-011 | P3 (Hold) | Model Coverage Matrix + Fallback Resolver 구현 | open | (보류) Dedicated 승격 정책 대신 일단 단일 Shared 모델 서빙만 유지. `shared -> insufficient_data`만 코드/검증 |
+| D-012 | **P0** | 학습 데이터 SoT 정렬 + Chunk 기반 추출 안전장치 (OOM 방지) | open | 학습 입력이 Influx SoT 기준으로 고정되고, 데이터를 한 번에 메모리에 올리지 않도록 `chunk/pagination` 기반으로 로컬 디스크(Parquet 등)에 덤프하는 방어벽 구현 |
 | D-013 | P1 | 재학습 트리거 정책 정의(시간+이벤트) | open | 재학습 trigger matrix(시간 주기, candle 누적, 드리프트 신호)와 cooldown 정책이 문서/코드로 고정됨 |
 | D-014 | P1 | 학습 실행 no-overlap/락 가드 | open | 학습 동시 실행 차단, stale lock 복구 규칙, 회귀 테스트가 고정됨 |
 | D-015 | P2 | 학습 실행 관측성/알림 baseline | open | 학습 실행시간/성공-실패/최근성 메트릭과 장애 알림 기준이 운영 문서와 함께 반영됨 |
-| D-016 | P2 | `pipeline_worker.py` 상태 관리 분리(`worker_state.py`) | open | watermark/prediction_health/symbol_activation/downsample_lineage/runtime_metrics load/save/upsert가 `scripts/worker_state.py`로 이동, 회귀 테스트 통과 |
+| D-016 | P2 | `pipeline_worker.py` 상태 관리 분리(`worker_state.py`) | open | watermark/prediction_health/symbol_activation/runtime_metrics load/save/upsert가 `scripts/worker_state.py`로 이동, 회귀 테스트 통과 |
 | D-017 | P2 | `pipeline_worker.py` `_ctx()` 래퍼 패턴 해소 | open | 테스트가 `workers.*` 직접 참조로 전환되고 `_ctx()` 래퍼 함수 ~30개가 제거됨, 회귀 테스트 통과 |
+| D-018 | P1 | `1d/1w/1M` direct fetch 전환 (downsample 폐기) | open | `1d/1w/1M`이 거래소 direct fetch로 수집, downsample 코드/lineage 제거, 기존 InfluxDB downsample 데이터 삭제 후 재수집 완료, 회귀 테스트 통과 |
 
-## 3. Immediate Bundle
-1. `D-001`
-2. `D-002`
-3. `D-012`
+> **Discussion Reference**: `docs/DISCUSSION_PHASE_D_AUDIT_2026-02-21.md`
+
+## 3. Immediate Bundle (Revised 2026-02-21)
+1. `D-010` — min sample gate (완료됨)
+2. `D-018` — 1d/1w/1M direct fetch 전환
+3. `D-012` — 학습 데이터 SoT 정렬 + **Chunk 기반 OOM 방어 데이터 추출 메커니즘** (최우선)
+4. `D-001` — 모델 계약 명시화 (scope 축소)
+5. `D-002` — 메타데이터/버전 스키마
+
+## 3.1 Cycle KPI (Locked 2026-02-21)
+1. `D-018` + `D-012` 완료
+2. 전체 회귀 통과: `PYENV_VERSION=coin pytest -q`
 
 ## 4. Operating Rules
 1. Task 시작 시 Assignee/ETA/Risk를 기록한다.
