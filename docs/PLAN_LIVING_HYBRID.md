@@ -41,23 +41,23 @@
 4. stale 장기 지속 승격(`*_escalated`)과 runbook이 운영 기본 절차로 반영됐다.
 5. 상세 증거/변경 이력은 `docs/archive/phase_c/*`를 단일 출처로 사용한다.
 
-## 4.2 Phase D Model Coverage Baseline (Locked)
-1. 기본 커버리지는 `timeframe-shared champion`으로 시작한다(전 심볼 공통).
-2. `symbol+timeframe dedicated`는 기본값이 아니라 승격 결과로만 도입한다.
-3. dedicated 승격 조건:
-   - 최소 샘플/평가 구간 게이트 통과
-   - shared 대비 성능 개선 증거 확보
-   - 학습/추론 비용이 운영 예산 범위 내
-4. serving fallback 체인:
-   - dedicated -> shared -> `insufficient_data` 차단
-5. dedicated 실패를 shared로 조용히 대체하지 않는다. 실패 상태/사유를 노출해 운영 정직성을 유지한다.
-6. 관련 정책 상세는 `D-2026-02-13-32`, 구현 단위는 `D-011`에서 관리한다.
+## 4.2 Phase D Model Coverage Baseline (Locked to Shared Champion)
+1. 기본 커버리지는 `timeframe-shared champion` 글로벌 단일 모델로 시작하며 이를 유지한다(전 심볼 공통).
+2. `symbol+timeframe dedicated` 승격/관리는 당분간 **보류(Hold)**한다. 오라클 프리 티어(ARM)의 물리적 한계(RAM)와 운영 복잡도를 고려해, 단일 모델 기반 파이프라인의 안전성부터 확보한다.
+3. serving fallback 체인:
+   - shared -> `insufficient_data` 차단
+4. dedicated 기능은 추후 인프라가 확장 가능하거나 OOM 리스크가 완벽히 제어되었을 때만 재검토한다.
+5. 관련 정책 상세는 `D-2026-02-13-32`, 구현 단위는 `D-011`에서 관리하되, `D-011`의 우선순위를 조정한다.
 
 ## 5. Next Cycle (Recommended)
-1. `D-001` 수행: 모델 인터페이스 계약(`fit/predict/save/load`) 고정
-2. `D-002` 수행: 모델 메타데이터/버전 스키마 정의
-3. `D-012` 수행: 학습 데이터 SoT 정렬(Influx 기반 closed-candle snapshot)
-4. `D-013` 수행: 재학습 트리거 정책 정의(시간+이벤트)
+1. `D-018` 수행: `1d/1w/1M` direct fetch 전환(downsample 폐기)
+2. `D-012` 수행: 학습 데이터 SoT 정렬(Influx 기반 closed-candle snapshot + chunk 기반 OOM 방어 추출)
+3. `D-001` 수행: 모델 계약 명시화(`fit/predict/save/load`, 추상 인터페이스 도입은 보류)
+4. `D-002` 수행: 모델 메타데이터/버전 스키마 정의
+
+## 5.1 Cycle KPI (Locked 2026-02-21)
+1. `D-018` + `D-012` 완료
+2. 전체 회귀 통과: `PYENV_VERSION=coin pytest -q`
 
 ## 6. Portfolio Capability Matrix (Current vs Next)
 | Capability | Current Evidence | Next Strengthening |

@@ -12,8 +12,10 @@ import argparse
 import os
 from pathlib import Path
 
-import ccxt
 import pandas as pd
+from prophet import Prophet
+from influxdb_client import InfluxDBClient
+from scripts.data_extractor import extract_ohlcv_to_parquet, _get_influx_client
 from prophet import Prophet
 from prophet.serialize import model_to_json
 
@@ -44,10 +46,7 @@ def _parse_env_int(name: str, *, default: int) -> int:
     try:
         return int(raw)
     except ValueError:
-        print(
-            f"[Train] invalid env {name}={raw!r}. "
-            f"Fallback to default={default}."
-        )
+        print(f"[Train] invalid env {name}={raw!r}. " f"Fallback to default={default}.")
         return default
 
 
@@ -76,16 +75,19 @@ def train_and_save(
     timeframe: str,
     *,
     lookback_limit: int,
-    exchange: ccxt.Exchange,
+    client: InfluxDBClient,
 ):
     print(f"[{symbol}] 모델 학습 시작...")
 
-    # 데이터 수집 (최근 lookback_limit candle)
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=lookback_limit)
-    df = pd.DataFrame(
-        ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"]
+    # D-012: InfluxDB에서 Chunk 단위로 안전하게 데이터 추출
+    parquet_path = extract_ohlcv_to_parquet(
+        symbol, timeframe, lookback_limit=lookback_limit, client=client
     )
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+    df = pd.read_parquet(parquet_path)
+
+    if df.empty:
+        print(f"[{symbol}] 학습 데이터 부족. 건너뜁니다.")
+        return
 
     # Prophet 데이터 포맷 준비
     train_df = df[["timestamp", "close"]].rename(
@@ -117,15 +119,18 @@ def run_training_job(
     timeframes: list[str],
     lookback_limit: int,
 ) -> None:
-    exchange = ccxt.binance()
-    for symbol in symbols:
-        for timeframe in timeframes:
-            train_and_save(
-                symbol,
-                timeframe,
-                lookback_limit=lookback_limit,
-                exchange=exchange,
-            )
+    client = _get_influx_client()
+    try:
+        for symbol in symbols:
+            for timeframe in timeframes:
+                train_and_save(
+                    symbol,
+                    timeframe,
+                    lookback_limit=lookback_limit,
+                    client=client,
+                )
+    finally:
+        client.close()
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -153,9 +158,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--lookback-limit",
         type=int,
-        default=_parse_env_int(
-            "TRAIN_LOOKBACK_LIMIT", default=DEFAULT_LOOKBACK_LIMIT
-        ),
+        default=_parse_env_int("TRAIN_LOOKBACK_LIMIT", default=DEFAULT_LOOKBACK_LIMIT),
         help=f"OHLCV candle lookback size (default: {DEFAULT_LOOKBACK_LIMIT}).",
     )
     return parser

@@ -46,9 +46,7 @@ def load_prediction_health(ctx, path: Path) -> dict[str, dict]:
 
     entries = payload.get("entries")
     if not isinstance(entries, dict):
-        ctx.logger.error(
-            "Invalid prediction health format: entries is not a dict."
-        )
+        ctx.logger.error("Invalid prediction health format: entries is not a dict.")
         return {}
     return entries
 
@@ -140,6 +138,7 @@ def upsert_prediction_health(
 def run_prediction_and_save(
     ctx,
     write_api,
+    query_api,
     symbol,
     timeframe,
 ) -> tuple[str, str | None]:
@@ -167,6 +166,19 @@ def run_prediction_and_save(
             "Skipping prediction artifact generation."
         )
         return "skipped", None
+
+    # ── D-010: min sample gate ──
+    min_sample = ctx.MIN_SAMPLE_BY_TIMEFRAME.get(timeframe)
+    if min_sample is not None:
+        sample_count = ctx.count_ohlcv_rows(
+            query_api, symbol=symbol, timeframe=timeframe
+        )
+        if sample_count < min_sample:
+            ctx.logger.info(
+                f"[{symbol} {timeframe}] insufficient_data: "
+                f"sample_count={sample_count}, min_required={min_sample}"
+            )
+            return "skipped", "insufficient_data"
 
     safe_symbol = symbol.replace("/", "_")
     model_candidates = [
@@ -246,12 +258,8 @@ def run_prediction_and_save(
             f"freq={timeframe})"
         )
 
-        next_forecast["ds"] = pd.to_datetime(
-            next_forecast["ds"]
-        ).dt.tz_localize("UTC")
-        next_forecast = next_forecast[
-            ["ds", "yhat", "yhat_lower", "yhat_upper"]
-        ]
+        next_forecast["ds"] = pd.to_datetime(next_forecast["ds"]).dt.tz_localize("UTC")
+        next_forecast = next_forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]]
         next_forecast.rename(columns={"ds": "timestamp"}, inplace=True)
         next_forecast.set_index("timestamp", inplace=True)
         next_forecast["symbol"] = symbol
@@ -267,9 +275,7 @@ def run_prediction_and_save(
         # 정적 JSON 외에 Influx에도 prediction을 남기는 이유:
         # - 운영 분석(추세/실패 구간)과 추후 모델 비교(shadow/champion)의
         #   기준 데이터를 보존하기 위해서다.
-        ctx.logger.info(
-            f"[{symbol} {timeframe}] {len(next_forecast)}개 예측 저장 완료"
-        )
+        ctx.logger.info(f"[{symbol} {timeframe}] {len(next_forecast)}개 예측 저장 완료")
         return "ok", None
 
     except Exception as e:

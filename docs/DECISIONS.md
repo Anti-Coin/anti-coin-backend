@@ -41,7 +41,7 @@
 ## 2. Current Baseline Decisions (Summary)
 | ID | Topic | Current Rule | Revisit Trigger |
 |---|---|---|---|
-| D-2026-02-13-32 | Phase D Coverage Strategy | 기본은 `timeframe-shared champion`, dedicated는 승격 조건 충족 시에만 허용 | shared 품질 저하 반복, 심볼/트래픽 급증 |
+| D-2026-02-13-32 | Phase D Coverage Strategy | 기본은 `timeframe-shared champion` 단일화. `symbol+timeframe dedicated` 승격은 당분간 보류(Free Tier 인프라 OOM 방지 및 운영 제약 우선 고려) | shared 품질 저하 반복 및 인프라(RAM) 증설 또는 최적화 완료 시 |
 | D-2026-02-13-33 | Cycle Cadence | `UTC boundary + detection gate` 하이브리드 고정 | `overrun_rate` 상승 또는 `missed_boundary` 재발 |
 | D-2026-02-13-34 | Reconciliation + Derived Guard | 내부 mismatch 즉시 critical, 외부 mismatch는 3회 연속 critical, `1d/1w/1M` direct ingest 금지 | 외부 warning 과다, direct ingest 우회 긴급 이슈 |
 | D-2026-02-13-35 | `1h` Underfill Guard Position | `underfill -> rebootstrap` guard는 임시 containment, RCA 전 제거 금지 | guard 재트리거 빈도 증가, 관찰 창 종료 |
@@ -54,6 +54,8 @@
 | D-2026-02-20-47 | Standalone Training Boundary | 학습은 `worker-train` one-shot 경계로 분리, 자동 재학습/승격은 D 후속 태스크로 분리 | 수동 학습 빈도 급증, 학습-운영 자원 경합 재발 |
 | D-2026-02-20-48 | Phase C Archive Boundary | Phase C 상세는 archive 단일 출처, active 문서는 요약 유지, 우선순위는 Phase D로 고정 | Phase C 재개 필요 운영 이슈 발생 |
 | D-2026-02-21-49 | pipeline_worker Decomposition | config/guards/scheduling을 별도 모듈로 분리, 상태 관리/ctx 래퍼는 D-001 후 후속 수행 | 분해 후 테스트 실패 발생, 또는 D-001 설계 시 상태 레이어 필요 확정 |
+| D-2026-02-21-50 | Phase D Plan Audit | Immediate Bundle을 `D-010→Direct Fetch→D-012→D-001→D-002`로 재정렬, D-001 scope을 "계약 명시화"로 축소, D-003은 3개 서브태스크로 분해 예정 | 실행 중 선후관계 오류 발견, 또는 D-001 설계 시 추상 인터페이스 필요성 재확인 |
+| D-2026-02-21-51 | 1d/1w/1M Direct Fetch 전환 | downsample 경로 폐기, 모든 TF를 거래소 direct fetch로 통일, downsample_lineage 코드 제거 | direct fetch 데이터 계약 위반(누락/지연/갭) 반복 확인, 또는 거래소 API 장기 TF 제공 중단 |
 
 ## 3. Decision Operation Policy
 1. 활성 문서는 요약만 유지한다(상세 서술 금지).
