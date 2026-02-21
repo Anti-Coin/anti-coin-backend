@@ -80,8 +80,6 @@ class DetectionGateReason(str, Enum):
     boundary+detection gate 판단 사유.
     """
 
-    ALREADY_MATERIALIZED = "already_materialized"
-    MATERIALIZATION_DUE = "materialization_due"
     DETECTION_UNAVAILABLE_FALLBACK_RUN = "detection_unavailable_fallback_run"
     NO_NEW_CLOSED_CANDLE = "no_new_closed_candle"
     NEW_CLOSED_CANDLE = "new_closed_candle"

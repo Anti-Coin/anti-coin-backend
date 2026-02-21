@@ -10,7 +10,7 @@ DEFAULT_TARGET_SYMBOLS = [
     "DOGE/USDT",
 ]
 DEFAULT_INGEST_TIMEFRAMES = ["1h"]
-PHASE_A_FIXED_TIMEFRAME = "1h"
+SINGLE_TIMEFRAME_FIXED = "1h"
 DEFAULT_FRESHNESS_THRESHOLD_MINUTES = {
     "1h": 65,
     "4h": 250,
@@ -119,7 +119,8 @@ def _enforce_ingest_timeframe_guard(
     timeframes: list[str], *, allow_multi: bool
 ) -> list[str]:
     """
-    기본값은 Phase A 가드(1h 고정)이며, allow_multi=true일 때만 다중 timeframe을 허용한다.
+    기본값은 single-timeframe 안전 모드(1h 고정)이며,
+    allow_multi=true일 때만 다중 timeframe을 허용한다.
     """
     if not timeframes:
         raise ValueError("INGEST_TIMEFRAMES must not be empty.")
@@ -127,10 +128,11 @@ def _enforce_ingest_timeframe_guard(
     if allow_multi:
         return timeframes.copy()
 
-    if len(timeframes) != 1 or timeframes[0] != PHASE_A_FIXED_TIMEFRAME:
+    if len(timeframes) != 1 or timeframes[0] != SINGLE_TIMEFRAME_FIXED:
         rendered = ",".join(timeframes) if timeframes else "(empty)"
         raise ValueError(
-            "INGEST_TIMEFRAMES must be exactly '1h' before Phase B "
+            "INGEST_TIMEFRAMES is locked to '1h' when "
+            "ENABLE_MULTI_TIMEFRAMES=false "
             "(set ENABLE_MULTI_TIMEFRAMES=true to allow multiple timeframes). "
             f"Got: {rendered}"
         )

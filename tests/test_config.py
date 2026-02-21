@@ -83,8 +83,11 @@ def test_enforce_ingest_timeframe_guard_accepts_only_1h_in_default_mode():
 
 
 def test_enforce_ingest_timeframe_guard_rejects_non_1h_in_default_mode():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError) as excinfo:
         _enforce_ingest_timeframe_guard(["4h"], allow_multi=False)
+    message = str(excinfo.value)
+    assert "ENABLE_MULTI_TIMEFRAMES=false" in message
+    assert "before Phase B" not in message
 
 
 def test_enforce_ingest_timeframe_guard_rejects_multiple_in_default_mode():
