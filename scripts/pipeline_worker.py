@@ -1704,9 +1704,15 @@ def _evaluate_underfill_rebootstrap(
     query_api,
     symbol: str,
     timeframe: str,
+    exchange_earliest: datetime | None = None,
 ) -> tuple[int, bool]:
     """
     lookback 커버리지 기준으로 rebootstrap 필요 여부를 계산한다.
+
+    검사 범위:
+    1) forward coverage: lookback window 내 row 수 부족 (기존)
+    2) backward coverage: full-fill TF의 DB 첫 행이 exchange earliest보다
+       한참 늦은 경우 (D-020)
 
     Returns:
       - tuple[int, bool]
@@ -1714,26 +1720,40 @@ def _evaluate_underfill_rebootstrap(
         2) force_rebootstrap
     """
     lookback_days = _lookback_days_for_timeframe(timeframe)
+
+    # 1) forward coverage: lookback window 내 row 수 검사 (1h 전용)
     min_required_rows = _minimum_required_lookback_rows(
         timeframe,
         lookback_days,
     )
-    if min_required_rows is None:
-        return lookback_days, False
-
-    close_count = get_lookback_close_count(
-        query_api,
-        symbol,
-        timeframe,
-        lookback_days,
-    )
-    if close_count is not None and close_count < min_required_rows:
-        logger.warning(
-            f"[{symbol} {timeframe}] canonical coverage underfilled: "
-            f"close_count={close_count} < min_required={min_required_rows}. "
-            "Rebootstrapping from lookback."
+    if min_required_rows is not None:
+        close_count = get_lookback_close_count(
+            query_api,
+            symbol,
+            timeframe,
+            lookback_days,
         )
-        return lookback_days, True
+        if close_count is not None and close_count < min_required_rows:
+            logger.warning(
+                f"[{symbol} {timeframe}] canonical coverage underfilled: "
+                f"close_count={close_count} < min_required={min_required_rows}. "
+                "Rebootstrapping from lookback."
+            )
+            return lookback_days, True
+
+    # 2) backward coverage: full-fill TF의 historical gap 검사
+    if timeframe in DB_FULL_FILL_TIMEFRAMES and exchange_earliest is not None:
+        db_first = get_first_timestamp(query_api, symbol, timeframe)
+        if db_first is not None and db_first > exchange_earliest + timedelta(
+            hours=FULL_BACKFILL_TOLERANCE_HOURS
+        ):
+            logger.warning(
+                f"[{symbol} {timeframe}] backward coverage gap: "
+                f"db_first={_format_utc(db_first)}, "
+                f"exchange_earliest={_format_utc(exchange_earliest)}. "
+                "Rebootstrapping from exchange earliest."
+            )
+            return lookback_days, True
 
     return lookback_days, False
 
@@ -1800,6 +1820,7 @@ def _run_ingest_timeframe_step(
         query_api=query_api,
         symbol=symbol,
         timeframe=timeframe,
+        exchange_earliest=exchange_earliest,
     )
 
     since, since_source_text = resolve_ingest_since(
@@ -1810,9 +1831,7 @@ def _run_ingest_timeframe_step(
         disk_level=disk_level.value,
         force_rebootstrap=force_rebootstrap,
         bootstrap_since=(
-            exchange_earliest
-            if timeframe in DB_FULL_FILL_TIMEFRAMES
-            else None
+            exchange_earliest if timeframe in DB_FULL_FILL_TIMEFRAMES else None
         ),
         enforce_full_backfill=(
             timeframe == SYMBOL_ACTIVATION_SOURCE_TIMEFRAME

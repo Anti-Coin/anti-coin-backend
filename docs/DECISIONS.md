@@ -1,6 +1,6 @@
 # Coin Predict Decision Register (Active)
 
-- Last Updated: 2026-02-21
+- Last Updated: 2026-02-23
 - Scope: 활성 결정 요약 + archive 원문 링크
 - Full Phase A History: `docs/archive/phase_a/DECISIONS_PHASE_A_FULL_2026-02-12.md`
 - Full Phase B History: `docs/archive/phase_b/DECISIONS_PHASE_B_FULL_2026-02-19.md`
@@ -56,6 +56,8 @@
 | D-2026-02-21-49 | pipeline_worker Decomposition | config/guards/scheduling을 별도 모듈로 분리, 상태 관리/ctx 래퍼는 D-001 후 후속 수행 | 분해 후 테스트 실패 발생, 또는 D-001 설계 시 상태 레이어 필요 확정 |
 | D-2026-02-21-50 | Phase D Plan Audit | Immediate Bundle을 `D-010→Direct Fetch→D-012→D-001→D-002`로 재정렬, D-001 scope을 "계약 명시화"로 축소, D-003은 3개 서브태스크로 분해 예정 | 실행 중 선후관계 오류 발견, 또는 D-001 설계 시 추상 인터페이스 필요성 재확인 |
 | D-2026-02-21-51 | 1d/1w/1M Direct Fetch 전환 | downsample 경로 폐기, 모든 TF를 거래소 direct fetch로 통일, downsample_lineage 코드 제거 | direct fetch 데이터 계약 위반(누락/지연/갭) 반복 확인, 또는 거래소 API 장기 TF 제공 중단 |
+| D-2026-02-23-52 | 1d/1w/1M Full-Fill 복구 방침 | InfluxDB 1d/1w/1M 데이터 삭제 + `ingest_state.json` cursor 제거로 `bootstrap_exchange_earliest` 재진입 유도. 코드 수정(자동 재감지) 대신 운영 조치 선택(단순한 해법 우선 원칙) | 동일 증상 재발(신규 TF 추가 시), 또는 운영 조치 빈도 증가 시 자동 감지 코드 도입 재검토 |
+| D-2026-02-23-53 | 방어 로직 구조 판정 | 방어 메커니즘 자체는 정당(silent failure 금지 철학의 필수 파생). 문제는 구조 분산이며 D-016/D-017에서 상태 관리 분리 + ctx 래퍼 해소로 개선. 방어 수 축소는 하지 않음 | D-016/D-017 실행 시점, 또는 방어 분기 추가로 `pipeline_worker.py` 3000줄 초과 시 |
 
 ## 3. Decision Operation Policy
 1. 활성 문서는 요약만 유지한다(상세 서술 금지).

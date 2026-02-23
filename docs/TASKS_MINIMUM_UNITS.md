@@ -1,6 +1,6 @@
 # Coin Predict Task Board (Active)
 
-- Last Updated: 2026-02-21
+- Last Updated: 2026-02-23
 - Rule: 활성 태스크만 유지하고, 완료 상세 이력은 Archive로 분리
 - Full Phase A History: `docs/archive/phase_a/TASKS_MINIMUM_UNITS_PHASE_A_FULL_2026-02-12.md`
 - Full Phase B History: `docs/archive/phase_b/TASKS_MINIMUM_UNITS_PHASE_B_FULL_2026-02-19.md`
@@ -20,6 +20,7 @@
 6. `D-018` 완료 (2026-02-21): `1d/1w/1M` direct fetch 단일 경로 전환 및 downsample/lineage 코드 비참조화
 7. `D-019` 완료 (2026-02-21): static 파일 self-heal + 장주기 full-fill/full-serving 정렬
 8. 현재 활성 구현 트랙은 Phase D(Model Evolution)이다.
+9. `D-020` 추가 (2026-02-23): 1d/1w/1M full-fill 복구 태스크 식별(운영 조치) + prediction 연쇄 복구
 
 ## 2. Active Tasks
 ### Rebaseline (Post-Phase A)
@@ -85,15 +86,18 @@
 | D-017 | P2 | `pipeline_worker.py` `_ctx()` 래퍼 패턴 해소 | open | 테스트가 `workers.*` 직접 참조로 전환되고 `_ctx()` 래퍼 함수 ~30개가 제거됨, 회귀 테스트 통과 |
 | D-018 | P1 | `1d/1w/1M` direct fetch 전환 (downsample 폐기) | done (2026-02-21) | `run_ingest_step`가 timeframe 분기 없이 direct fetch로 고정되고 downsample/lineage 코드 참조가 제거되며, 회귀 테스트(`PYENV_VERSION=coin pytest -q`)가 통과함 |
 | D-019 | P1 | static 파일 self-heal + 장주기 full-fill/full-serving 정렬 | done (2026-02-21) | publish gate skip 상태에서도 canonical history 누락은 self-heal export, canonical prediction 누락은 `last_success_at` 존재 시 self-heal prediction을 수행하며, `1d/1w/1M` DB empty/state drift는 exchange earliest 기준 full-fill을 사용한다. 회귀 테스트(`PYENV_VERSION=coin pytest -q`) 통과 |
+| D-020 | **P0** | 1d/1w/1M full-fill 복구 (운영 조치 + prediction 연쇄 복구) | open | InfluxDB 1d/1w/1M 데이터 삭제 + `ingest_state.json` cursor 제거 → `bootstrap_exchange_earliest` 재진입 → full-fill 완료 → 1w/1M min sample 충족 → prediction 파일 정상 생성 확인 |
+| D-021 | P2 | Python 상수/config 역할별 그룹화 | open | `worker_config.py` + `utils/config.py` 상수 ~55개를 역할별 섹션/dataclass로 구조화하고 재노출 패턴 제거. D-016 수행 시 함께 처리 |
 
 > **Discussion Reference**: `docs/DISCUSSION_PHASE_D_AUDIT_2026-02-21.md`
 
-## 3. Immediate Bundle (Revised 2026-02-21)
+## 3. Immediate Bundle (Revised 2026-02-23)
 1. `D-010` — min sample gate (완료됨)
 2. `D-018` — 1d/1w/1M direct fetch 전환 (완료됨)
-3. `D-012` — 학습 데이터 SoT 정렬 + **Chunk 기반 OOM 방어 데이터 추출 메커니즘** (최우선)
-4. `D-001` — 모델 계약 명시화 (scope 축소)
-5. `D-002` — 메타데이터/버전 스키마
+3. `D-020` — **1d/1w/1M full-fill 복구 (최우선, 운영 조치)**
+4. `D-012` — 학습 데이터 SoT 정렬 + Chunk 기반 OOM 방어 (코드 완성, TASKS 갱신 미종료)
+5. `D-001` — 모델 계약 명시화 (scope 축소)
+6. `D-002` — 메타데이터/버전 스키마
 
 ## 3.1 Cycle KPI (Locked 2026-02-21)
 1. `D-018` 완료

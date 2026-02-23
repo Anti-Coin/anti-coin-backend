@@ -354,8 +354,13 @@ def resolve_ingest_since(
         ):
             return None, "blocked_storage_guard"
 
+        # full-fill TF는 lookback 대신 exchange earliest부터 재수집해
+        # historical gap을 근본적으로 메운다.
+        if timeframe in ctx.DB_FULL_FILL_TIMEFRAMES and bootstrap_since is not None:
+            return bootstrap_since, "underfilled_rebootstrap_exchange_earliest"
+
         lookback_days = ctx._lookback_days_for_timeframe(timeframe)
-        # underfill 복구는 최근 lookback 윈도우를 다시 수집해 끊긴 구간을 메운다.
+        # 비full-fill TF는 최근 lookback 윈도우만 다시 수집한다.
         return (
             resolved_now - timedelta(days=lookback_days),
             "underfilled_rebootstrap",

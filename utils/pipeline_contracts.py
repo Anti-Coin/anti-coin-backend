@@ -25,9 +25,7 @@ def parse_utc_datetime(text: str | None) -> datetime | None:
     if not isinstance(text, str) or not text:
         return None
     try:
-        return datetime.strptime(text, UTC_DATETIME_FORMAT).replace(
-            tzinfo=timezone.utc
-        )
+        return datetime.strptime(text, UTC_DATETIME_FORMAT).replace(tzinfo=timezone.utc)
     except ValueError:
         return None
 
@@ -131,6 +129,9 @@ class IngestSinceSource(str, Enum):
     )
     BLOCKED_STORAGE_GUARD = "blocked_storage_guard"
     UNDERFILLED_REBOOTSTRAP = "underfilled_rebootstrap"
+    UNDERFILLED_REBOOTSTRAP_EXCHANGE_EARLIEST = (
+        "underfilled_rebootstrap_exchange_earliest"
+    )
 
 
 class SymbolActivationEntryPayload(TypedDict):
@@ -260,9 +261,7 @@ class SymbolActivationSnapshot:
             is_full_backfilled=is_full_backfilled,
             coverage_start_at=coverage_start_at,
             coverage_end_at=parse_utc_datetime(raw.get("coverage_end_at")),
-            exchange_earliest_at=parse_utc_datetime(
-                raw.get("exchange_earliest_at")
-            ),
+            exchange_earliest_at=parse_utc_datetime(raw.get("exchange_earliest_at")),
             ready_at=ready_at,
             updated_at=updated_at,
         )
@@ -279,9 +278,7 @@ class SymbolActivationSnapshot:
             "is_full_backfilled": self.is_full_backfilled,
             "coverage_start_at": format_utc_datetime(self.coverage_start_at),
             "coverage_end_at": format_utc_datetime(self.coverage_end_at),
-            "exchange_earliest_at": format_utc_datetime(
-                self.exchange_earliest_at
-            ),
+            "exchange_earliest_at": format_utc_datetime(self.exchange_earliest_at),
             "ready_at": format_utc_datetime(self.ready_at),
             "updated_at": updated_at_text or "",
         }
@@ -424,4 +421,5 @@ def is_rebootstrap_source(source: IngestSinceSource | None) -> bool:
         IngestSinceSource.STATE_DRIFT_REBOOTSTRAP,
         IngestSinceSource.STATE_DRIFT_REBOOTSTRAP_EXCHANGE_EARLIEST,
         IngestSinceSource.UNDERFILLED_REBOOTSTRAP,
+        IngestSinceSource.UNDERFILLED_REBOOTSTRAP_EXCHANGE_EARLIEST,
     }

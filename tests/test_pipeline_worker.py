@@ -7,6 +7,7 @@ import pandas as pd
 
 from scripts.pipeline_worker import (
     _detect_gaps_from_ms_timestamps,
+    _evaluate_underfill_rebootstrap,
     _fetch_ohlcv_paginated,
     _lookback_days_for_timeframe,
     _minimum_required_lookback_rows,
@@ -976,6 +977,111 @@ def test_resolve_ingest_since_enforces_full_backfill_for_hidden_1h():
 
     assert source == "full_backfill_exchange_earliest"
     assert since == earliest
+
+
+def test_resolve_ingest_since_force_rebootstrap_uses_exchange_earliest_for_fullfill_tf():
+    """D-020: full-fill TF의 force_rebootstrap은 exchange earliest부터 재수집한다."""
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+    db_last = datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1d",
+        state_since=db_last,
+        last_time=db_last,
+        disk_level="normal",
+        force_rebootstrap=True,
+        bootstrap_since=earliest,
+        now=now,
+    )
+
+    assert source == "underfilled_rebootstrap_exchange_earliest"
+    assert since == earliest
+
+
+def test_resolve_ingest_since_force_rebootstrap_uses_lookback_for_non_fullfill_tf():
+    """D-020: 비full-fill TF의 force_rebootstrap은 기존 lookback 방식을 유지한다."""
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1m",
+        state_since=None,
+        last_time=None,
+        disk_level="normal",
+        force_rebootstrap=True,
+        bootstrap_since=datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc),
+        now=now,
+    )
+
+    assert source == "underfilled_rebootstrap"
+    assert since == datetime(2026, 1, 30, 12, 0, tzinfo=timezone.utc)
+
+
+def test_evaluate_underfill_rebootstrap_detects_backward_gap(monkeypatch):
+    """D-020: DB first가 exchange earliest보다 한참 늦으면 rebootstrap을 트리거한다."""
+    exchange_earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+    db_first = datetime(2026, 1, 23, 0, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker._minimum_required_lookback_rows",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.get_first_timestamp",
+        lambda *args, **kwargs: db_first,
+    )
+
+    _, force_rebootstrap = _evaluate_underfill_rebootstrap(
+        query_api=object(),
+        symbol="BTC/USDT",
+        timeframe="1d",
+        exchange_earliest=exchange_earliest,
+    )
+
+    assert force_rebootstrap is True
+
+
+def test_evaluate_underfill_rebootstrap_skips_when_filled(monkeypatch):
+    """D-020: DB first가 exchange earliest와 가까우면 rebootstrap하지 않는다."""
+    exchange_earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+    db_first = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker._minimum_required_lookback_rows",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.get_first_timestamp",
+        lambda *args, **kwargs: db_first,
+    )
+
+    _, force_rebootstrap = _evaluate_underfill_rebootstrap(
+        query_api=object(),
+        symbol="BTC/USDT",
+        timeframe="1d",
+        exchange_earliest=exchange_earliest,
+    )
+
+    assert force_rebootstrap is False
+
+
+def test_evaluate_underfill_rebootstrap_skips_backward_for_non_fullfill_tf(monkeypatch):
+    """D-020: 비full-fill TF (1m)에서는 backward check를 수행하지 않는다."""
+    monkeypatch.setattr(
+        "scripts.pipeline_worker._minimum_required_lookback_rows",
+        lambda *args, **kwargs: None,
+    )
+
+    _, force_rebootstrap = _evaluate_underfill_rebootstrap(
+        query_api=object(),
+        symbol="BTC/USDT",
+        timeframe="1m",
+        exchange_earliest=datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc),
+    )
+
+    assert force_rebootstrap is False
 
 
 def test_get_last_timestamp_legacy_fallback_filters_missing_timeframe(
