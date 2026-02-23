@@ -1814,7 +1814,30 @@ def _run_ingest_timeframe_step(
             cycle_detection_run_counts=cycle_detection_run_counts,
         )
         if not should_run_ingest:
-            return should_continue_publish, symbol_activation
+            # D-020: detection gate skip 상태에서도 full-fill TF의
+            # backward coverage gap은 검사한다.
+            # historical gap이 발견되면 detection gate skip을 무시하고
+            # ingest를 진행한다.
+            if (
+                timeframe in DB_FULL_FILL_TIMEFRAMES
+                and exchange_earliest is not None
+                and last_time is not None
+            ):
+                _, backward_gap_detected = _evaluate_underfill_rebootstrap(
+                    query_api=query_api,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    exchange_earliest=exchange_earliest,
+                )
+                if backward_gap_detected:
+                    logger.info(
+                        f"[{symbol} {timeframe}] detection gate skip overridden: "
+                        "backward coverage gap detected, proceeding with ingest."
+                    )
+                    should_run_ingest = True
+
+            if not should_run_ingest:
+                return should_continue_publish, symbol_activation
 
     lookback_days, force_rebootstrap = _evaluate_underfill_rebootstrap(
         query_api=query_api,
@@ -1866,6 +1889,8 @@ def _run_ingest_timeframe_step(
             or since_source == IngestSinceSource.FULL_BACKFILL_EXCHANGE_EARLIEST
             or since_source
             == IngestSinceSource.STATE_DRIFT_REBOOTSTRAP_EXCHANGE_EARLIEST
+            or since_source
+            == IngestSinceSource.UNDERFILLED_REBOOTSTRAP_EXCHANGE_EARLIEST
         ):
             logger.info(
                 f"[{symbol} {timeframe}] 초기 데이터 수집 시작 "
