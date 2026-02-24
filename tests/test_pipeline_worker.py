@@ -1,21 +1,23 @@
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
 
 from scripts.pipeline_worker import (
     _detect_gaps_from_ms_timestamps,
+    _evaluate_underfill_rebootstrap,
     _fetch_ohlcv_paginated,
     _lookback_days_for_timeframe,
     _minimum_required_lookback_rows,
     _record_ingest_outcome_state,
     _refill_detected_gaps,
     _run_ingest_timeframe_step,
+    _run_publish_timeframe_step,
     WorkerPersistentState,
     append_runtime_cycle_metrics,
     build_runtime_manifest,
-    downsample_ohlcv_frame,
     evaluate_detection_gate,
     enforce_1m_retention,
     get_first_timestamp,
@@ -31,13 +33,13 @@ from scripts.pipeline_worker import (
     resolve_worker_execution_role,
     resolve_ingest_since,
     resolve_disk_watermark_level,
-    run_downsample_and_save,
     run_ingest_step,
     run_prediction_and_save,
     save_history_to_json,
     should_run_publish_from_ingest_watermark,
     should_block_initial_backfill,
     should_enforce_1m_retention,
+    update_full_history_file,
     upsert_prediction_health,
     worker_role_runs_ingest,
     worker_role_runs_publish,
@@ -47,6 +49,7 @@ from utils.ingest_state import IngestStateStore
 from utils.pipeline_contracts import (
     IngestExecutionOutcome,
     IngestExecutionResult,
+    PredictionExecutionResult,
     StorageGuardLevel,
     SymbolActivationSnapshot,
 )
@@ -86,22 +89,6 @@ class FakeDeleteAPI:
         self.calls = []
 
     def delete(self, **kwargs):
-        self.calls.append(kwargs)
-
-
-class FakeQueryAPI:
-    def __init__(self, dataframe):
-        self._dataframe = dataframe
-
-    def query_data_frame(self, query: str):
-        return self._dataframe
-
-
-class FakeWriteAPI:
-    def __init__(self):
-        self.calls = []
-
-    def write(self, **kwargs):
         self.calls.append(kwargs)
 
 
@@ -225,6 +212,7 @@ def test_run_prediction_and_save_skips_disabled_timeframe(monkeypatch):
 
     result, error = run_prediction_and_save(
         write_api=None,
+        query_api=None,
         symbol="BTC/USDT",
         timeframe="1m",
     )
@@ -232,9 +220,86 @@ def test_run_prediction_and_save_skips_disabled_timeframe(monkeypatch):
     assert error is None
 
 
-def test_save_history_to_json_writes_timeframe_aware_files(
-    tmp_path, monkeypatch
-):
+def test_min_sample_gate_blocks_insufficient_data(monkeypatch):
+    """D-010: 샘플 미달 시 'skipped' + 'insufficient_data' 반환"""
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.PREDICTION_DISABLED_TIMEFRAMES",
+        {"1m"},
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.MIN_SAMPLE_BY_TIMEFRAME",
+        {"1d": 120},
+    )
+    # count_ohlcv_rows가 미달 값을 반환하도록 monkeypatch
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.count_ohlcv_rows",
+        lambda query_api, *, symbol, timeframe: 50,
+    )
+    result, error = run_prediction_and_save(
+        write_api=None,
+        query_api=None,
+        symbol="BTC/USDT",
+        timeframe="1d",
+    )
+    assert result == "skipped"
+    assert error == "insufficient_data"
+
+
+def test_min_sample_gate_allows_sufficient_data(monkeypatch):
+    """D-010: 샘플 충분 시 gate 통과 (모델 없으므로 'failed' + 'model_missing')"""
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.PREDICTION_DISABLED_TIMEFRAMES",
+        {"1m"},
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.MIN_SAMPLE_BY_TIMEFRAME",
+        {"1d": 120},
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.count_ohlcv_rows",
+        lambda query_api, *, symbol, timeframe: 500,
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.MODELS_DIR",
+        Path("/nonexistent_models_dir"),
+    )
+    result, error = run_prediction_and_save(
+        write_api=None,
+        query_api=None,
+        symbol="BTC/USDT",
+        timeframe="1d",
+    )
+    # 모델 파일이 없으므로 gate를 통과하고 model_missing에서 실패해야 한다.
+    assert result == "failed"
+    assert error == "model_missing"
+
+
+def test_min_sample_gate_skips_unknown_timeframe(monkeypatch):
+    """D-010: MIN_SAMPLE_BY_TIMEFRAME에 없는 TF는 gate 없이 통과"""
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.PREDICTION_DISABLED_TIMEFRAMES",
+        {"1m"},
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.MIN_SAMPLE_BY_TIMEFRAME",
+        {"1d": 120},  # 4h는 없음
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.MODELS_DIR",
+        Path("/nonexistent_models_dir"),
+    )
+    result, error = run_prediction_and_save(
+        write_api=None,
+        query_api=None,
+        symbol="BTC/USDT",
+        timeframe="4h",
+    )
+    # gate 적용 안 됨, 모델 없어서 model_missing
+    assert result == "failed"
+    assert error == "model_missing"
+
+
+def test_save_history_to_json_writes_timeframe_aware_files(tmp_path, monkeypatch):
     monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
 
     base = datetime(2026, 2, 12, 0, 0, tzinfo=timezone.utc)
@@ -404,24 +469,15 @@ def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
     assert payload["summary"]["missed_boundary_count"] is None
     assert payload["summary"]["ingest_since_source_counts"]["db_last"] == 5
     assert (
-        payload["summary"]["ingest_since_source_counts"][
-            "underfilled_rebootstrap"
-        ]
-        == 2
+        payload["summary"]["ingest_since_source_counts"]["underfilled_rebootstrap"] == 2
     )
     assert payload["summary"]["rebootstrap_cycles"] == 1
     assert payload["summary"]["rebootstrap_events"] == 2
     assert payload["summary"]["underfill_guard_retrigger_cycles"] == 1
     assert payload["summary"]["underfill_guard_retrigger_events"] == 2
-    assert (
-        payload["summary"]["detection_gate_run_counts"]["new_closed_candle"]
-        == 2
-    )
+    assert payload["summary"]["detection_gate_run_counts"]["new_closed_candle"] == 2
     assert payload["summary"]["detection_gate_run_events"] == 2
-    assert (
-        payload["summary"]["detection_gate_skip_counts"]["no_new_closed_candle"]
-        == 3
-    )
+    assert payload["summary"]["detection_gate_skip_counts"]["no_new_closed_candle"] == 3
     assert payload["summary"]["detection_gate_skip_events"] == 3
     assert payload["recent_cycles"][1]["ingest_since_source_counts"] == {
         "underfilled_rebootstrap": 2,
@@ -498,9 +554,7 @@ def test_append_runtime_cycle_metrics_ignores_invalid_source_counts(tmp_path):
     assert payload["recent_cycles"][0]["ingest_since_source_counts"] == {
         "bootstrap_lookback": 2
     }
-    assert payload["summary"]["ingest_since_source_counts"] == {
-        "bootstrap_lookback": 2
-    }
+    assert payload["summary"]["ingest_since_source_counts"] == {"bootstrap_lookback": 2}
     assert payload["summary"]["rebootstrap_events"] == 0
 
 
@@ -681,24 +735,26 @@ def test_evaluate_detection_gate_runs_when_detection_unavailable(monkeypatch):
     assert reason == "detection_unavailable_fallback_run"
 
 
-def test_evaluate_detection_gate_derived_already_materialized(monkeypatch):
+def test_evaluate_detection_gate_1d_skips_when_no_new_closed_candle():
     now = datetime(2026, 2, 14, 0, 10, tzinfo=timezone.utc)
-    expected = datetime(2026, 2, 13, 0, 0, tzinfo=timezone.utc)
-    monkeypatch.setattr(
-        "scripts.pipeline_worker.get_last_timestamp",
-        lambda *args, **kwargs: expected,
-    )
+    last_saved = datetime(2026, 2, 13, 0, 0, tzinfo=timezone.utc)
+    candles = [
+        [_to_ms(datetime(2026, 2, 12, 0, 0, tzinfo=timezone.utc)), 1, 1, 1, 1, 1],
+        [_to_ms(datetime(2026, 2, 13, 0, 0, tzinfo=timezone.utc)), 1, 1, 1, 1, 1],
+    ]
+    exchange = SimpleNamespace(fetch_ohlcv=lambda *args, **kwargs: candles)
 
     should_run, reason = evaluate_detection_gate(
         query_api=object(),
-        detection_exchange=object(),
+        detection_exchange=exchange,
         symbol="BTC/USDT",
         timeframe="1d",
         now=now,
+        last_saved=last_saved,
     )
 
     assert should_run is False
-    assert reason == "already_materialized"
+    assert reason == "no_new_closed_candle"
 
 
 def test_lookback_days_for_timeframe_uses_1m_policy():
@@ -724,9 +780,7 @@ def test_get_disk_usage_percent_uses_shutil_result(monkeypatch):
 def test_should_enforce_1m_retention_interval():
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
     assert should_enforce_1m_retention(None, now) is True
-    assert (
-        should_enforce_1m_retention(now - timedelta(minutes=59), now) is False
-    )
+    assert should_enforce_1m_retention(now - timedelta(minutes=59), now) is False
     assert should_enforce_1m_retention(now - timedelta(hours=1), now) is True
 
 
@@ -868,6 +922,43 @@ def test_resolve_ingest_since_uses_exchange_earliest_for_1h_state_drift():
     assert since == earliest
 
 
+def test_resolve_ingest_since_uses_exchange_earliest_for_1d_bootstrap():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1d",
+        state_since=None,
+        last_time=None,
+        disk_level="normal",
+        bootstrap_since=earliest,
+        now=now,
+    )
+
+    assert source == "bootstrap_exchange_earliest"
+    assert since == earliest
+
+
+def test_resolve_ingest_since_uses_exchange_earliest_for_1w_state_drift():
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    earliest = datetime(2020, 1, 6, 0, 0, tzinfo=timezone.utc)
+    state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1w",
+        state_since=state_since,
+        last_time=None,
+        disk_level="normal",
+        bootstrap_since=earliest,
+        now=now,
+    )
+
+    assert source == "state_drift_rebootstrap_exchange_earliest"
+    assert since == earliest
+
+
 def test_resolve_ingest_since_enforces_full_backfill_for_hidden_1h():
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
     earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -886,6 +977,111 @@ def test_resolve_ingest_since_enforces_full_backfill_for_hidden_1h():
 
     assert source == "full_backfill_exchange_earliest"
     assert since == earliest
+
+
+def test_resolve_ingest_since_force_rebootstrap_uses_exchange_earliest_for_fullfill_tf():
+    """D-020: full-fill TF의 force_rebootstrap은 exchange earliest부터 재수집한다."""
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+    db_last = datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1d",
+        state_since=db_last,
+        last_time=db_last,
+        disk_level="normal",
+        force_rebootstrap=True,
+        bootstrap_since=earliest,
+        now=now,
+    )
+
+    assert source == "underfilled_rebootstrap_exchange_earliest"
+    assert since == earliest
+
+
+def test_resolve_ingest_since_force_rebootstrap_uses_lookback_for_non_fullfill_tf():
+    """D-020: 비full-fill TF의 force_rebootstrap은 기존 lookback 방식을 유지한다."""
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+
+    since, source = resolve_ingest_since(
+        symbol="BTC/USDT",
+        timeframe="1m",
+        state_since=None,
+        last_time=None,
+        disk_level="normal",
+        force_rebootstrap=True,
+        bootstrap_since=datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc),
+        now=now,
+    )
+
+    assert source == "underfilled_rebootstrap"
+    assert since == datetime(2026, 1, 30, 12, 0, tzinfo=timezone.utc)
+
+
+def test_evaluate_underfill_rebootstrap_detects_backward_gap(monkeypatch):
+    """D-020: DB first가 exchange earliest보다 한참 늦으면 rebootstrap을 트리거한다."""
+    exchange_earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+    db_first = datetime(2026, 1, 23, 0, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker._minimum_required_lookback_rows",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.get_first_timestamp",
+        lambda *args, **kwargs: db_first,
+    )
+
+    _, force_rebootstrap = _evaluate_underfill_rebootstrap(
+        query_api=object(),
+        symbol="BTC/USDT",
+        timeframe="1d",
+        exchange_earliest=exchange_earliest,
+    )
+
+    assert force_rebootstrap is True
+
+
+def test_evaluate_underfill_rebootstrap_skips_when_filled(monkeypatch):
+    """D-020: DB first가 exchange earliest와 가까우면 rebootstrap하지 않는다."""
+    exchange_earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+    db_first = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker._minimum_required_lookback_rows",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.get_first_timestamp",
+        lambda *args, **kwargs: db_first,
+    )
+
+    _, force_rebootstrap = _evaluate_underfill_rebootstrap(
+        query_api=object(),
+        symbol="BTC/USDT",
+        timeframe="1d",
+        exchange_earliest=exchange_earliest,
+    )
+
+    assert force_rebootstrap is False
+
+
+def test_evaluate_underfill_rebootstrap_skips_backward_for_non_fullfill_tf(monkeypatch):
+    """D-020: 비full-fill TF (1m)에서는 backward check를 수행하지 않는다."""
+    monkeypatch.setattr(
+        "scripts.pipeline_worker._minimum_required_lookback_rows",
+        lambda *args, **kwargs: None,
+    )
+
+    _, force_rebootstrap = _evaluate_underfill_rebootstrap(
+        query_api=object(),
+        symbol="BTC/USDT",
+        timeframe="1m",
+        exchange_earliest=datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc),
+    )
+
+    assert force_rebootstrap is False
 
 
 def test_get_last_timestamp_legacy_fallback_filters_missing_timeframe(
@@ -1008,10 +1204,8 @@ def test_minimum_required_lookback_rows_for_1h_only():
 def test_enforce_1m_retention_calls_delete_api(monkeypatch):
     fake_delete_api = FakeDeleteAPI()
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
-    monkeypatch.setattr(
-        "scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data"
-    )
-    monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_ORG", "coin")
+    monkeypatch.setattr("scripts.worker_guards.INFLUXDB_BUCKET", "market_data")
+    monkeypatch.setattr("scripts.worker_guards.INFLUXDB_ORG", "coin")
 
     enforce_1m_retention(
         fake_delete_api,
@@ -1025,99 +1219,7 @@ def test_enforce_1m_retention_calls_delete_api(monkeypatch):
     assert first_call["bucket"] == "market_data"
     assert first_call["org"] == "coin"
     assert first_call["predicate"].endswith('timeframe="1m"')
-    assert first_call["stop"] == datetime(
-        2026, 1, 14, 12, 0, tzinfo=timezone.utc
-    )
-
-
-def test_downsample_ohlcv_frame_filters_incomplete_bucket():
-    base = datetime(2026, 2, 10, 0, 0, tzinfo=timezone.utc)
-    rows = []
-    for hour in range(24 + 12):
-        ts = base + timedelta(hours=hour)
-        rows.append(
-            {
-                "timestamp": ts,
-                "open": float(hour + 1),
-                "high": float(hour + 2),
-                "low": float(hour),
-                "close": float(hour + 1.5),
-                "volume": 10.0,
-            }
-        )
-    source_df = pd.DataFrame(rows).set_index("timestamp")
-
-    complete_df, incomplete_df = downsample_ohlcv_frame(
-        source_df, target_timeframe="1d"
-    )
-
-    assert len(complete_df) == 1
-    assert len(incomplete_df) == 1
-    first_bucket = complete_df.iloc[0]
-    assert first_bucket["open"] == 1.0
-    assert first_bucket["close"] == 24.5
-    assert first_bucket["high"] == 25.0
-    assert first_bucket["low"] == 0.0
-    assert first_bucket["volume"] == 240.0
-    assert incomplete_df.iloc[0]["source_count"] == 12
-    assert incomplete_df.iloc[0]["expected_count"] == 24
-
-
-def test_run_downsample_and_save_writes_ohlcv_and_lineage(
-    tmp_path, monkeypatch
-):
-    base = datetime(2026, 2, 10, 0, 0, tzinfo=timezone.utc)
-    rows = []
-    for hour in range(48):
-        ts = base + timedelta(hours=hour)
-        rows.append(
-            {
-                "_time": ts,
-                "open": float(hour + 1),
-                "high": float(hour + 2),
-                "low": float(hour),
-                "close": float(hour + 1.5),
-                "volume": 10.0,
-            }
-        )
-    query_df = pd.DataFrame(rows)
-    query_api = FakeQueryAPI(query_df)
-    write_api = FakeWriteAPI()
-
-    lineage_path = tmp_path / "downsample_lineage.json"
-    monkeypatch.setattr(
-        "scripts.pipeline_worker.DOWNSAMPLE_LINEAGE_FILE", lineage_path
-    )
-    monkeypatch.setattr(
-        "scripts.pipeline_worker.INFLUXDB_BUCKET", "market_data"
-    )
-    monkeypatch.setattr("scripts.pipeline_worker.INFLUXDB_ORG", "coin")
-
-    latest_saved_at, result = run_downsample_and_save(
-        write_api,
-        query_api,
-        symbol="BTC/USDT",
-        target_timeframe="1d",
-    )
-
-    assert result == "saved"
-    assert latest_saved_at == datetime(2026, 2, 11, 0, 0, tzinfo=timezone.utc)
-    assert len(write_api.calls) == 1
-    write_call = write_api.calls[0]
-    assert write_call["bucket"] == "market_data"
-    assert write_call["org"] == "coin"
-    saved_df = write_call["record"]
-    assert len(saved_df) == 2
-    assert list(saved_df["timeframe"].unique()) == ["1d"]
-    assert list(saved_df["symbol"].unique()) == ["BTC/USDT"]
-
-    lineage_payload = json.loads(lineage_path.read_text())
-    entry = lineage_payload["entries"]["BTC/USDT|1d"]
-    assert entry["source_timeframe"] == "1h"
-    assert entry["source_rows"] == 48
-    assert entry["complete_buckets"] == 2
-    assert entry["incomplete_buckets"] == 0
-    assert entry["status"] == "ok"
+    assert first_call["stop"] == datetime(2026, 1, 14, 12, 0, tzinfo=timezone.utc)
 
 
 def test_resolve_worker_execution_role_falls_back_to_all():
@@ -1137,10 +1239,7 @@ def test_worker_execution_role_stage_flags():
 
 
 def test_resolve_worker_publish_mode_falls_back_to_predict_and_export():
-    assert (
-        resolve_worker_publish_mode("predict_and_export")
-        == "predict_and_export"
-    )
+    assert resolve_worker_publish_mode("predict_and_export") == "predict_and_export"
     assert resolve_worker_publish_mode("predict_only") == "predict_only"
     assert resolve_worker_publish_mode("export_only") == "export_only"
     assert resolve_worker_publish_mode("invalid_mode") == "predict_and_export"
@@ -1230,15 +1329,11 @@ def test_record_ingest_outcome_state_failure_keeps_watermark_and_marks_failed(
     symbol = "BTC/USDT"
     timeframe = "1h"
     key = f"{symbol}|{timeframe}"
-    previous_last_closed_ts = datetime(
-        2026, 2, 18, 11, 0, tzinfo=timezone.utc
-    )
+    previous_last_closed_ts = datetime(2026, 2, 18, 11, 0, tzinfo=timezone.utc)
     previous_watermark = datetime(2026, 2, 18, 10, 0, tzinfo=timezone.utc)
     state = WorkerPersistentState(
         symbol_activation_entries={},
-        ingest_watermarks={
-            key: previous_watermark.strftime("%Y-%m-%dT%H:%M:%SZ")
-        },
+        ingest_watermarks={key: previous_watermark.strftime("%Y-%m-%dT%H:%M:%SZ")},
         predict_watermarks={},
         export_watermarks={},
     )
@@ -1328,42 +1423,230 @@ def test_run_ingest_timeframe_step_blocked_storage_guard_stops_without_watermark
     assert key not in state.ingest_watermarks
 
 
-def test_run_ingest_step_routes_derived_to_downsample(monkeypatch):
-    expected_latest = datetime(2026, 2, 12, 0, 0, tzinfo=timezone.utc)
+def test_run_ingest_timeframe_step_reads_db_last_with_full_range_for_1d(
+    monkeypatch, tmp_path
+):
+    symbol = "BTC/USDT"
+    timeframe = "1d"
+    now = datetime(2026, 2, 19, 12, 0, tzinfo=timezone.utc)
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={},
+        predict_watermarks={},
+        export_watermarks={},
+    )
+    ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
+    activation = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-02-19T11:00:00Z",
+        },
+        fallback_now=now,
+    )
 
-    def fake_downsample(write_api, query_api, *, symbol, target_timeframe):
-        assert symbol == "BTC/USDT"
-        assert target_timeframe == "1d"
-        return expected_latest, "saved"
+    last_timestamp_calls: list[bool] = []
 
-    def fail_fetch(*args, **kwargs):  # pragma: no cover
-        raise AssertionError("fetch_and_save should not run for derived tf")
+    def fake_get_last_timestamp(*args, **kwargs):
+        last_timestamp_calls.append(bool(kwargs.get("full_range", False)))
+        return None
 
     monkeypatch.setattr(
-        "scripts.pipeline_worker.run_downsample_and_save", fake_downsample
+        "scripts.pipeline_worker.get_last_timestamp",
+        fake_get_last_timestamp,
     )
-    monkeypatch.setattr("scripts.pipeline_worker.fetch_and_save", fail_fetch)
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.resolve_ingest_since",
+        lambda **kwargs: (None, "blocked_storage_guard"),
+    )
 
-    latest, result = run_ingest_step(
+    should_continue_publish, next_activation = _run_ingest_timeframe_step(
         write_api=object(),
         query_api=object(),
-        symbol="BTC/USDT",
-        timeframe="1d",
-        since=datetime(2026, 2, 1, tzinfo=timezone.utc),
+        activation_exchange=object(),
+        ingest_state_store=ingest_state_store,
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        scheduler_mode="poll_loop",
+        symbol_activation=activation,
+        exchange_earliest=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        disk_level=StorageGuardLevel.BLOCK,
+        disk_usage_percent=92.5,
+        state=state,
+        cycle_since_source_counts={},
+        cycle_detection_skip_counts={},
+        cycle_detection_run_counts={},
     )
 
-    assert latest == expected_latest
-    assert result == "saved"
+    assert should_continue_publish is False
+    assert next_activation == activation
+    assert last_timestamp_calls == [True]
+
+
+def test_run_ingest_timeframe_step_long_tf_skip_syncs_watermark_and_allows_publish(
+    monkeypatch, tmp_path
+):
+    symbol = "BTC/USDT"
+    timeframe = "1d"
+    now = datetime(2026, 2, 19, 12, 0, tzinfo=timezone.utc)
+    latest_saved_at = datetime(2026, 2, 19, 0, 0, tzinfo=timezone.utc)
+    key = f"{symbol}|{timeframe}"
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={},
+        predict_watermarks={},
+        export_watermarks={},
+    )
+    ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
+    activation = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-02-19T11:00:00Z",
+        },
+        fallback_now=now,
+    )
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.get_last_timestamp",
+        lambda *args, **kwargs: latest_saved_at,
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.evaluate_detection_gate_decision",
+        lambda *args, **kwargs: SimpleNamespace(
+            should_run=False,
+            reason=SimpleNamespace(value="no_new_closed_candle"),
+        ),
+    )
+
+    cycle_detection_skip_counts = {}
+    should_continue_publish, next_activation = _run_ingest_timeframe_step(
+        write_api=object(),
+        query_api=object(),
+        activation_exchange=object(),
+        ingest_state_store=ingest_state_store,
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        scheduler_mode="boundary",
+        symbol_activation=activation,
+        exchange_earliest=None,
+        disk_level=StorageGuardLevel.NORMAL,
+        disk_usage_percent=60.0,
+        state=state,
+        cycle_since_source_counts={},
+        cycle_detection_skip_counts=cycle_detection_skip_counts,
+        cycle_detection_run_counts={},
+    )
+
+    assert should_continue_publish is True
+    assert next_activation == activation
+    assert cycle_detection_skip_counts == {"no_new_closed_candle": 1}
+    assert state.ingest_watermarks[key].closed_at == latest_saved_at
+
+
+def test_run_ingest_timeframe_step_non_materialized_skip_still_blocks_publish(
+    monkeypatch, tmp_path
+):
+    symbol = "BTC/USDT"
+    timeframe = "1h"
+    now = datetime(2026, 2, 19, 12, 0, tzinfo=timezone.utc)
+    key = f"{symbol}|{timeframe}"
+    previous_watermark = datetime(2026, 2, 19, 10, 0, tzinfo=timezone.utc)
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={key: previous_watermark.strftime("%Y-%m-%dT%H:%M:%SZ")},
+        predict_watermarks={},
+        export_watermarks={},
+    )
+    ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
+    activation = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-02-19T11:00:00Z",
+        },
+        fallback_now=now,
+    )
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.get_last_timestamp",
+        lambda *args, **kwargs: datetime(2026, 2, 19, 11, 0, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.evaluate_detection_gate_decision",
+        lambda *args, **kwargs: SimpleNamespace(
+            should_run=False,
+            reason=SimpleNamespace(value="no_new_closed_candle"),
+        ),
+    )
+
+    cycle_detection_skip_counts = {}
+    should_continue_publish, next_activation = _run_ingest_timeframe_step(
+        write_api=object(),
+        query_api=object(),
+        activation_exchange=object(),
+        ingest_state_store=ingest_state_store,
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        scheduler_mode="boundary",
+        symbol_activation=activation,
+        exchange_earliest=None,
+        disk_level=StorageGuardLevel.NORMAL,
+        disk_usage_percent=60.0,
+        state=state,
+        cycle_since_source_counts={},
+        cycle_detection_skip_counts=cycle_detection_skip_counts,
+        cycle_detection_run_counts={},
+    )
+
+    assert should_continue_publish is False
+    assert next_activation == activation
+    assert cycle_detection_skip_counts == {"no_new_closed_candle": 1}
+    assert state.ingest_watermarks[key] == "2026-02-19T10:00:00Z"
+
+
+def test_run_ingest_step_routes_long_timeframes_to_exchange_fetch(monkeypatch):
+    expected_latest = datetime(2026, 2, 12, 0, 0, tzinfo=timezone.utc)
+    expected_since = datetime(2026, 2, 1, 0, 0, tzinfo=timezone.utc)
+    called_timeframes: list[str] = []
+
+    def fake_fetch(write_api, symbol, since, timeframe):
+        assert symbol == "BTC/USDT"
+        assert since == expected_since
+        called_timeframes.append(timeframe)
+        return expected_latest, "saved"
+
+    monkeypatch.setattr("scripts.pipeline_worker.fetch_and_save", fake_fetch)
+
+    for timeframe in ("1d", "1w", "1M"):
+        latest, result = run_ingest_step(
+            write_api=object(),
+            query_api=object(),
+            symbol="BTC/USDT",
+            timeframe=timeframe,
+            since=expected_since,
+        )
+        assert latest == expected_latest
+        assert result == "saved"
+
+    assert called_timeframes == ["1d", "1w", "1M"]
 
 
 def test_run_ingest_step_routes_base_to_exchange_fetch(monkeypatch):
     expected_latest = datetime(2026, 2, 12, 1, 0, tzinfo=timezone.utc)
     expected_since = datetime(2026, 2, 1, 0, 0, tzinfo=timezone.utc)
-
-    def fail_downsample(*args, **kwargs):  # pragma: no cover
-        raise AssertionError(
-            "run_downsample_and_save should not run for base tf"
-        )
 
     def fake_fetch(write_api, symbol, since, timeframe):
         assert symbol == "BTC/USDT"
@@ -1371,9 +1654,6 @@ def test_run_ingest_step_routes_base_to_exchange_fetch(monkeypatch):
         assert timeframe == "1h"
         return expected_latest, "saved"
 
-    monkeypatch.setattr(
-        "scripts.pipeline_worker.run_downsample_and_save", fail_downsample
-    )
     monkeypatch.setattr("scripts.pipeline_worker.fetch_and_save", fake_fetch)
 
     latest, result = run_ingest_step(
@@ -1386,3 +1666,292 @@ def test_run_ingest_step_routes_base_to_exchange_fetch(monkeypatch):
 
     assert latest == expected_latest
     assert result == "saved"
+
+
+def test_run_publish_timeframe_step_self_heals_missing_history_on_gate_skip(
+    monkeypatch, tmp_path
+):
+    symbol = "BTC/USDT"
+    timeframe = "1d"
+    now = datetime(2026, 2, 21, 10, 0, tzinfo=timezone.utc)
+    key = f"{symbol}|{timeframe}"
+    watermark_text = "2026-02-21T00:00:00Z"
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={key: watermark_text},
+        predict_watermarks={},
+        export_watermarks={key: watermark_text},
+    )
+    activation = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-02-21T09:00:00Z",
+        },
+        fallback_now=now,
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
+
+    history_calls = {"count": 0}
+
+    def fake_update_full_history_file(query_api, target_symbol, target_timeframe):
+        assert target_symbol == symbol
+        assert target_timeframe == timeframe
+        history_calls["count"] += 1
+        return True
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.update_full_history_file",
+        fake_update_full_history_file,
+    )
+
+    cycle_export_gate_skip_counts: dict[str, int] = {}
+    _run_publish_timeframe_step(
+        write_api=object(),
+        query_api=object(),
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        symbol_activation=activation,
+        run_export_stage=True,
+        run_predict_stage=False,
+        state=state,
+        cycle_export_gate_skip_counts=cycle_export_gate_skip_counts,
+        cycle_predict_gate_skip_counts={},
+    )
+
+    assert history_calls["count"] == 1
+    assert cycle_export_gate_skip_counts == {"up_to_date_ingest_watermark": 1}
+
+
+def test_run_publish_timeframe_step_self_heals_missing_prediction_with_last_success(
+    monkeypatch, tmp_path
+):
+    symbol = "BTC/USDT"
+    timeframe = "1d"
+    now = datetime(2026, 2, 21, 10, 0, tzinfo=timezone.utc)
+    key = f"{symbol}|{timeframe}"
+    watermark_text = "2026-02-21T00:00:00Z"
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={key: watermark_text},
+        predict_watermarks={key: watermark_text},
+        export_watermarks={},
+    )
+    activation = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-02-21T09:00:00Z",
+        },
+        fallback_now=now,
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
+    health_path = tmp_path / "prediction_health.json"
+    health_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-02-21T09:00:00Z",
+                "entries": {
+                    key: {
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "degraded": False,
+                        "last_success_at": "2026-02-20T00:00:00Z",
+                        "last_failure_at": None,
+                        "consecutive_failures": 0,
+                        "last_error": None,
+                        "updated_at": "2026-02-21T09:00:00Z",
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.PREDICTION_HEALTH_FILE", health_path)
+
+    prediction_calls = {"run": 0, "health": 0}
+
+    def fake_run_prediction_and_save_outcome(*args, **kwargs):
+        prediction_calls["run"] += 1
+        return SimpleNamespace(
+            result=PredictionExecutionResult.OK,
+            error=None,
+        )
+
+    def fake_upsert_prediction_health(*args, **kwargs):
+        prediction_calls["health"] += 1
+        return {"degraded": False}, False, False
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.run_prediction_and_save_outcome",
+        fake_run_prediction_and_save_outcome,
+    )
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.upsert_prediction_health",
+        fake_upsert_prediction_health,
+    )
+
+    cycle_predict_gate_skip_counts: dict[str, int] = {}
+    _run_publish_timeframe_step(
+        write_api=object(),
+        query_api=object(),
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        symbol_activation=activation,
+        run_export_stage=False,
+        run_predict_stage=True,
+        state=state,
+        cycle_export_gate_skip_counts={},
+        cycle_predict_gate_skip_counts=cycle_predict_gate_skip_counts,
+    )
+
+    assert prediction_calls == {"run": 1, "health": 1}
+    assert cycle_predict_gate_skip_counts == {"up_to_date_ingest_watermark": 1}
+    assert state.predict_watermarks[key] == watermark_text
+
+
+def test_run_publish_timeframe_step_does_not_self_heal_prediction_without_success(
+    monkeypatch, tmp_path
+):
+    symbol = "BTC/USDT"
+    timeframe = "1d"
+    now = datetime(2026, 2, 21, 10, 0, tzinfo=timezone.utc)
+    key = f"{symbol}|{timeframe}"
+    watermark_text = "2026-02-21T00:00:00Z"
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={key: watermark_text},
+        predict_watermarks={key: watermark_text},
+        export_watermarks={},
+    )
+    activation = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-02-21T09:00:00Z",
+        },
+        fallback_now=now,
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
+    health_path = tmp_path / "prediction_health.json"
+    health_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-02-21T09:00:00Z",
+                "entries": {
+                    key: {
+                        "symbol": symbol,
+                        "timeframe": timeframe,
+                        "degraded": True,
+                        "last_success_at": None,
+                        "last_failure_at": "2026-02-21T08:00:00Z",
+                        "consecutive_failures": 3,
+                        "last_error": "model_missing",
+                        "updated_at": "2026-02-21T09:00:00Z",
+                    }
+                },
+            }
+        )
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.PREDICTION_HEALTH_FILE", health_path)
+
+    called = {"run_prediction": False}
+
+    def fail_if_called(*args, **kwargs):
+        called["run_prediction"] = True
+        raise AssertionError("prediction self-heal should not run")
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.run_prediction_and_save_outcome",
+        fail_if_called,
+    )
+
+    cycle_predict_gate_skip_counts: dict[str, int] = {}
+    _run_publish_timeframe_step(
+        write_api=object(),
+        query_api=object(),
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        symbol_activation=activation,
+        run_export_stage=False,
+        run_predict_stage=True,
+        state=state,
+        cycle_export_gate_skip_counts={},
+        cycle_predict_gate_skip_counts=cycle_predict_gate_skip_counts,
+    )
+
+    assert called["run_prediction"] is False
+    assert cycle_predict_gate_skip_counts == {"up_to_date_ingest_watermark": 1}
+
+
+def test_update_full_history_file_uses_full_range_for_long_timeframes(monkeypatch):
+    captured_queries: list[str] = []
+    sample_df = pd.DataFrame(
+        [
+            {
+                "_time": datetime(2026, 2, 1, 0, 0, tzinfo=timezone.utc),
+                "open": 1.0,
+                "high": 2.0,
+                "low": 0.5,
+                "close": 1.5,
+                "volume": 10.0,
+            }
+        ]
+    )
+
+    class FakeQueryAPI:
+        def query_data_frame(self, query: str):
+            captured_queries.append(query)
+            return sample_df.copy()
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.export_ops.save_history_to_json",
+        lambda ctx, df, symbol, timeframe: None,
+    )
+
+    query_api = FakeQueryAPI()
+    assert update_full_history_file(query_api, "BTC/USDT", "1d") is True
+    assert "|> range(start: 0)" in captured_queries[0]
+
+
+def test_update_full_history_file_keeps_lookback_range_for_1h(monkeypatch):
+    captured_queries: list[str] = []
+    sample_df = pd.DataFrame(
+        [
+            {
+                "_time": datetime(2026, 2, 1, 0, 0, tzinfo=timezone.utc),
+                "open": 1.0,
+                "high": 2.0,
+                "low": 0.5,
+                "close": 1.5,
+                "volume": 10.0,
+            }
+        ]
+    )
+
+    class FakeQueryAPI:
+        def query_data_frame(self, query: str):
+            captured_queries.append(query)
+            return sample_df.copy()
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.export_ops.save_history_to_json",
+        lambda ctx, df, symbol, timeframe: None,
+    )
+
+    query_api = FakeQueryAPI()
+    assert update_full_history_file(query_api, "BTC/USDT", "1h") is True
+    assert "|> range(start: -30d)" in captured_queries[0]

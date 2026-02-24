@@ -1,9 +1,10 @@
 # Coin Predict Decision Register (Active)
 
-- Last Updated: 2026-02-19
-- Scope: archive 연동형 의사결정 레지스터 (요약/상세 분리)
+- Last Updated: 2026-02-23
+- Scope: 활성 결정 요약 + archive 원문 링크
 - Full Phase A History: `docs/archive/phase_a/DECISIONS_PHASE_A_FULL_2026-02-12.md`
 - Full Phase B History: `docs/archive/phase_b/DECISIONS_PHASE_B_FULL_2026-02-19.md`
+- Full Phase C History: `docs/archive/phase_c/DECISIONS_PHASE_C_FULL_2026-02-20.md`
 
 ## 1. Archived Decisions (Summary)
 | ID | Topic | Current Rule | Revisit Trigger |
@@ -37,149 +38,31 @@
 | D-2026-02-19-44 | B-008 Closure | FE 미구축 + sunset으로 `scope close` | FE 구축 재개 시 |
 | D-2026-02-19-45 | Phase B Archiving | B 원문은 archive, 활성 문서는 요약 유지 | 차기 Phase 종료 시 |
 
-## 2. Non-Archived Decisions (Detailed)
-### D-2026-02-13-32
-- Date: 2026-02-13
-- Status: Accepted
-- Topic: Phase D Model Coverage Strategy (Tiered Coverage + Fallback Chain)
-- Context:
-  - Symbol/Timeframe별 전용 모델 일괄 도입은 Free Tier 자원/운영 복잡도 기준에서 초기 실패 확률이 높다.
-  - 목표는 "모든 모델 자동화"가 아니라 운영 가능한 AIOps 역량 증명이다.
-- Decision:
-  - Phase D 기본 커버리지는 `timeframe-shared champion`으로 시작한다.
-  - `symbol+timeframe` dedicated는 승격 조건(최소 샘플/성능 개선/비용 허용)을 만족할 때만 도입한다.
-  - fallback 체인은 `dedicated -> shared -> insufficient_data`로 고정한다.
-  - dedicated 실패를 조용히 shared로 은닉하지 않고 상태/사유를 노출한다.
-- Consequence:
-  - 단기 모델 다양성은 줄지만 운영 안정성과 설명 가능성이 높아진다.
-- Revisit Trigger:
-  - shared 모델 품질 저하 반복 또는 심볼/트래픽 급증 시
-
-### D-2026-02-13-33
-- Date: 2026-02-13
-- Status: Accepted
-- Topic: Multi-Timeframe Cycle Cadence - Boundary + Detection Gate Hybrid
-- Context:
-  - 고정 poll loop는 다중 timeframe에서 overrun/불필요 실행을 유발한다.
-- Decision:
-  - 실행 주기는 UTC boundary 기준으로 고정한다.
-  - 실행 직전 detection gate를 적용해 신규 closed candle이 없으면 skip한다.
-  - 구현 순서는 `C-006 -> C-007`로 고정한다.
-  - 장애 시 기존 poll loop로 즉시 rollback 가능해야 한다.
-- Consequence:
-  - 경계 정합성과 비용 효율을 동시에 개선한다.
-- Revisit Trigger:
-  - `overrun_rate` 상승 또는 `missed_boundary` 재발 시
-
-### D-2026-02-13-34
-- Date: 2026-02-13
-- Status: Accepted
-- Topic: Reconciliation Mismatch Semantics + Derived Timeframe Ingest Guard
-- Context:
-  - 내부/외부 mismatch 규칙이 혼재되어 critical 기준이 불명확했다.
-- Decision:
-  - `internal_deterministic_mismatch`: 1회 발생도 즉시 critical.
-  - `external_reconciliation_mismatch`: 단발 warning, 동일 bucket 3회 연속 시 critical.
-  - `1d/1w/1M` direct ingest는 금지, `1h` downsample materialization 경로로 고정한다.
-- Consequence:
-  - 무결성 오류와 외부 대사 차이를 구분해 운영 판단을 명확히 한다.
-- Revisit Trigger:
-  - 외부 warning 과다 또는 direct ingest 우회 필요 긴급 사건 발생 시
-
-### D-2026-02-13-35
-- Date: 2026-02-13
-- Status: Accepted
-- Topic: `1h` Underfill Guard is Temporary Containment (Not Final Fix)
-- Context:
-  - underfill 증상 완화를 위해 guard를 넣었지만 RCA는 미완료였다.
-- Decision:
-  - `underfill -> rebootstrap` guard는 임시 방편(containment)으로 분류한다.
-  - RCA 완료 전 guard 제거를 금지한다.
-  - RCA 완료 기준(재현/인과 증거, 원인 분류, 영구 수정 또는 유지 근거 문서화)을 요구한다.
-- Consequence:
-  - 단기 복구성은 높아지지만 재백필 비용 관찰이 필요하다.
-- Revisit Trigger:
-  - guard 재트리거 빈도 증가 또는 관찰 창 종료 시
-
-### D-2026-02-17-37
-- Date: 2026-02-17
-- Status: Accepted
-- Topic: `C-008` RCA - `1h` underfill 원인 고정 및 guard 수명 결정
-- Context:
-  - legacy fallback이 타 timeframe row를 오인해 `1h` since 계산을 오염시킬 수 있었다.
-- Decision:
-  - legacy fallback은 `timeframe` 태그가 없는 row(`not exists r["timeframe"]`)로 제한한다.
-  - cross-timeframe 오염 경로를 차단한다.
-  - guard는 즉시 제거하지 않고 2차 안전장치로 유지한다.
-- Consequence:
-  - `1h` 커버리지 계산 오염 가능성을 낮추고 underfill 재발 확률을 줄인다.
-- Revisit Trigger:
-  - guard 재트리거 추세가 운영 허용치 초과 시
-
-### D-2026-02-17-38
-- Date: 2026-02-17
-- Status: Accepted
-- Topic: `C-005B` Worker File Split + 2-Service Deployment + Ingest-Watermark Publish Gate
-- Context:
-  - 단일 엔트리 구조는 역할 경계가 불명확해 장애 격리성과 가독성이 낮았다.
-- Decision:
-  - 엔트리포인트를 ingest/predict/export/publish 파일로 분리한다.
-  - 운영 기본은 compose 2-service(`worker-ingest`, `worker-publish`)로 고정한다.
-  - publish 트리거는 ingest watermark advance 기반으로 고정한다.
-- Consequence:
-  - 운영 비용 급증 없이 책임 경계와 장애 전파 통제를 개선한다.
-- Revisit Trigger:
-  - publish backlog/자원 병목/워터마크 경합이 반복될 때
-
-### D-2026-02-19-39
-- Date: 2026-02-19
-- Status: Accepted
-- Topic: Multi-Timeframe Freshness Threshold Baseline (`1w`/`1M`) + `4h` Legacy Compatibility
-- Context:
-  - 기본 threshold가 `1h/4h/1d` 중심으로 남아 장주기 TF 기준이 불명확했다.
-- Decision:
-  - 기본 threshold를 다음으로 고정한다.
-    - `1w`: soft `11520m`(8d), hard `23040m`(16d)
-    - `1M`: soft `50400m`(35d), hard `100800m`(70d)
-  - `4h`는 legacy compatibility로 유지하고 제거는 후속 결정으로 분리한다.
-- Consequence:
-  - 장주기 TF freshness 판정 일관성이 향상된다.
-- Revisit Trigger:
-  - `1w/1M` 경보 과소/과다 또는 `4h` 비사용 근거 확정 시
-
-### D-2026-02-19-40
-- Date: 2026-02-19
-- Status: Accepted
-- Topic: Monitor Influx-JSON Consistency Must Be Timeframe-Aware
-- Context:
-  - 심볼 단위 조회를 timeframe 판정에 재사용해 오탐/누락 가능성이 있었다.
-- Decision:
-  - monitor Influx latest 조회 기준을 `symbol+timeframe`으로 고정한다.
-  - `PRIMARY_TIMEFRAME`에만 legacy(no timeframe tag) row fallback을 허용한다.
-  - consistency override 정책은 기존 경계(기본 JSON 판정 + hard limit 초과 승격)를 유지한다.
-- Consequence:
-  - multi-timeframe 운영의 대사 신뢰도가 높아진다.
-- Revisit Trigger:
-  - query 비용 임계 초과 또는 오탐/누락 재발 시
-
-### D-2026-02-19-41
-- Date: 2026-02-19
-- Status: Accepted
-- Topic: `R-005` SLA-lite Baseline Lock (`User Plane Availability`)
-- Context:
-  - 지표는 있었지만 공식/데이터소스/주기가 문서 간 완전히 잠기지 않았다.
-- Decision:
-  - Availability: `successful_probes / total_probes` (대상: static + `/status`)
-  - Alert Miss Rate: `missed_alert_transitions / total_unhealthy_transitions`
-  - MTTR-Stale: `avg(recovery_detected_at - hard_stale_detected_at)`
-  - Cadence: `daily rollup + weekly review`
-- Consequence:
-  - 포트폴리오 관점의 운영 지표 경계가 명확해진다.
-- Revisit Trigger:
-  - monitor 이벤트 영속화 도입 또는 트래픽/사고 빈도 증가 시
+## 2. Current Baseline Decisions (Summary)
+| ID | Topic | Current Rule | Revisit Trigger |
+|---|---|---|---|
+| D-2026-02-13-32 | Phase D Coverage Strategy | 기본은 `timeframe-shared champion` 단일화. `symbol+timeframe dedicated` 승격은 당분간 보류(Free Tier 인프라 OOM 방지 및 운영 제약 우선 고려) | shared 품질 저하 반복 및 인프라(RAM) 증설 또는 최적화 완료 시 |
+| D-2026-02-13-33 | Cycle Cadence | `UTC boundary + detection gate` 하이브리드 고정 | `overrun_rate` 상승 또는 `missed_boundary` 재발 |
+| D-2026-02-13-34 | Reconciliation + Derived Guard | 내부 mismatch 즉시 critical, 외부 mismatch는 3회 연속 critical, `1d/1w/1M` direct ingest 금지 | 외부 warning 과다, direct ingest 우회 긴급 이슈 |
+| D-2026-02-13-35 | `1h` Underfill Guard Position | `underfill -> rebootstrap` guard는 임시 containment, RCA 전 제거 금지 | guard 재트리거 빈도 증가, 관찰 창 종료 |
+| D-2026-02-17-37 | `C-008` RCA Result | legacy fallback을 no-timeframe row로 제한해 cross-timeframe 오염 차단 | guard 재트리거가 운영 허용치 초과 |
+| D-2026-02-17-38 | Worker Split + Publish Gate | `worker-ingest`/`worker-publish` 2-service + ingest watermark gate 고정 | publish backlog/자원 병목/워터마크 경합 반복 |
+| D-2026-02-19-39 | Freshness Thresholds | `1w/1M` threshold 고정, `4h`는 legacy compatibility 유지 | `1w/1M` 경보 과소/과다, `4h` 비사용 근거 확정 |
+| D-2026-02-19-40 | Monitor Consistency Scope | monitor consistency는 `symbol+timeframe`, legacy fallback은 `PRIMARY_TIMEFRAME`만 허용 | query 비용 임계 초과, 오탐/누락 재발 |
+| D-2026-02-19-41 | SLA-lite Baseline | availability/alert-miss/MTTR-stale 공식 + 일간 rollup/주간 review 고정 | monitor 이벤트 영속화 도입, 사고 빈도 증가 |
+| D-2026-02-20-46 | Long-Stale Escalation | `*_escalated` 이벤트 + `MONITOR_ESCALATION_CYCLES` 기준, monitor는 alert-only 유지 | escalation 알림 과다/과소, poll cadence 변경 |
+| D-2026-02-20-47 | Standalone Training Boundary | 학습은 `worker-train` one-shot 경계로 분리, 자동 재학습/승격은 D 후속 태스크로 분리 | 수동 학습 빈도 급증, 학습-운영 자원 경합 재발 |
+| D-2026-02-20-48 | Phase C Archive Boundary | Phase C 상세는 archive 단일 출처, active 문서는 요약 유지, 우선순위는 Phase D로 고정 | Phase C 재개 필요 운영 이슈 발생 |
+| D-2026-02-21-49 | pipeline_worker Decomposition | config/guards/scheduling을 별도 모듈로 분리, 상태 관리/ctx 래퍼는 D-001 후 후속 수행 | 분해 후 테스트 실패 발생, 또는 D-001 설계 시 상태 레이어 필요 확정 |
+| D-2026-02-21-50 | Phase D Plan Audit | Immediate Bundle을 `D-010→Direct Fetch→D-012→D-001→D-002`로 재정렬, D-001 scope을 "계약 명시화"로 축소, D-003은 3개 서브태스크로 분해 예정 | 실행 중 선후관계 오류 발견, 또는 D-001 설계 시 추상 인터페이스 필요성 재확인 |
+| D-2026-02-21-51 | 1d/1w/1M Direct Fetch 전환 | downsample 경로 폐기, 모든 TF를 거래소 direct fetch로 통일, downsample_lineage 코드 제거 | direct fetch 데이터 계약 위반(누락/지연/갭) 반복 확인, 또는 거래소 API 장기 TF 제공 중단 |
+| D-2026-02-23-52 | 1d/1w/1M Full-Fill 복구 방침 | InfluxDB 1d/1w/1M 데이터 삭제 + `ingest_state.json` cursor 제거로 `bootstrap_exchange_earliest` 재진입 유도. 코드 수정(자동 재감지) 대신 운영 조치 선택(단순한 해법 우선 원칙) | 동일 증상 재발(신규 TF 추가 시), 또는 운영 조치 빈도 증가 시 자동 감지 코드 도입 재검토 |
+| D-2026-02-23-53 | 방어 로직 구조 판정 | 방어 메커니즘 자체는 정당(silent failure 금지 철학의 필수 파생). 문제는 구조 분산이며 D-016/D-017에서 상태 관리 분리 + ctx 래퍼 해소로 개선. 방어 수 축소는 하지 않음 | D-016/D-017 실행 시점, 또는 방어 분기 추가로 `pipeline_worker.py` 3000줄 초과 시 |
 
 ## 3. Decision Operation Policy
-1. archive로 이동된 결정은 요약 형태로만 활성 문서에 유지한다.
-2. 새 결정은 활성 문서 `Section 2`에 상세 기록한다.
-3. Phase 종료 또는 명시 요청 시 archive append를 수행한다.
-4. archive 이동 후 활성 문서는 현재 규칙과 재검토 트리거 중심으로 유지한다.
+1. 활성 문서는 요약만 유지한다(상세 서술 금지).
+2. 상세 원문은 `docs/archive/*`에 append-only로 보존한다.
+3. 신규 결정 추가 시:
+   - active에는 요약 행을 추가한다.
+   - 상세 본문은 해당 phase archive 문서에 추가한다.
+4. phase 종료 시 `DECISIONS/PLAN/TASKS` 원문을 archive로 스냅샷하고 active는 요약 상태로 되돌린다.

@@ -309,10 +309,15 @@ def update_full_history_file(ctx, query_api, symbol, timeframe) -> bool:
     Why:
     - ingest 결과를 사용자 평면(정적 파일)으로 반영하는 공식 경로를 고정한다.
     """
-    lookback_days = ctx._lookback_days_for_timeframe(timeframe)
+    if timeframe in ctx.FULL_HISTORY_EXPORT_TIMEFRAMES:
+        range_start = "0"
+    else:
+        lookback_days = ctx._lookback_days_for_timeframe(timeframe)
+        range_start = f"-{lookback_days}d"
+
     query = f"""
     from(bucket: "{ctx.INFLUXDB_BUCKET}")
-      |> range(start: -{lookback_days}d)
+      |> range(start: {range_start})
       |> filter(fn: (r) => r["_measurement"] == "ohlcv")
       |> filter(fn: (r) => r["symbol"] == "{symbol}")
       |> filter(fn: (r) => r["timeframe"] == "{timeframe}")

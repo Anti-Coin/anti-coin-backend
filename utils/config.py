@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import timedelta
 
 DEFAULT_TARGET_SYMBOLS = [
@@ -9,7 +10,7 @@ DEFAULT_TARGET_SYMBOLS = [
     "DOGE/USDT",
 ]
 DEFAULT_INGEST_TIMEFRAMES = ["1h"]
-PHASE_A_FIXED_TIMEFRAME = "1h"
+SINGLE_TIMEFRAME_FIXED = "1h"
 DEFAULT_FRESHNESS_THRESHOLD_MINUTES = {
     "1h": 65,
     "4h": 250,
@@ -25,6 +26,8 @@ DEFAULT_FRESHNESS_HARD_THRESHOLD_MINUTES = {
     "1M": 70 * 24 * 60,
 }
 
+SYMBOL_PATTERN = re.compile(r"^[A-Z0-9]+/[A-Z0-9]+$")
+
 
 def _parse_csv_env(raw: str | None, default: list[str]) -> list[str]:
     if not raw:
@@ -32,6 +35,45 @@ def _parse_csv_env(raw: str | None, default: list[str]) -> list[str]:
 
     values = [item.strip() for item in raw.split(",") if item.strip()]
     return values or default.copy()
+
+
+def _normalize_and_validate_symbols(
+    symbols: list[str], *, env_name: str
+) -> list[str]:
+    """
+    TARGET_SYMBOLS 계열 입력을 정규화/검증한다.
+
+    Rules:
+    - 대문자 통일 (binance spot symbol 관례)
+    - 형식 강제: BASE/QUOTE (알파벳+숫자)
+    - 중복 제거(입력 순서 유지)
+    """
+    if not symbols:
+        raise ValueError(f"{env_name} must not be empty.")
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    invalid: list[str] = []
+
+    for raw_symbol in symbols:
+        symbol = raw_symbol.strip().upper()
+        if not SYMBOL_PATTERN.fullmatch(symbol):
+            invalid.append(raw_symbol)
+            continue
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        normalized.append(symbol)
+
+    if invalid:
+        rendered = ", ".join(invalid)
+        raise ValueError(
+            f"{env_name} contains invalid symbol(s): {rendered}. "
+            "Expected format like BTC/USDT."
+        )
+    if not normalized:
+        raise ValueError(f"{env_name} resolved to empty after normalization.")
+    return normalized
 
 
 def _parse_bool_env(raw: str | None, default: bool = False) -> bool:
@@ -77,7 +119,8 @@ def _enforce_ingest_timeframe_guard(
     timeframes: list[str], *, allow_multi: bool
 ) -> list[str]:
     """
-    기본값은 Phase A 가드(1h 고정)이며, allow_multi=true일 때만 다중 timeframe을 허용한다.
+    기본값은 single-timeframe 안전 모드(1h 고정)이며,
+    allow_multi=true일 때만 다중 timeframe을 허용한다.
     """
     if not timeframes:
         raise ValueError("INGEST_TIMEFRAMES must not be empty.")
@@ -85,18 +128,20 @@ def _enforce_ingest_timeframe_guard(
     if allow_multi:
         return timeframes.copy()
 
-    if len(timeframes) != 1 or timeframes[0] != PHASE_A_FIXED_TIMEFRAME:
+    if len(timeframes) != 1 or timeframes[0] != SINGLE_TIMEFRAME_FIXED:
         rendered = ",".join(timeframes) if timeframes else "(empty)"
         raise ValueError(
-            "INGEST_TIMEFRAMES must be exactly '1h' before Phase B "
+            "INGEST_TIMEFRAMES is locked to '1h' when "
+            "ENABLE_MULTI_TIMEFRAMES=false "
             "(set ENABLE_MULTI_TIMEFRAMES=true to allow multiple timeframes). "
             f"Got: {rendered}"
         )
     return timeframes.copy()
 
 
-TARGET_SYMBOLS = _parse_csv_env(
-    os.getenv("TARGET_SYMBOLS"), DEFAULT_TARGET_SYMBOLS
+TARGET_SYMBOLS = _normalize_and_validate_symbols(
+    _parse_csv_env(os.getenv("TARGET_SYMBOLS"), DEFAULT_TARGET_SYMBOLS),
+    env_name="TARGET_SYMBOLS",
 )
 ENABLE_MULTI_TIMEFRAMES = _parse_bool_env(
     os.getenv("ENABLE_MULTI_TIMEFRAMES"),

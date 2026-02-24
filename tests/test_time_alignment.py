@@ -105,9 +105,7 @@ def test_detect_timeframe_gaps_identifies_missing_windows():
     gaps = detect_timeframe_gaps(opens, "1h")
 
     assert len(gaps) == 1
-    assert gaps[0].start_open == datetime(
-        2026, 2, 10, 2, 0, tzinfo=timezone.utc
-    )
+    assert gaps[0].start_open == datetime(2026, 2, 10, 2, 0, tzinfo=timezone.utc)
     assert gaps[0].end_open == datetime(2026, 2, 10, 3, 0, tzinfo=timezone.utc)
     assert gaps[0].missing_count == 2
 
@@ -123,6 +121,7 @@ def test_detect_timeframe_gaps_handles_unsorted_and_duplicate_timestamps():
     assert gaps[0].missing_count == 1
 
 
-def test_timeframe_to_timedelta_rejects_month_timeframe():
-    with pytest.raises(ValueError):
-        timeframe_to_timedelta("1M")
+def test_timeframe_to_timedelta_approximates_month_timeframe():
+    from datetime import timedelta
+
+    assert timeframe_to_timedelta("1M") == timedelta(days=30)

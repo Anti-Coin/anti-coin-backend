@@ -3,7 +3,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from utils.config import FRESHNESS_HARD_THRESHOLDS, FRESHNESS_THRESHOLDS
+from utils.config import (
+    FRESHNESS_HARD_THRESHOLDS,
+    FRESHNESS_THRESHOLDS,
+    PRIMARY_TIMEFRAME,
+)
 from utils.freshness import classify_freshness, parse_utc_timestamp
 
 
@@ -27,9 +31,12 @@ def prediction_file_candidates(
     timeframe_file = static_dir / f"prediction_{safe_symbol}_{timeframe}.json"
     legacy_file = static_dir / f"prediction_{safe_symbol}.json"
 
-    # Phase A/B transition 기간에는 legacy 파일명을 최종 fallback으로 유지한다.
+    # legacy fallback은 PRIMARY_TIMEFRAME에만 허용한다.
+    # non-primary timeframe은 canonical 파일만 신뢰해 timeframe 오염을 막는다.
     if timeframe_file == legacy_file:
         return [legacy_file]
+    if timeframe != PRIMARY_TIMEFRAME:
+        return [timeframe_file]
     return [timeframe_file, legacy_file]
 
 

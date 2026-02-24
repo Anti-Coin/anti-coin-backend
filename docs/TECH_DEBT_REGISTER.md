@@ -1,6 +1,6 @@
 # Coin Predict Technical Debt Register
 
-- Last Updated: 2026-02-19
+- Last Updated: 2026-02-23
 - Purpose: 기술 부채를 세션 간 누락 없이 추적
 
 ## 1. 운용 규칙
@@ -22,7 +22,7 @@
 | TD-009 | Deployment | dev push 즉시 배포 구조 | 운영 실수 영향 확대 | open | (TBD) | CI/CD 정책 분리 문서화 후 적용 |
 | TD-010 | Modeling | 모델 인터페이스 미구현 | 모델 교체 비용 증가 | open | D-001 | BaseModel 추상화 도입 |
 | TD-011 | Modeling | shadow 추론/평가 파이프라인 미구현 | 모델 비교 근거 부족 | open | D-003,D-004 | shadow 결과 저장/리포트 구현 |
-| TD-012 | Modeling | 자동 재학습/승격 게이트 미구현 | 모델 운영 수작업 부담 | open | D-006,D-007,D-005 | 수동 트리거부터 도입 |
+| TD-012 | Modeling | 자동 재학습/승격 게이트 미구현 | 모델 운영 수작업 부담 | open | C-004,D-005,D-006,D-007,D-012,D-013,D-014,D-015 | `C-004`로 수동 one-shot 학습 경계는 확보됨. Influx SoT 학습 입력/재학습 트리거/실행 락/학습 관측성은 D 태스크에서 후속 구현 |
 | TD-013 | Reliability | atomic JSON 권한 이슈 (회귀 위험) | nginx 읽기 실패 재발 가능 | mitigated | A-007,A-011-2 | 회귀 테스트 유지 및 CI 연동 |
 | TD-014 | Deployment | worker 이미지 ENTRYPOINT 고정으로 monitor 커맨드 충돌 | monitor 오작동/중복 worker 실행 가능 | resolved | A-010-6 | 범용 ENTRYPOINT + worker 기본 CMD로 분리 적용 |
 | TD-015 | Data Consistency | Influx-JSON 최신 시각 불일치 검증 미구현 | 운영자가 오래된 JSON을 정상으로 오해할 수 있음 | resolved | A-014 | Influx 최신 시각 vs static `updated_at` 비교/승격 로직 구현 + `/predict` 미래값 운영 스모크체크(전체 심볼) 확인 완료 |
@@ -30,17 +30,21 @@
 | TD-017 | Runtime Guard | Phase B 이전 다중 timeframe 설정 방어 미구현 | `missing` 오탐 증가 및 운영 판단 혼선 | resolved | A-015 | `INGEST_TIMEFRAMES=1h` fail-fast 가드 적용 완료 |
 | TD-018 | Serving Policy | API-SSG 경계 및 endpoint sunset 기준의 운영 계약(필드/경로) 미확정 | 사용자/운영 경로 혼선, 불필요한 유지비 지속 | resolved | A-016,B-005 | `/history`/`/predict` sunset(`410`) 완료 + 오너 확인 기반 fallback 비의존 운영 검증 반영. 재발 시 rollback runbook으로 즉시 복구 후 재평가 |
 | TD-019 | Worker Architecture | ingest/predict/export 단일 worker 결합 구조 | 특정 단계 지연/장애가 전체 파이프라인 SLA를 악화 | mitigated | C-005 | `worker-ingest`/`worker-publish` 2-service 분리 + 엔트리포인트 분리(`ingest/predict/export`) + 코드 레벨 도메인 분리(`workers/ingest.py`,`workers/predict.py`,`workers/export.py`) 적용 완료. publish 내부 predict/export를 별도 프로세스로 완전 분리하는 승격은 backlog/리소스 관측 후 판단 |
-| TD-020 | Scheduling | 고정 간격 while-loop 중심 스케줄 | timeframe별 리소스 낭비/경계 불일치 가능 | open | C-006,C-007 | `D-2026-02-13-33` 기준으로 `C-006(UTC boundary scheduler) -> C-007(new closed candle detection gate)` 순서로 전환 |
+| TD-020 | Scheduling | 고정 간격 while-loop 중심 스케줄 | timeframe별 리소스 낭비/경계 불일치 가능 | mitigated | C-006,C-007,C-011 | `C-006/C-007/C-011`로 boundary+detection+restart catch-up 전환이 완료됨. 잔여 리스크는 `missed_boundary_count/rate` 운영 추세 감시로 관리 |
 | TD-021 | Failure Signaling | predict 실패 시 degraded 상태/알림 표준 미구현 | 마지막 정상값 제공 중 실패 사실이 숨겨질 수 있음 | resolved | A-017 | worker predict 실패/복구 상태전이 알림 + `/status` degraded/last success/failure 노출 적용 완료 |
 | TD-022 | Freshness Semantics | prediction 파일 `updated_at` 기반 fresh 판정이 입력 데이터 stale을 가릴 수 있음 | freshness honesty 훼손 및 운영 오판 가능 | open | A-014,A-017 | A-014 정합성 체크 운영 검증은 완료, 입력 데이터 최신 시각(`ohlcv_last`)의 사용자 노출 경로 추가 검토 필요 |
 | TD-023 | Status Consistency | API와 monitor의 prediction 파일 선택/판정 경로가 분리됨 | 동일 시점 상태 불일치 및 경보 혼선 가능 | resolved | A-018 | `utils/prediction_status.py` 공통 evaluator 도입 및 API/monitor 공용 경로 통합 완료 |
-| TD-024 | Alerting | worker 단계별 부분 실패가 운영 알림으로 충분히 승격되지 않음 | 프로세스 생존 상태에서 기능 실패 장기 미탐지 가능 | mitigated | A-017,A-010-7,C-005 | predict 상태전이/지속재알림은 반영됨. `worker-ingest`/`worker-publish` 분리 후에도 export 전용 실패 알림 표준은 미완료이므로 후속 알림 세분화 태스크에서 재평가 |
+| TD-024 | Alerting | worker 단계별 부분 실패가 운영 알림으로 충분히 승격되지 않음 | 프로세스 생존 상태에서 기능 실패 장기 미탐지 가능 | mitigated | A-017,A-010-7,C-005,C-016 | stale 장기 지속 escalation(`*_escalated`)과 runbook은 반영됨. 다만 `worker-ingest`/`worker-publish` 분리 후 export 전용 실패 알림 표준은 미완료이므로 후속 알림 세분화 태스크에서 재평가 |
 | TD-025 | Ingest Recovery | DB last + 30일 룩백 기반 since 결정 | 장기 중단 후 복구 지점 부정확/과다 백필 가능 | resolved | A-002 | `utils/ingest_state.py` 도입으로 `symbol+timeframe` 커서 저장/재시작 복구 기준 고정 완료 |
 | TD-026 | Maintainability | 주석/로그 밀도가 경로별로 불균등함 | 신규 세션/회귀 분석 시 의도 파악 지연 | mitigated | A-019,C-005 | 핵심 경로 1차 보강은 완료. 신규 복잡 분기 추가 시 동일 기준(의도 주석 + 상태전이 로그) 즉시 적용 |
 | TD-027 | Serving Policy | `1m` 예측/서빙 경계가 불명확함(예측 비서빙 vs 제공 경로) | candle 경계 내 오버런, 의미 낮은 예측 노출, FE 계약 혼선 | open | B-001,B-003 | `1m`은 prediction 비서빙 + hybrid API(`latest closed 180`) 경계를 정책/테스트로 고정 |
 | TD-028 | Storage Budget | 다중 심볼 `1m` 원본 장기 보관 전략 부재 | Free Tier 50GB 초과로 쓰기 실패/운영 중단 가능 | resolved | B-006 | `1m` rolling retention(`14d default / 30d cap`) + disk watermark(70/85/90) 경보/차단 + `block` 레벨 초기 백필 차단 반영 |
-| TD-029 | Data Lineage | `1h->1d/1w/1M` downsample 경로/검증 기준 미정 | timeframe 간 정합성 불일치, 재현성 저하 | resolved | B-001,B-006 | `1h->1d/1w/1M` downsample 집계 경로 구현 + `downsample_lineage.json` 기록 + incomplete bucket 검증/회귀 테스트 반영 |
-| TD-030 | Modeling Guard | 장기 timeframe 최소 샘플 부족 시 예측 차단/품질표시 정책 미구현 | 통계적 신뢰도 부족한 예측이 정상처럼 노출될 수 있음 | open | D-010 | Hard Gate(`insufficient_data`) + Accuracy Signal(`mae/smape/directional/sample_count`) 표준화 |
+| TD-029 | Data Lineage | `1h->1d/1w/1M` downsample 경로/검증 기준 미정 | timeframe 간 정합성 불일치, 재현성 저하 | resolved | B-001,B-006,D-018 | downsample 경로는 `D-018`로 제거 완료(코드 비참조). `downsample_lineage.json` 및 관련 코드 참조가 제거됐다. 상세: `docs/DISCUSSION_PHASE_D_AUDIT_2026-02-21.md` |
+| TD-030 | Modeling Guard | 장기 timeframe 최소 샘플 부족 시 예측 차단/품질표시 정책 미구현 | 통계적 신뢰도 부족한 예측이 정상처럼 노출될 수 있음 | resolved | D-010 | `MIN_SAMPLE_BY_TIMEFRAME` config + `count_ohlcv_rows` query + `run_prediction_and_save` 내 gate 삽입. 미달 시 `("skipped", "insufficient_data")` 반환. 회귀 테스트 통과 |
+| TD-031 | Maintainability | `scripts/pipeline_worker.py` 책임 집중(2.6k LOC + 장문 함수) | 작은 수정에도 영향 범위 예측 실패/리뷰 비용 증가 | mitigated | C-013,D-016,D-017 | config/guards/scheduling 분리 완료(2887→2644줄). 상태 관리 분리(`D-016`)와 ctx 래퍼 해소(`D-017`)는 D-001/D-002 후 후속 수행 |
+| TD-032 | Publish Recovery | static history/prediction 파일 수동 삭제 시 watermark gate가 최신으로 판정하면 파일 복구가 지연됨 | 운영자 실수 후 사용자 플레인 산출물 누락 장기화 | resolved | D-019 | publish gate skip(`up_to_date_ingest_watermark`)에서도 canonical history 파일 누락은 self-heal export를 수행하고, canonical prediction 파일 누락은 `last_success_at` 존재 조건에서 self-heal prediction을 수행하도록 고정. 장주기 DB empty/state drift는 exchange earliest full-fill로 보정 |
+| TD-033 | Ingest Recovery | `resolve_ingest_since`에 full-fill 재감지 메커니즘 부재. `last_time` 존재 시 `db_last`로 고착되어 lookback 데이터만 있는 상태에서 full-fill로 전환 불가 | 장주기 TF 데이터 부족 → prediction 차단 연쇄 | open | D-020 | 현재는 운영 조치(DB 삭제)로 해결. 재발 빈도 증가 시 DB 첫 행 vs exchange earliest 비교 기반 자동 재감지 코드 도입 검토 |
+| TD-034 | Maintainability | Python 상수 ~55개가 `worker_config.py`/`utils/config.py`에 구조 없이 평면 나열되며, `PRIMARY_TIMEFRAME` 재노출 등 의존성 혼란 존재 | 상수 탐색/수정 비용 증가 | open | D-016,D-021 | D-016 상태 관리 분리 시 역할별 그룹화(dataclass/섹션) + 재노출 패턴 제거 |
 
 ## 3. 상태 정의
 1. `open`: 미해결

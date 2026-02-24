@@ -1,6 +1,6 @@
 # Coin Predict Archive Index
 
-- Last Updated: 2026-02-19
+- Last Updated: 2026-02-20
 - Purpose: 활성 문서를 가볍게 유지하면서, 과거 의사결정/진행 이력을 무손실로 보존
 
 ## 1. Archive Layout
@@ -13,6 +13,12 @@
 1. `docs/archive/phase_b/DECISIONS_PHASE_B_FULL_2026-02-19.md`
 2. `docs/archive/phase_b/PLAN_LIVING_HYBRID_PHASE_B_FULL_2026-02-19.md`
 3. `docs/archive/phase_b/TASKS_MINIMUM_UNITS_PHASE_B_FULL_2026-02-19.md`
+
+### Phase C
+1. `docs/archive/phase_c/DECISIONS_PHASE_C_FULL_2026-02-20.md`
+2. `docs/archive/phase_c/PLAN_LIVING_HYBRID_PHASE_C_FULL_2026-02-20.md`
+3. `docs/archive/phase_c/TASKS_MINIMUM_UNITS_PHASE_C_FULL_2026-02-20.md`
+4. `docs/archive/phase_c/DISCUSSION_PHASE_C_FULL_2026-02-20.md`
 
 ## 2. Rules
 1. Archive 파일은 append-only 원칙을 따른다.

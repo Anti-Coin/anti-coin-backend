@@ -6,6 +6,7 @@ from scripts.status_monitor import (
     _parse_positive_int_env,
     apply_influx_json_consistency,
     detect_alert_event,
+    detect_escalation_event,
     detect_realert_event,
     evaluate_symbol_timeframe,
     get_latest_ohlcv_timestamp,
@@ -40,6 +41,25 @@ def test_evaluate_symbol_timeframe_fresh_from_legacy_file(tmp_path):
 
     assert snapshot.status == "fresh"
     assert snapshot.updated_at == "2026-02-10T11:55:00Z"
+
+
+def test_evaluate_symbol_timeframe_non_primary_does_not_use_legacy_file(
+    tmp_path,
+):
+    now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
+    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T11:55:00Z")
+
+    snapshot = evaluate_symbol_timeframe(
+        symbol="BTC/USDT",
+        timeframe="1d",
+        now=now,
+        static_dir=tmp_path,
+        soft_thresholds={"1d": timedelta(days=2)},
+        hard_thresholds={"1d": timedelta(days=4)},
+    )
+
+    assert snapshot.status == "missing"
+    assert snapshot.error_code == "missing_file"
 
 
 def test_evaluate_symbol_timeframe_prefers_timeframe_file_over_legacy(tmp_path):
@@ -110,6 +130,16 @@ def test_detect_realert_event_for_hard_and_soft_statuses(monkeypatch):
     assert detect_realert_event("stale", 3) == "soft_stale_repeat"
     assert detect_realert_event("stale", 6) == "soft_stale_repeat"
     assert detect_realert_event("fresh", 6) is None
+
+
+def test_detect_escalation_event_for_hard_and_soft_statuses(monkeypatch):
+    monkeypatch.setattr("scripts.status_monitor.MONITOR_ESCALATION_CYCLES", 6)
+
+    assert detect_escalation_event("hard_stale", 5) is None
+    assert detect_escalation_event("hard_stale", 6) == "hard_stale_escalated"
+    assert detect_escalation_event("corrupt", 6) == "corrupt_escalated"
+    assert detect_escalation_event("stale", 6) == "soft_stale_escalated"
+    assert detect_escalation_event("fresh", 6) is None
 
 
 def test_update_status_cycle_counter_resets_on_status_change():
@@ -264,6 +294,35 @@ def test_run_monitor_cycle_realerts_on_repeated_soft_stale(
     )
     assert [e.event for e in events] == ["soft_stale_repeat"]
     assert events[0].cycles_in_status == 3
+
+
+def test_run_monitor_cycle_prefers_escalation_over_repeat(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr("scripts.status_monitor.MONITOR_RE_ALERT_CYCLES", 3)
+    monkeypatch.setattr("scripts.status_monitor.MONITOR_ESCALATION_CYCLES", 6)
+    state = {}
+    status_counters = {}
+    symbol = "BTC/USDT"
+    now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
+
+    _write_prediction(tmp_path, symbol, "2026-02-10T11:30:00Z")
+
+    events = []
+    for _ in range(6):
+        events = run_monitor_cycle(
+            state=state,
+            status_counters=status_counters,
+            now=now,
+            symbols=[symbol],
+            timeframes=["1h"],
+            static_dir=tmp_path,
+            soft_thresholds={"1h": timedelta(minutes=10)},
+            hard_thresholds={"1h": timedelta(minutes=20)},
+        )
+
+    assert [e.event for e in events] == ["hard_stale_escalated"]
+    assert events[0].cycles_in_status == 6
 
 
 def test_parse_positive_int_env_returns_default_on_invalid(monkeypatch):
