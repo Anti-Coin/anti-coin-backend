@@ -1,6 +1,6 @@
 # Coin Predict Technical Debt Register
 
-- Last Updated: 2026-02-23
+- Last Updated: 2026-02-24
 - Purpose: 기술 부채를 세션 간 누락 없이 추적
 
 ## 1. 운용 규칙
@@ -43,7 +43,7 @@
 | TD-030 | Modeling Guard | 장기 timeframe 최소 샘플 부족 시 예측 차단/품질표시 정책 미구현 | 통계적 신뢰도 부족한 예측이 정상처럼 노출될 수 있음 | resolved | D-010 | `MIN_SAMPLE_BY_TIMEFRAME` config + `count_ohlcv_rows` query + `run_prediction_and_save` 내 gate 삽입. 미달 시 `("skipped", "insufficient_data")` 반환. 회귀 테스트 통과 |
 | TD-031 | Maintainability | `scripts/pipeline_worker.py` 책임 집중(2.6k LOC + 장문 함수) | 작은 수정에도 영향 범위 예측 실패/리뷰 비용 증가 | mitigated | C-013,D-016,D-017 | config/guards/scheduling 분리 완료(2887→2644줄). 상태 관리 분리(`D-016`)와 ctx 래퍼 해소(`D-017`)는 D-001/D-002 후 후속 수행 |
 | TD-032 | Publish Recovery | static history/prediction 파일 수동 삭제 시 watermark gate가 최신으로 판정하면 파일 복구가 지연됨 | 운영자 실수 후 사용자 플레인 산출물 누락 장기화 | resolved | D-019 | publish gate skip(`up_to_date_ingest_watermark`)에서도 canonical history 파일 누락은 self-heal export를 수행하고, canonical prediction 파일 누락은 `last_success_at` 존재 조건에서 self-heal prediction을 수행하도록 고정. 장주기 DB empty/state drift는 exchange earliest full-fill로 보정 |
-| TD-033 | Ingest Recovery | `resolve_ingest_since`에 full-fill 재감지 메커니즘 부재. `last_time` 존재 시 `db_last`로 고착되어 lookback 데이터만 있는 상태에서 full-fill로 전환 불가 | 장주기 TF 데이터 부족 → prediction 차단 연쇄 | open | D-020 | 현재는 운영 조치(DB 삭제)로 해결. 재발 빈도 증가 시 DB 첫 행 vs exchange earliest 비교 기반 자동 재감지 코드 도입 검토 |
+| TD-033 | Ingest Recovery | `resolve_ingest_since`에 full-fill 재감지 메커니즘 부재. `last_time` 존재 시 `db_last`로 고착되어 lookback 데이터만 있는 상태에서 full-fill로 전환 불가 | 장주기 TF 데이터 부족 → prediction 차단 연쇄 | resolved | D-020 | `D-020`으로 운영 복구를 완료했고, 코드에 자동 재감지 가드를 반영했다. full-fill TF에서 `db_first vs exchange_earliest` backward gap을 감지하면 `force_rebootstrap`으로 exchange earliest 재수집을 수행하며, boundary detection gate skip 상태에서도 gap 감지 시 ingest를 override 실행한다. 회귀: `tests/test_pipeline_worker.py` D-020 케이스 통과 |
 | TD-034 | Maintainability | Python 상수 ~55개가 `worker_config.py`/`utils/config.py`에 구조 없이 평면 나열되며, `PRIMARY_TIMEFRAME` 재노출 등 의존성 혼란 존재 | 상수 탐색/수정 비용 증가 | open | D-016,D-021 | D-016 상태 관리 분리 시 역할별 그룹화(dataclass/섹션) + 재노출 패턴 제거 |
 
 ## 3. 상태 정의

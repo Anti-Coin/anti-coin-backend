@@ -56,7 +56,7 @@
 | D-2026-02-21-49 | pipeline_worker Decomposition | config/guards/scheduling을 별도 모듈로 분리, 상태 관리/ctx 래퍼는 D-001 후 후속 수행 | 분해 후 테스트 실패 발생, 또는 D-001 설계 시 상태 레이어 필요 확정 |
 | D-2026-02-21-50 | Phase D Plan Audit | 당시 기준 Immediate Bundle(`D-010→Direct Fetch→D-012→D-001→D-002`)을 고정했다. 현재 실행 묶음은 `D-2026-02-24-56/57`에 따라 직렬 전환 체인(`D-027→D-028→D-029→D-030→D-031`)으로 재잠금됐고, `D-022~D-026`은 hold 상태다(legacy trace). | 실행 중 선후관계 오류 발견, 또는 D-001 설계 시 추상 인터페이스 필요성 재확인 |
 | D-2026-02-21-51 | 1d/1w/1M Direct Fetch 전환 | downsample 경로 폐기, 모든 TF를 거래소 direct fetch로 통일, downsample_lineage 코드 제거 | direct fetch 데이터 계약 위반(누락/지연/갭) 반복 확인, 또는 거래소 API 장기 TF 제공 중단 |
-| D-2026-02-23-52 | 1d/1w/1M Full-Fill 복구 방침 | InfluxDB 1d/1w/1M 데이터 삭제 + `ingest_state.json` cursor 제거로 `bootstrap_exchange_earliest` 재진입 유도. 코드 수정(자동 재감지) 대신 운영 조치 선택(단순한 해법 우선 원칙) | 동일 증상 재발(신규 TF 추가 시), 또는 운영 조치 빈도 증가 시 자동 감지 코드 도입 재검토 |
+| D-2026-02-23-52 | 1d/1w/1M Full-Fill 복구 방침 | 1차 대응으로 운영 조치(InfluxDB 1d/1w/1M 정리 + `ingest_state.json` cursor 제거)를 선택했다. 이후 `D-020` 완료로 자동 재감지 가드가 반영되어 본 결정은 legacy trace로 유지한다(`D-2026-02-24-64`). | full-fill 판단 정책/허용 오차(`FULL_BACKFILL_TOLERANCE_HOURS`) 변경 필요 시 |
 | D-2026-02-23-53 | 방어 로직 구조 판정 | 방어 메커니즘 자체는 정당(silent failure 금지 철학의 필수 파생). 문제는 구조 분산이며 D-016/D-017에서 상태 관리 분리 + ctx 래퍼 해소로 개선. 방어 수 축소는 하지 않음 | D-016/D-017 실행 시점, 또는 방어 분기 추가로 `pipeline_worker.py` 3000줄 초과 시 |
 | D-2026-02-24-54 | Publish Simplification Direction | split+projector 경로 기준선으로 기록한다. 현재 active 경로는 `D-2026-02-24-56/57`(직렬 전환)이며 본 결정은 hold reference로 유지한다. | 직렬 전환 실패 또는 split 경로 재개 필요 시 |
 | D-2026-02-24-55 | State Reduction Boundary | watermark 3종 축소 경계는 split+projector 경로의 감축 규칙으로 유지한다. 현재는 `D-2026-02-24-57`에 따라 hold reference 상태다. | 직렬 경로가 폐기되거나 onboarding/degraded 정책이 변경될 때 |
@@ -68,6 +68,7 @@
 | D-2026-02-24-61 | Serial Publish Reconcile Simplification | serial 경로(ingest stage in-cycle publish)에서는 publish 판단을 "ingest watermark 존재 여부" 단일 기준으로 단순화한다. ingest-vs-publish watermark 비교 gate와 publish skip 시 self-heal 분기는 serial 경로에서 비활성화한다. split 전용 분기 삭제는 `D-035`에서 완료한다. | serial 경로에서 artifact 누락 장기화/중복 publish 관측, 또는 reconcile 기준 변경 필요 시 |
 | D-2026-02-24-62 | Deletion Gate Lock + Rollback Boundary Shift | `D-032` 기준으로 삭제 진입 게이트를 잠근다. runtime 근거는 `D-028` 기록(`samples=240`, `overrun_rate=0.0`, `p95_cycle_seconds=12.57`)이며 삭제 시작점(`D-033+`)부터 rollback 기본 경계는 split 즉시 복귀가 아니라 배포 롤백(직전 정상 이미지/커밋 재배포)으로 전환한다. | `D-033+` 진행 중 성능/복구 악화 관측, 또는 split 경로 재도입 요구가 재상승할 때 |
 | D-2026-02-24-63 | Serial Path Hard Lock | `D-034` 기준으로 `PIPELINE_SERIAL_EXECUTION_ENABLED`와 compose `legacy-split` profile(`worker-publish`)을 제거해 직렬 경로를 유일 실행 계약으로 고정한다. rollback 경로는 split 즉시 복귀가 아닌 배포 롤백(직전 정상 이미지/커밋 재배포)만 사용한다. | 직렬 경로에서 overrun/복구 지연이 임계치를 넘거나, 장애 격리 요구로 split topology 재도입이 필요할 때 |
+| D-2026-02-24-64 | D-020 Closure + Full-Fill Re-detection Guard | `D-020`은 운영 복구로 종료하되 재발 방지는 코드 계약으로 잠근다. full-fill TF(`1h/1d/1w/1M`)에서 `db_first > exchange_earliest + tolerance`면 `force_rebootstrap`을 활성화해 exchange earliest부터 재수집하며, boundary detection gate skip 상태여도 backward coverage gap이 감지되면 ingest를 진행한다. | false positive 재부트스트랩 증가, 또는 장주기 TF underfill 재발 시 |
 
 ## 3. Decision Operation Policy
 1. 활성 문서는 요약만 유지한다(상세 서술 금지).

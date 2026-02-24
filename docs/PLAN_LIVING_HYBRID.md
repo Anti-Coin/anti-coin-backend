@@ -62,12 +62,12 @@
 9. `D-035` 완료: split 전용 publish gate/self-heal 분기 제거
 10. `D-036` 완료: split 전용 watermark 상태파일/저장 계층 제거
 11. `D-037` 완료: split 전용 worker 엔트리포인트 제거
+12. `D-020` 완료: 1d/1w/1M full-fill 복구 + 재감지 가드 정렬(`D-2026-02-24-64`)
 
 ## 5.1 Parallel Critical Recovery (Non-Bundle)
-1. `D-020`: 1d/1w/1M full-fill 복구(운영 조치)
-2. `D-012`: 학습 데이터 SoT 정렬 + chunk 기반 OOM 방어
-3. `D-001`: 모델 계약 명시화(`fit/predict/save/load`)
-4. `D-002`: 모델 메타데이터/버전 스키마 정의
+1. `D-012`: 학습 데이터 SoT 정렬 + chunk 기반 OOM 방어
+2. `D-001`: 모델 계약 명시화(`fit/predict/save/load`)
+3. `D-002`: 모델 메타데이터/버전 스키마 정의
 
 ## 5.2 Previous Cycle KPI (Locked 2026-02-21)
 1. `D-018` 완료
