@@ -49,8 +49,6 @@ MANIFEST_FILE = STATIC_DIR / "manifest.json"
 RUNTIME_METRICS_FILE = STATIC_DIR / "runtime_metrics.json"
 SYMBOL_ACTIVATION_FILE = STATIC_DIR / "symbol_activation.json"
 INGEST_WATERMARK_FILE = STATIC_DIR / "ingest_watermarks.json"
-PREDICT_WATERMARK_FILE = STATIC_DIR / "predict_watermarks.json"
-EXPORT_WATERMARK_FILE = STATIC_DIR / "export_watermarks.json"
 
 # ── Prediction policy ──
 PREDICTION_DISABLED_TIMEFRAMES = {
@@ -94,15 +92,3 @@ MIN_SAMPLE_BY_TIMEFRAME: dict[str, int] = {
 # ── Scheduler ──
 WORKER_SCHEDULER_MODE = os.getenv("WORKER_SCHEDULER_MODE", "boundary").strip().lower()
 VALID_WORKER_SCHEDULER_MODES = {"poll_loop", "boundary"}
-
-# ── Worker role / mode ──
-WORKER_EXECUTION_ROLE = os.getenv("WORKER_EXECUTION_ROLE", "all").strip().lower()
-VALID_WORKER_EXECUTION_ROLES = {"all", "ingest", "predict_export"}
-WORKER_PUBLISH_MODE = (
-    os.getenv("WORKER_PUBLISH_MODE", "predict_and_export").strip().lower()
-)
-VALID_WORKER_PUBLISH_MODES = {
-    "predict_and_export",
-    "predict_only",
-    "export_only",
-}

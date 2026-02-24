@@ -1,8 +1,4 @@
-import os
-
-
 def main() -> None:
-    os.environ["WORKER_EXECUTION_ROLE"] = "ingest"
     from scripts.pipeline_worker import run_worker
 
     run_worker()

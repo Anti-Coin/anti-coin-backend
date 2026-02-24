@@ -36,7 +36,6 @@ from utils.pipeline_contracts import (
     IngestSinceSource,
     PredictionExecutionOutcome,
     PredictionExecutionResult,
-    PublishGateDecision,
     PublishGateReason,
     StorageGuardLevel,
     SymbolActivationSnapshot,
@@ -49,7 +48,7 @@ from utils.pipeline_contracts import (
     parse_prediction_execution_result,
     parse_utc_datetime,
 )
-from utils.pipeline_runtime_state import SymbolActivationStore, WatermarkStore
+from utils.pipeline_runtime_state import SymbolActivationStore
 from utils.prediction_status import evaluate_prediction_status
 from utils.time_alignment import (
     detect_timeframe_gaps,
@@ -72,7 +71,6 @@ from scripts.worker_config import (  # noqa: F401
     DISK_WATERMARK_BLOCK_PERCENT,
     DISK_WATERMARK_CRITICAL_PERCENT,
     DISK_WATERMARK_WARN_PERCENT,
-    EXPORT_WATERMARK_FILE,
     FULL_BACKFILL_TOLERANCE_HOURS,
     FULL_HISTORY_EXPORT_TIMEFRAMES,
     INGEST_STATE_FILE,
@@ -86,7 +84,6 @@ from scripts.worker_config import (  # noqa: F401
     MANIFEST_FILE,
     MIN_SAMPLE_BY_TIMEFRAME,
     MODELS_DIR,
-    PREDICT_WATERMARK_FILE,
     PREDICTION_DISABLED_TIMEFRAMES,
     PREDICTION_HEALTH_FILE,
     PRIMARY_TIMEFRAME,
@@ -101,11 +98,7 @@ from scripts.worker_config import (  # noqa: F401
     SYMBOL_ACTIVATION_SOURCE_TIMEFRAME,
     TARGET_COINS,
     TIMEFRAMES,
-    VALID_WORKER_EXECUTION_ROLES,
-    VALID_WORKER_PUBLISH_MODES,
     VALID_WORKER_SCHEDULER_MODES,
-    WORKER_EXECUTION_ROLE,
-    WORKER_PUBLISH_MODE,
     WORKER_SCHEDULER_MODE,
 )
 from scripts.worker_guards import (  # noqa: F401
@@ -139,99 +132,6 @@ def _ctx():
     # 이 패턴을 유지하면 테스트 monkeypatch 경로(scripts.pipeline_worker.*)를
     # 깨지 않고도 구현 본체를 workers/*로 이동할 수 있다.
     return sys.modules[__name__]
-
-
-def resolve_worker_execution_role(raw_role: str) -> str:
-    """
-    Worker 실행 역할 결정
-    VALID_WORKER_EXECUTION_ROLES = {"all", "ingest", "predict_export"}
-    - all: ingest, predict, export 모두 실행
-    - ingest: ingest만 실행
-    - predict_export: predict, export만 실행
-
-    Args:
-      - raw_role: WORKER_EXECUTION_ROLE 환경 변수 값
-    Returns:
-      - str: 결정된 worker 실행 역할
-    """
-    if raw_role in VALID_WORKER_EXECUTION_ROLES:
-        return raw_role
-    logger.warning(
-        "[Worker Role] unsupported WORKER_EXECUTION_ROLE=%s, fallback to all.",
-        raw_role,
-    )
-    return "all"
-
-
-def worker_role_runs_ingest(role: str) -> bool:
-    """
-    Worker 역할이 ingest를 실행하는지 확인한다.
-
-    Args:
-      - role: 결정된 worker 실행 역할
-    Returns:
-      - bool: ingest를 실행하는지 여부
-    """
-    return role in {"all", "ingest"}
-
-
-def worker_role_runs_publish(role: str) -> bool:
-    """
-    Worker 역할이 publish를 실행하는지 확인한다.
-
-    Args:
-      - role: 결정된 worker 실행 역할
-    Returns:
-      - bool: publish를 실행하는지 여부
-    """
-    return role in {"all", "predict_export"}
-
-
-def resolve_worker_publish_mode(raw_mode: str) -> str:
-    """
-    Publish 모드 결정
-    VALID_WORKER_PUBLISH_MODES = {"predict_and_export", "predict_only", "export_only"}
-    - predict_and_export: predict, export 모두 실행
-    - predict_only: predict만 실행
-    - export_only: export만 실행
-
-    Args:
-      - raw_mode: WORKER_PUBLISH_MODE 환경 변수 값
-    Returns:
-      - str: 결정된 publish 모드
-    """
-    if raw_mode in VALID_WORKER_PUBLISH_MODES:
-        return raw_mode
-    logger.warning(
-        "[Publish Mode] unsupported WORKER_PUBLISH_MODE=%s, "
-        "fallback to predict_and_export.",
-        raw_mode,
-    )
-    return "predict_and_export"
-
-
-def publish_mode_runs_predict(mode: str) -> bool:
-    """
-    Worker 역할이 predict를 실행하는 지 확인한다.
-
-    Args:
-      - mode: 결정된 worker publish 모드
-    Returns:
-      - bool: predict를 실행하는지 여부
-    """
-    return mode in {"predict_and_export", "predict_only"}
-
-
-def publish_mode_runs_export(mode: str) -> bool:
-    """
-    Worker 역할이 export를 실행하는 지 확인한다.
-
-    Args:
-      - mode: 결정된 worker publish 모드
-    Returns:
-      - bool: export를 실행하는지 여부
-    """
-    return mode in {"predict_and_export", "export_only"}
 
 
 def send_alert(message):
@@ -292,41 +192,6 @@ def _static_export_paths(
     if canonical == legacy:
         return canonical, None
     return canonical, legacy
-
-
-def _canonical_static_export_missing(
-    kind: str,
-    symbol: str,
-    timeframe: str,
-    *,
-    static_dir: Path | None = None,
-) -> bool:
-    """
-    canonical 정적 산출물 파일 누락 여부를 반환한다.
-    """
-    canonical_path, _ = _static_export_paths(
-        kind,
-        symbol,
-        timeframe,
-        static_dir=static_dir or STATIC_DIR,
-    )
-    return not canonical_path.exists()
-
-
-def _has_prediction_last_success(
-    symbol: str,
-    timeframe: str,
-    *,
-    path: Path | None = None,
-) -> bool:
-    """
-    prediction self-heal 허용 조건(last_success_at 존재)을 확인한다.
-    """
-    entries = _load_prediction_health(path=path or PREDICTION_HEALTH_FILE)
-    entry = entries.get(_prediction_health_key(symbol, timeframe), {})
-    if not isinstance(entry, dict):
-        return False
-    return bool(entry.get("last_success_at"))
 
 
 def prediction_enabled_for_timeframe(timeframe: str) -> bool:
@@ -450,37 +315,64 @@ def _save_symbol_activation(
 
 def _load_watermark_entries(path: Path) -> dict[str, WatermarkCursor]:
     """
-    watermark 파일을 로드하고 유효 엔트리만 정규화해 반환한다.
-
-    Called from:
-    - run_worker() 시작/주기 갱신
-
-    Why:
-    - 손상/잡음 엔트리를 무시해 gate 판단 안정성을 유지한다.
+    ingest watermark 파일을 로드하고 유효 엔트리만 정규화해 반환한다.
     """
-    store = WatermarkStore(path, logger)
-    return store.load()
+    if not path.exists():
+        return {}
+
+    try:
+        with open(path, "r") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        logger.error(f"Failed to load watermark file {path.name}: {e}")
+        return {}
+
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        logger.error(
+            f"Invalid watermark format in {path.name}: entries is not a dict."
+        )
+        return {}
+
+    normalized: dict[str, WatermarkCursor] = {}
+    for key, value in entries.items():
+        if not isinstance(value, str):
+            continue
+        cursor = WatermarkCursor.from_key_value(key=key, value=value)
+        if cursor is not None:
+            normalized[key] = cursor
+    return normalized
 
 
 def _save_watermark_entries(
     entries: dict[str, WatermarkCursor | str], path: Path
 ) -> None:
     """
-    watermark 엔트리를 파일에 저장한다.
-
-    Called from:
-    - run_worker() stage 완료 후 cursor commit
+    ingest watermark 엔트리를 파일에 저장한다.
     """
-    store = WatermarkStore(path, logger)
-    store.save(entries)
+    payload_entries: dict[str, str] = {}
+    for key, value in entries.items():
+        if isinstance(value, WatermarkCursor):
+            cursor_key, cursor_value = value.to_entry()
+            payload_entries[cursor_key] = cursor_value
+            continue
+        if isinstance(value, str):
+            parsed = parse_utc_datetime(value)
+            if parsed is None:
+                continue
+            payload_entries[key] = format_utc_datetime(parsed) or ""
+
+    payload = {
+        "version": 1,
+        "updated_at": format_utc_datetime(datetime.now(timezone.utc)) or "",
+        "entries": payload_entries,
+    }
+    atomic_write_json(path, payload, indent=2)
 
 
 def _parse_utc(text: str | None) -> datetime | None:
     """
     UTC 문자열을 datetime으로 파싱한다.
-
-    Called from:
-    - should_run_publish_from_ingest_watermark
     """
     return parse_utc_datetime(text)
 
@@ -520,75 +412,6 @@ def _upsert_watermark(
         symbol=symbol,
         timeframe=timeframe,
         closed_at=closed_at,
-    )
-
-
-def evaluate_publish_gate_from_ingest_watermark(
-    *,
-    symbol: str,
-    timeframe: str,
-    ingest_entries: dict[str, WatermarkCursor | str],
-    publish_entries: dict[str, WatermarkCursor | str],
-) -> PublishGateDecision:
-    """
-    ingest watermark 기준 publish 실행 여부를 DTO로 판단한다.
-
-    Example (key=BTC/USDT|1h):
-    - ingest=2026-02-19T10:00:00Z, export=2026-02-19T09:00:00Z -> run
-    - ingest=2026-02-19T10:00:00Z, export=2026-02-19T10:00:00Z -> skip
-    - ingest 미존재 -> skip(no_ingest_watermark)
-    """
-    key = _prediction_health_key(symbol, timeframe)
-    ingest_dt = _resolve_watermark_datetime(ingest_entries.get(key))
-    if ingest_dt is None:
-        return PublishGateDecision(
-            should_run=False,
-            reason=PublishGateReason.NO_INGEST_WATERMARK,
-            ingest_closed_at=None,
-        )
-
-    publish_dt = _resolve_watermark_datetime(publish_entries.get(key))
-    if publish_dt is not None and publish_dt >= ingest_dt:
-        return PublishGateDecision(
-            should_run=False,
-            reason=PublishGateReason.UP_TO_DATE_INGEST_WATERMARK,
-            ingest_closed_at=ingest_dt,
-        )
-    return PublishGateDecision(
-        should_run=True,
-        reason=PublishGateReason.INGEST_WATERMARK_ADVANCED,
-        ingest_closed_at=ingest_dt,
-    )
-
-
-def should_run_publish_from_ingest_watermark(
-    *,
-    symbol: str,
-    timeframe: str,
-    ingest_entries: dict[str, WatermarkCursor | str],
-    publish_entries: dict[str, WatermarkCursor | str],
-) -> tuple[bool, str, datetime | None]:
-    """
-    Publish가 실행되어야 하는지 판단한다.
-
-    Args:
-      - symbol: 심볼
-      - timeframe: 타임프레임
-      - ingest_entries: Ingest watermark entries
-      - publish_entries: Publish watermark entries
-    Returns:
-      - tuple[bool, str, datetime | None]: (should_run, reason, ingest_dt)
-    """
-    decision = evaluate_publish_gate_from_ingest_watermark(
-        symbol=symbol,
-        timeframe=timeframe,
-        ingest_entries=ingest_entries,
-        publish_entries=publish_entries,
-    )
-    return (
-        decision.should_run,
-        decision.reason.value,
-        decision.ingest_closed_at,
     )
 
 
@@ -1474,8 +1297,6 @@ class WorkerPersistentState:
 
     symbol_activation_entries: dict[str, SymbolActivationSnapshot]
     ingest_watermarks: dict[str, WatermarkCursor | str]
-    predict_watermarks: dict[str, WatermarkCursor | str]
-    export_watermarks: dict[str, WatermarkCursor | str]
 
 
 def _commit_ingest_cursor_state(
@@ -1993,63 +1814,27 @@ def _run_publish_timeframe_step(
         )
         return
 
+    ingest_closed_at = _resolve_watermark_datetime(
+        state.ingest_watermarks.get(_prediction_health_key(symbol, timeframe))
+    )
+
     if run_export_stage:
-        # export와 predict는 각각 별도 watermark cursor를 가진다.
-        # 한쪽 실패가 다른 쪽 재시도까지 막지 않도록 gate/cursor를 분리한다.
-        export_decision = evaluate_publish_gate_from_ingest_watermark(
-            symbol=symbol,
-            timeframe=timeframe,
-            ingest_entries=state.ingest_watermarks,
-            publish_entries=state.export_watermarks,
-        )
-        export_gate_reason = export_decision.reason.value
-        if not export_decision.should_run:
-            cycle_export_gate_skip_counts[export_gate_reason] = (
-                cycle_export_gate_skip_counts.get(export_gate_reason, 0) + 1
+        if ingest_closed_at is None:
+            reason = PublishGateReason.NO_INGEST_WATERMARK.value
+            cycle_export_gate_skip_counts[reason] = (
+                cycle_export_gate_skip_counts.get(reason, 0) + 1
             )
-            should_self_heal_export = (
-                export_gate_reason
-                == PublishGateReason.UP_TO_DATE_INGEST_WATERMARK.value
-                and _canonical_static_export_missing("history", symbol, timeframe)
-            )
-            if should_self_heal_export:
-                logger.warning(
-                    f"[{symbol} {timeframe}] history artifact missing while "
-                    f"publish gate skipped ({export_gate_reason}); running self-heal export."
-                )
-                export_ok = update_full_history_file(query_api, symbol, timeframe)
-                if not export_ok:
-                    _log_stage_failure_context(
-                        "export",
-                        symbol=symbol,
-                        timeframe=timeframe,
-                        now=cycle_now,
-                        last_closed_ts=export_decision.ingest_closed_at,
-                        error="export_result_failed",
-                        extra={"gate_reason": export_gate_reason},
-                    )
-                    logger.warning(
-                        f"[{symbol} {timeframe}] export self-heal failed. "
-                        "watermark cursor is not advanced."
-                    )
         else:
             export_ok = update_full_history_file(query_api, symbol, timeframe)
-            if export_ok and export_decision.ingest_closed_at is not None:
-                _upsert_watermark(
-                    state.export_watermarks,
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    closed_at=export_decision.ingest_closed_at,
-                )
-            elif not export_ok:
+            if not export_ok:
                 _log_stage_failure_context(
                     "export",
                     symbol=symbol,
                     timeframe=timeframe,
                     now=cycle_now,
-                    last_closed_ts=export_decision.ingest_closed_at,
+                    last_closed_ts=ingest_closed_at,
                     error="export_result_failed",
-                    extra={"gate_reason": export_gate_reason},
+                    extra={"gate_reason": "serial_reconcile"},
                 )
                 logger.warning(
                     f"[{symbol} {timeframe}] export failed. "
@@ -2057,30 +1842,12 @@ def _run_publish_timeframe_step(
                 )
 
     if run_predict_stage:
-        predict_decision = evaluate_publish_gate_from_ingest_watermark(
-            symbol=symbol,
-            timeframe=timeframe,
-            ingest_entries=state.ingest_watermarks,
-            publish_entries=state.predict_watermarks,
-        )
-        predict_gate_reason = predict_decision.reason.value
-        prediction_self_heal = False
-        if not predict_decision.should_run:
-            cycle_predict_gate_skip_counts[predict_gate_reason] = (
-                cycle_predict_gate_skip_counts.get(predict_gate_reason, 0) + 1
+        if ingest_closed_at is None:
+            reason = PublishGateReason.NO_INGEST_WATERMARK.value
+            cycle_predict_gate_skip_counts[reason] = (
+                cycle_predict_gate_skip_counts.get(reason, 0) + 1
             )
-            prediction_self_heal = (
-                predict_gate_reason
-                == PublishGateReason.UP_TO_DATE_INGEST_WATERMARK.value
-                and _canonical_static_export_missing("prediction", symbol, timeframe)
-                and _has_prediction_last_success(symbol, timeframe)
-            )
-            if not prediction_self_heal:
-                return
-            logger.warning(
-                f"[{symbol} {timeframe}] prediction artifact missing while "
-                f"publish gate skipped ({predict_gate_reason}); running self-heal prediction."
-            )
+            return
 
         prediction_outcome = run_prediction_and_save_outcome(
             write_api,
@@ -2094,25 +1861,15 @@ def _run_publish_timeframe_step(
                 symbol=symbol,
                 timeframe=timeframe,
                 now=cycle_now,
-                last_closed_ts=predict_decision.ingest_closed_at,
+                last_closed_ts=ingest_closed_at,
                 error=prediction_outcome.error or "prediction_failed",
-                extra={"gate_reason": predict_gate_reason},
+                extra={"gate_reason": "serial_reconcile"},
             )
             logger.warning(
                 f"[{symbol} {timeframe}] prediction failed. "
                 "watermark cursor is not advanced."
             )
             return
-
-        if not prediction_self_heal and predict_decision.ingest_closed_at is not None:
-            # prediction success/skip 이후에만 predict watermark를 전진시킨다.
-            # 실패 시 cursor를 멈춰 다음 cycle에서 동일 입력 재시도를 허용한다.
-            _upsert_watermark(
-                state.predict_watermarks,
-                symbol=symbol,
-                timeframe=timeframe,
-                closed_at=predict_decision.ingest_closed_at,
-            )
 
         if prediction_outcome.result == PredictionExecutionResult.SKIPPED:
             return
@@ -2152,7 +1909,6 @@ def _run_publish_timeframe_step(
 def _persist_cycle_runtime_state(
     *,
     run_ingest_stage: bool,
-    run_predict_stage: bool,
     run_export_stage: bool,
     state: WorkerPersistentState,
 ) -> None:
@@ -2161,8 +1917,8 @@ def _persist_cycle_runtime_state(
 
     Commit policy:
     - ingest_state cursor/status는 ingest 단계에서 즉시 커밋된다.
-    - 이 함수는 메모리 state(symbol_activation + watermarks)를 파일로 반영한다.
-    - 따라서 watermarks/manifest의 파일 반영은 이 함수 이후 상태를 기준으로 확인한다.
+    - 이 함수는 메모리 state(symbol_activation + ingest watermark)를 파일로 반영한다.
+    - manifest 파일 반영은 이 함수 이후 상태를 기준으로 확인한다.
     """
     if run_ingest_stage:
         try:
@@ -2175,22 +1931,8 @@ def _persist_cycle_runtime_state(
             logger.error(f"Symbol activation update failed: {e}")
             send_alert(f"[Symbol Activation Error] {e}")
 
-    if run_predict_stage:
-        try:
-            _save_watermark_entries(
-                state.predict_watermarks,
-                PREDICT_WATERMARK_FILE,
-            )
-        except Exception as e:
-            logger.error(f"Predict watermark update failed: {e}")
-            send_alert(f"[Predict Watermark Error] {e}")
-
     if run_export_stage:
         try:
-            _save_watermark_entries(
-                state.export_watermarks,
-                EXPORT_WATERMARK_FILE,
-            )
             write_runtime_manifest(
                 TARGET_COINS,
                 TIMEFRAMES,
@@ -2199,25 +1941,6 @@ def _persist_cycle_runtime_state(
         except Exception as e:
             logger.error(f"Runtime manifest update failed: {e}")
             send_alert(f"[Manifest Error] {e}")
-
-
-def _reload_publish_only_shared_state_for_cycle(
-    *,
-    run_publish_stage: bool,
-    run_ingest_stage: bool,
-    state: WorkerPersistentState,
-) -> None:
-    """
-    publish-only worker cycle 시작 시 공유 상태를 파일에서 동기화한다.
-    """
-    if run_publish_stage and not run_ingest_stage:
-        # publish 전용 프로세스는 ingest와 메모리를 공유하지 않는다.
-        # 따라서 매 cycle 파일에서 최신 activation/watermark를 다시 읽어
-        # 프로세스 간 eventual consistency를 맞춘다.
-        # ingest worker가 아직 커밋하지 않은 메모리 상태는 볼 수 없으므로,
-        # 최대 1 cycle 지연은 정상 동작 범위다.
-        state.symbol_activation_entries = _load_symbol_activation()
-        state.ingest_watermarks = _load_watermark_entries(INGEST_WATERMARK_FILE)
 
 
 def _run_symbol_timeframe_cycle_stages(
@@ -2372,18 +2095,16 @@ def run_worker():
         )
         scheduler_mode = "poll_loop"
 
-    worker_role = resolve_worker_execution_role(WORKER_EXECUTION_ROLE)
-    run_ingest_stage = worker_role_runs_ingest(worker_role)
-    run_publish_stage = worker_role_runs_publish(worker_role)
-    publish_mode = resolve_worker_publish_mode(WORKER_PUBLISH_MODE)
-    run_predict_stage = run_publish_stage and publish_mode_runs_predict(publish_mode)
-    run_export_stage = run_publish_stage and publish_mode_runs_export(publish_mode)
-    write_runtime_metrics = run_ingest_stage
+    # D-033: role/mode 실행 매트릭스를 제거하고 단일 실행 경로를 고정한다.
+    run_ingest_stage = True
+    run_publish_stage = True
+    run_predict_stage = True
+    run_export_stage = True
+    write_runtime_metrics = True
 
     logger.info(
         f"[Pipeline Worker] Started. Target: {TARGET_COINS}, Timeframes: {TIMEFRAMES}, "
-        f"SchedulerMode: {scheduler_mode}, WorkerRole: {worker_role}, "
-        f"PublishMode: {publish_mode}"
+        f"SchedulerMode: {scheduler_mode}"
     )
 
     client = InfluxDBClient(
@@ -2399,8 +2120,6 @@ def run_worker():
     state = WorkerPersistentState(
         symbol_activation_entries=_load_symbol_activation(),
         ingest_watermarks=_load_watermark_entries(INGEST_WATERMARK_FILE),
-        predict_watermarks=_load_watermark_entries(PREDICT_WATERMARK_FILE),
-        export_watermarks=_load_watermark_entries(EXPORT_WATERMARK_FILE),
     )
     # 위 state는 "cycle 내 작업 메모리"다.
     # 단, ingest_state(cursor/status)는 IngestStateStore.upsert로 즉시 파일 반영된다.
@@ -2430,12 +2149,6 @@ def run_worker():
         cycle_missed_boundary_count: int | None = None
         cycle_predict_gate_skip_counts: dict[str, int] = {}
         cycle_export_gate_skip_counts: dict[str, int] = {}
-
-        _reload_publish_only_shared_state_for_cycle(
-            run_publish_stage=run_publish_stage,
-            run_ingest_stage=run_ingest_stage,
-            state=state,
-        )
 
         try:
             logger.info(
@@ -2554,7 +2267,6 @@ def run_worker():
 
             _persist_cycle_runtime_state(
                 run_ingest_stage=run_ingest_stage,
-                run_predict_stage=run_predict_stage,
                 run_export_stage=run_export_stage,
                 state=state,
             )

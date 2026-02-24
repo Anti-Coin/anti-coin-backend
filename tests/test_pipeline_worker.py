@@ -26,23 +26,16 @@ from scripts.pipeline_worker import (
     get_last_timestamp,
     initialize_boundary_schedule,
     prediction_enabled_for_timeframe,
-    publish_mode_runs_export,
-    publish_mode_runs_predict,
     resolve_boundary_due_timeframes,
-    resolve_worker_publish_mode,
-    resolve_worker_execution_role,
     resolve_ingest_since,
     resolve_disk_watermark_level,
     run_ingest_step,
     run_prediction_and_save,
     save_history_to_json,
-    should_run_publish_from_ingest_watermark,
     should_block_initial_backfill,
     should_enforce_1m_retention,
     update_full_history_file,
     upsert_prediction_health,
-    worker_role_runs_ingest,
-    worker_role_runs_publish,
     write_runtime_manifest,
 )
 from utils.ingest_state import IngestStateStore
@@ -1222,73 +1215,6 @@ def test_enforce_1m_retention_calls_delete_api(monkeypatch):
     assert first_call["stop"] == datetime(2026, 1, 14, 12, 0, tzinfo=timezone.utc)
 
 
-def test_resolve_worker_execution_role_falls_back_to_all():
-    assert resolve_worker_execution_role("all") == "all"
-    assert resolve_worker_execution_role("ingest") == "ingest"
-    assert resolve_worker_execution_role("predict_export") == "predict_export"
-    assert resolve_worker_execution_role("invalid_role") == "all"
-
-
-def test_worker_execution_role_stage_flags():
-    assert worker_role_runs_ingest("all") is True
-    assert worker_role_runs_ingest("ingest") is True
-    assert worker_role_runs_ingest("predict_export") is False
-    assert worker_role_runs_publish("all") is True
-    assert worker_role_runs_publish("predict_export") is True
-    assert worker_role_runs_publish("ingest") is False
-
-
-def test_resolve_worker_publish_mode_falls_back_to_predict_and_export():
-    assert resolve_worker_publish_mode("predict_and_export") == "predict_and_export"
-    assert resolve_worker_publish_mode("predict_only") == "predict_only"
-    assert resolve_worker_publish_mode("export_only") == "export_only"
-    assert resolve_worker_publish_mode("invalid_mode") == "predict_and_export"
-
-
-def test_worker_publish_mode_stage_flags():
-    assert publish_mode_runs_predict("predict_and_export") is True
-    assert publish_mode_runs_predict("predict_only") is True
-    assert publish_mode_runs_predict("export_only") is False
-    assert publish_mode_runs_export("predict_and_export") is True
-    assert publish_mode_runs_export("export_only") is True
-    assert publish_mode_runs_export("predict_only") is False
-
-
-def test_should_run_publish_from_ingest_watermark():
-    key = "BTC/USDT|1h"
-    ingest_entries = {key: "2026-02-17T10:00:00Z"}
-
-    should_run, reason, ingest_dt = should_run_publish_from_ingest_watermark(
-        symbol="BTC/USDT",
-        timeframe="1h",
-        ingest_entries=ingest_entries,
-        publish_entries={},
-    )
-    assert should_run is True
-    assert reason == "ingest_watermark_advanced"
-    assert ingest_dt == datetime(2026, 2, 17, 10, 0, tzinfo=timezone.utc)
-
-    should_run, reason, ingest_dt = should_run_publish_from_ingest_watermark(
-        symbol="BTC/USDT",
-        timeframe="1h",
-        ingest_entries=ingest_entries,
-        publish_entries={key: "2026-02-17T10:00:00Z"},
-    )
-    assert should_run is False
-    assert reason == "up_to_date_ingest_watermark"
-    assert ingest_dt == datetime(2026, 2, 17, 10, 0, tzinfo=timezone.utc)
-
-    should_run, reason, ingest_dt = should_run_publish_from_ingest_watermark(
-        symbol="BTC/USDT",
-        timeframe="1h",
-        ingest_entries={},
-        publish_entries={},
-    )
-    assert should_run is False
-    assert reason == "no_ingest_watermark"
-    assert ingest_dt is None
-
-
 def test_record_ingest_outcome_state_saved_commits_cursor_and_watermark(
     tmp_path,
 ):
@@ -1299,8 +1225,6 @@ def test_record_ingest_outcome_state_saved_commits_cursor_and_watermark(
     state = WorkerPersistentState(
         symbol_activation_entries={},
         ingest_watermarks={},
-        predict_watermarks={},
-        export_watermarks={},
     )
     ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
 
@@ -1334,8 +1258,6 @@ def test_record_ingest_outcome_state_failure_keeps_watermark_and_marks_failed(
     state = WorkerPersistentState(
         symbol_activation_entries={},
         ingest_watermarks={key: previous_watermark.strftime("%Y-%m-%dT%H:%M:%SZ")},
-        predict_watermarks={},
-        export_watermarks={},
     )
     ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
 
@@ -1371,8 +1293,6 @@ def test_run_ingest_timeframe_step_blocked_storage_guard_stops_without_watermark
     state = WorkerPersistentState(
         symbol_activation_entries={},
         ingest_watermarks={},
-        predict_watermarks={},
-        export_watermarks={},
     )
     ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
     activation = SymbolActivationSnapshot.from_payload(
@@ -1432,8 +1352,6 @@ def test_run_ingest_timeframe_step_reads_db_last_with_full_range_for_1d(
     state = WorkerPersistentState(
         symbol_activation_entries={},
         ingest_watermarks={},
-        predict_watermarks={},
-        export_watermarks={},
     )
     ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
     activation = SymbolActivationSnapshot.from_payload(
@@ -1498,8 +1416,6 @@ def test_run_ingest_timeframe_step_long_tf_skip_syncs_watermark_and_allows_publi
     state = WorkerPersistentState(
         symbol_activation_entries={},
         ingest_watermarks={},
-        predict_watermarks={},
-        export_watermarks={},
     )
     ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
     activation = SymbolActivationSnapshot.from_payload(
@@ -1563,8 +1479,6 @@ def test_run_ingest_timeframe_step_non_materialized_skip_still_blocks_publish(
     state = WorkerPersistentState(
         symbol_activation_entries={},
         ingest_watermarks={key: previous_watermark.strftime("%Y-%m-%dT%H:%M:%SZ")},
-        predict_watermarks={},
-        export_watermarks={},
     )
     ingest_state_store = IngestStateStore(tmp_path / "ingest_state.json")
     activation = SymbolActivationSnapshot.from_payload(
@@ -1668,19 +1582,18 @@ def test_run_ingest_step_routes_base_to_exchange_fetch(monkeypatch):
     assert result == "saved"
 
 
-def test_run_publish_timeframe_step_self_heals_missing_history_on_gate_skip(
-    monkeypatch, tmp_path
+def test_run_publish_timeframe_step_runs_export_with_ingest_watermark(
+    monkeypatch,
 ):
     symbol = "BTC/USDT"
-    timeframe = "1d"
-    now = datetime(2026, 2, 21, 10, 0, tzinfo=timezone.utc)
+    timeframe = "1h"
+    now = datetime(2026, 2, 24, 1, 0, tzinfo=timezone.utc)
     key = f"{symbol}|{timeframe}"
-    watermark_text = "2026-02-21T00:00:00Z"
+    watermark_text = "2026-02-24T01:00:00Z"
+
     state = WorkerPersistentState(
         symbol_activation_entries={},
         ingest_watermarks={key: watermark_text},
-        predict_watermarks={},
-        export_watermarks={key: watermark_text},
     )
     activation = SymbolActivationSnapshot.from_payload(
         symbol=symbol,
@@ -1689,18 +1602,16 @@ def test_run_publish_timeframe_step_self_heals_missing_history_on_gate_skip(
             "state": "ready_for_serving",
             "visibility": "visible",
             "is_full_backfilled": True,
-            "updated_at": "2026-02-21T09:00:00Z",
+            "updated_at": "2026-02-24T01:00:00Z",
         },
         fallback_now=now,
     )
-    monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
-
-    history_calls = {"count": 0}
+    calls = {"export": 0}
 
     def fake_update_full_history_file(query_api, target_symbol, target_timeframe):
         assert target_symbol == symbol
         assert target_timeframe == timeframe
-        history_calls["count"] += 1
+        calls["export"] += 1
         return True
 
     monkeypatch.setattr(
@@ -1723,23 +1634,22 @@ def test_run_publish_timeframe_step_self_heals_missing_history_on_gate_skip(
         cycle_predict_gate_skip_counts={},
     )
 
-    assert history_calls["count"] == 1
-    assert cycle_export_gate_skip_counts == {"up_to_date_ingest_watermark": 1}
+    assert calls["export"] == 1
+    assert cycle_export_gate_skip_counts == {}
 
 
-def test_run_publish_timeframe_step_self_heals_missing_prediction_with_last_success(
-    monkeypatch, tmp_path
+def test_run_publish_timeframe_step_runs_prediction_with_ingest_watermark(
+    monkeypatch,
 ):
     symbol = "BTC/USDT"
-    timeframe = "1d"
-    now = datetime(2026, 2, 21, 10, 0, tzinfo=timezone.utc)
+    timeframe = "1h"
+    now = datetime(2026, 2, 24, 1, 0, tzinfo=timezone.utc)
     key = f"{symbol}|{timeframe}"
-    watermark_text = "2026-02-21T00:00:00Z"
+    watermark_text = "2026-02-24T01:00:00Z"
+
     state = WorkerPersistentState(
         symbol_activation_entries={},
         ingest_watermarks={key: watermark_text},
-        predict_watermarks={key: watermark_text},
-        export_watermarks={},
     )
     activation = SymbolActivationSnapshot.from_payload(
         symbol=symbol,
@@ -1748,45 +1658,21 @@ def test_run_publish_timeframe_step_self_heals_missing_prediction_with_last_succ
             "state": "ready_for_serving",
             "visibility": "visible",
             "is_full_backfilled": True,
-            "updated_at": "2026-02-21T09:00:00Z",
+            "updated_at": "2026-02-24T01:00:00Z",
         },
         fallback_now=now,
     )
-    monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
-    health_path = tmp_path / "prediction_health.json"
-    health_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "updated_at": "2026-02-21T09:00:00Z",
-                "entries": {
-                    key: {
-                        "symbol": symbol,
-                        "timeframe": timeframe,
-                        "degraded": False,
-                        "last_success_at": "2026-02-20T00:00:00Z",
-                        "last_failure_at": None,
-                        "consecutive_failures": 0,
-                        "last_error": None,
-                        "updated_at": "2026-02-21T09:00:00Z",
-                    }
-                },
-            }
-        )
-    )
-    monkeypatch.setattr("scripts.pipeline_worker.PREDICTION_HEALTH_FILE", health_path)
-
-    prediction_calls = {"run": 0, "health": 0}
+    calls = {"run": 0, "health": 0}
 
     def fake_run_prediction_and_save_outcome(*args, **kwargs):
-        prediction_calls["run"] += 1
+        calls["run"] += 1
         return SimpleNamespace(
             result=PredictionExecutionResult.OK,
             error=None,
         )
 
     def fake_upsert_prediction_health(*args, **kwargs):
-        prediction_calls["health"] += 1
+        calls["health"] += 1
         return {"degraded": False}, False, False
 
     monkeypatch.setattr(
@@ -1813,24 +1699,21 @@ def test_run_publish_timeframe_step_self_heals_missing_prediction_with_last_succ
         cycle_predict_gate_skip_counts=cycle_predict_gate_skip_counts,
     )
 
-    assert prediction_calls == {"run": 1, "health": 1}
-    assert cycle_predict_gate_skip_counts == {"up_to_date_ingest_watermark": 1}
-    assert state.predict_watermarks[key] == watermark_text
+    assert calls == {"run": 1, "health": 1}
+    assert cycle_predict_gate_skip_counts == {}
 
 
-def test_run_publish_timeframe_step_does_not_self_heal_prediction_without_success(
-    monkeypatch, tmp_path
+def test_run_publish_timeframe_step_skips_predict_without_ingest_watermark(
+    monkeypatch,
 ):
     symbol = "BTC/USDT"
-    timeframe = "1d"
-    now = datetime(2026, 2, 21, 10, 0, tzinfo=timezone.utc)
+    timeframe = "1h"
+    now = datetime(2026, 2, 24, 1, 0, tzinfo=timezone.utc)
     key = f"{symbol}|{timeframe}"
-    watermark_text = "2026-02-21T00:00:00Z"
+
     state = WorkerPersistentState(
         symbol_activation_entries={},
-        ingest_watermarks={key: watermark_text},
-        predict_watermarks={key: watermark_text},
-        export_watermarks={},
+        ingest_watermarks={},
     )
     activation = SymbolActivationSnapshot.from_payload(
         symbol=symbol,
@@ -1839,39 +1722,15 @@ def test_run_publish_timeframe_step_does_not_self_heal_prediction_without_succes
             "state": "ready_for_serving",
             "visibility": "visible",
             "is_full_backfilled": True,
-            "updated_at": "2026-02-21T09:00:00Z",
+            "updated_at": "2026-02-24T01:00:00Z",
         },
         fallback_now=now,
     )
-    monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
-    health_path = tmp_path / "prediction_health.json"
-    health_path.write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "updated_at": "2026-02-21T09:00:00Z",
-                "entries": {
-                    key: {
-                        "symbol": symbol,
-                        "timeframe": timeframe,
-                        "degraded": True,
-                        "last_success_at": None,
-                        "last_failure_at": "2026-02-21T08:00:00Z",
-                        "consecutive_failures": 3,
-                        "last_error": "model_missing",
-                        "updated_at": "2026-02-21T09:00:00Z",
-                    }
-                },
-            }
-        )
-    )
-    monkeypatch.setattr("scripts.pipeline_worker.PREDICTION_HEALTH_FILE", health_path)
-
     called = {"run_prediction": False}
 
     def fail_if_called(*args, **kwargs):
         called["run_prediction"] = True
-        raise AssertionError("prediction self-heal should not run")
+        raise AssertionError("serial reconcile must skip without ingest watermark")
 
     monkeypatch.setattr(
         "scripts.pipeline_worker.run_prediction_and_save_outcome",
@@ -1894,7 +1753,7 @@ def test_run_publish_timeframe_step_does_not_self_heal_prediction_without_succes
     )
 
     assert called["run_prediction"] is False
-    assert cycle_predict_gate_skip_counts == {"up_to_date_ingest_watermark": 1}
+    assert cycle_predict_gate_skip_counts == {"no_ingest_watermark": 1}
 
 
 def test_update_full_history_file_uses_full_range_for_long_timeframes(monkeypatch):
