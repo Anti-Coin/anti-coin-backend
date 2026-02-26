@@ -106,6 +106,19 @@ def _to_utc_text(value) -> str:
     return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _prepare_prophet_train_df(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Prophet requires timezone-naive datetimes in `ds`.
+    We normalize incoming timestamps to UTC and then drop timezone info.
+    """
+    train_df = df[["timestamp", "close"]].rename(
+        columns={"timestamp": "ds", "close": "y"}
+    )
+    ds_utc = pd.to_datetime(train_df["ds"], utc=True, errors="raise")
+    train_df["ds"] = ds_utc.dt.tz_convert("UTC").dt.tz_localize(None)
+    return train_df
+
+
 def train_and_save(
     symbol: str,
     timeframe: str,
@@ -156,10 +169,8 @@ def train_and_save(
             "end": _to_utc_text(df["timestamp"].max()),
         }
 
-        # Prophet 데이터 포맷 준비
-        train_df = df[["timestamp", "close"]].rename(
-            columns={"timestamp": "ds", "close": "y"}
-        )
+        # Prophet 데이터 포맷 준비 (timezone-naive UTC `ds`)
+        train_df = _prepare_prophet_train_df(df)
 
         # 학습
         model = Prophet(daily_seasonality=True)

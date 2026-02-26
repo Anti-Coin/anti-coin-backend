@@ -70,6 +70,7 @@
 | D-2026-02-24-63 | Serial Path Hard Lock | `D-034` 기준으로 `PIPELINE_SERIAL_EXECUTION_ENABLED`와 compose `legacy-split` profile(`worker-publish`)을 제거해 직렬 경로를 유일 실행 계약으로 고정한다. rollback 경로는 split 즉시 복귀가 아닌 배포 롤백(직전 정상 이미지/커밋 재배포)만 사용한다. | 직렬 경로에서 overrun/복구 지연이 임계치를 넘거나, 장애 격리 요구로 split topology 재도입이 필요할 때 |
 | D-2026-02-24-64 | D-020 Closure + Full-Fill Re-detection Guard | `D-020`은 운영 복구로 종료하되 재발 방지는 코드 계약으로 잠근다. full-fill TF(`1h/1d/1w/1M`)에서 `db_first > exchange_earliest + tolerance`면 `force_rebootstrap`을 활성화해 exchange earliest부터 재수집하며, boundary detection gate skip 상태여도 backward coverage gap이 감지되면 ingest를 진행한다. | false positive 재부트스트랩 증가, 또는 장주기 TF underfill 재발 시 |
 | D-2026-02-26-65 | D-012 Training Execution Policy Lock | `D-012` 실행 기준을 잠근다. 모델 추적은 MLflow `SQLite backend`로 시작하고(file backend 미채택), 학습 결과 반영은 `symbol+timeframe partial-success`를 허용한다. snapshot 산출물은 `latest 1개`만 유지하고, 재현성은 run metadata(`run_id`, `data_range`, `row_count`, `model_version`) 기록으로 보완한다. | Model Registry stage 운영/다중 운영자 감사 요구로 중앙 서버가 필요해질 때, 또는 다중 snapshot 포렌식 요구가 생길 때 |
+| D-2026-02-26-66 | Training Snapshot Strategy (On-demand 유지 + Pre-materialize Hold) | 현재 학습 데이터 추출은 `train_model.py` 실행 시점 on-demand extractor를 기본으로 유지한다. 누적 pre-materialize extractor는 `D-038 hold`로 분리하고, 전환은 학습 시간/SLA 압력이 반복될 때만 검토한다. | on-demand 경로에서 학습 시간 SLA 반복 초과, Influx query 비용/실패율 증가, 또는 동일 추출 재사용 요구가 누적될 때 |
 
 ## 3. Decision Operation Policy
 1. 활성 문서는 요약만 유지한다(상세 서술 금지).

@@ -78,7 +78,7 @@
 | D-009 | P2 | Drift 알림 연동 | open | 임계 초과 시 경고 발송 |
 | D-010 | **P0** | 장기 timeframe 최소 샘플 gate 구현 | **done (2026-02-21)** | `MIN_SAMPLE_BY_TIMEFRAME` config + `count_ohlcv_rows` query + `run_prediction_and_save` gate 삽입, 회귀 테스트 140 passed |
 | D-011 | P3 (Hold) | Model Coverage Matrix + Fallback Resolver 구현 | open | (보류) Dedicated 승격 정책 대신 일단 단일 Shared 모델 서빙만 유지. `shared -> insufficient_data`만 코드/검증 |
-| D-012 | **P0** | 학습 데이터 SoT 정렬 + Chunk 기반 추출 안전장치 (OOM 방지) | open | 학습 입력이 Influx SoT 기준으로 고정되고, 데이터를 한 번에 메모리에 올리지 않도록 `chunk/pagination` 기반 추출을 적용한다. 모델 추적은 MLflow `SQLite backend`로 시작하고, 학습 반영은 `symbol+timeframe partial-success` 정책을 따른다. snapshot은 `latest 1개`만 유지하며 run metadata(`run_id`, `data_range`, `row_count`, `model_version`)를 기록한다. |
+| D-012 | **P0** | 학습 데이터 SoT 정렬 + Chunk 기반 추출 안전장치 (OOM 방지) | in_progress | 학습 입력이 Influx SoT 기준으로 고정되고, 데이터를 한 번에 메모리에 올리지 않도록 `chunk/pagination` 기반 추출을 적용한다. 모델 추적은 MLflow `SQLite backend`로 시작하고, 학습 반영은 `symbol+timeframe partial-success` 정책을 따른다. snapshot은 `latest 1개`만 유지하며 run metadata(`run_id`, `data_range`, `row_count`, `model_version`)를 기록한다. |
 | D-013 | P1 | 재학습 트리거 정책 정의(시간+이벤트) | open | 재학습 trigger matrix(시간 주기, candle 누적, 드리프트 신호)와 cooldown 정책이 문서/코드로 고정됨 |
 | D-014 | P1 | 학습 실행 no-overlap/락 가드 | open | 학습 동시 실행 차단, stale lock 복구 규칙, 회귀 테스트가 고정됨 |
 | D-015 | P2 | 학습 실행 관측성/알림 baseline | open | 학습 실행시간/성공-실패/최근성 메트릭과 장애 알림 기준이 운영 문서와 함께 반영됨 |
@@ -104,6 +104,7 @@
 | D-035 | P1 | split 전용 publish gate/self-heal 코드 삭제 | done (2026-02-24) | `_run_publish_timeframe_step`에서 split 전용 gate/self-heal 분기(`up_to_date` skip + artifact missing self-heal)를 제거하고, ingest watermark 존재 기반 단일 reconcile 경로로 고정했다. `evaluate_publish_gate_from_ingest_watermark`/`should_run_publish_from_ingest_watermark` 함수와 관련 테스트를 삭제/교체했다. 회귀: `PYENV_VERSION=coin pytest -q tests/test_pipeline_worker.py` (`61 passed`) |
 | D-036 | P1 | split 전용 watermark 상태파일/저장 계층 삭제 | done (2026-02-24) | `predict_watermarks.json`/`export_watermarks.json` 경로와 관련 load/save 코드를 제거했다. `WorkerPersistentState`는 `ingest_watermarks`만 유지하며, `utils/pipeline_runtime_state.py`에서 `WatermarkStore`를 삭제해 저장 계층을 `symbol_activation` 전용으로 축소했다. 회귀: `PYENV_VERSION=coin pytest -q tests/test_pipeline_worker.py` (`61 passed`) |
 | D-037 | P2 | 미사용 워커 엔트리포인트 제거(`worker_publish/predict/export`) | done (2026-02-24) | `scripts/worker_publish.py`, `scripts/worker_predict.py`, `scripts/worker_export.py`를 삭제하고 `scripts/worker_ingest.py` 단일 엔트리포인트로 고정했다. `.env.example`의 `WORKER_PUBLISH_MODE`와 `worker_config`의 role/mode 상수도 제거해 설정 drift를 정리했다. 회귀: `PYENV_VERSION=coin pytest -q tests/test_pipeline_worker.py` (`61 passed`) |
+| D-038 | P2 | Training Snapshot Pre-Materialize (optional) | hold (2026-02-26) | 기본 경로는 on-demand extractor를 유지한다. 재개는 학습 시간/SLA 압력이 반복될 때만 허용하며, 전환 전후 비교 지표(`train_total_seconds`, `influx_query_seconds`, `failure_rate`, `peak_memory_mb`)를 고정 수집하고 SoT 정합성/원자적 스냅샷 쓰기/모델-스냅샷 버전 링크 검증을 통과해야 한다. |
 
 > **Discussion Reference**: `docs/DISCUSSION_PHASE_D_AUDIT_2026-02-21.md`
 

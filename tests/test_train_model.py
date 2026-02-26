@@ -1,4 +1,5 @@
 import pytest
+import pandas as pd
 from pathlib import Path
 
 from scripts import train_model
@@ -142,3 +143,20 @@ def test_run_training_job_allows_partial_success(monkeypatch):
     assert summary["succeeded"] == 1
     assert summary["failed"] == 1
     assert summary["failures"][0]["symbol"] == "ETH/USDT"
+
+
+def test_prepare_prophet_train_df_converts_timezone_aware_ds_to_naive_utc():
+    df = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                ["2026-02-26T00:00:00Z", "2026-02-26T01:00:00Z"], utc=True
+            ),
+            "close": [100.0, 101.0],
+        }
+    )
+
+    train_df = train_model._prepare_prophet_train_df(df)
+
+    assert list(train_df.columns) == ["ds", "y"]
+    assert train_df["ds"].dt.tz is None
+    assert str(train_df["ds"].dtype) == "datetime64[ns]"
