@@ -10,8 +10,10 @@
 4. `C-004` 완료: `worker-train` one-shot 실행 경계 + `train_model` CLI + runbook(`docs/RUNBOOK_TRAIN_JOB.md`) 고정.
 5. `C-013`~`C-016` 완료: stale RCA 후속과 monitor escalation, timeboxed 가독성 분해까지 잠금.
 6. `D-012` 완료: 학습 SoT/chunk 추출 안전장치 + MLflow SQLite tracking/partial-success/snapshot latest-only 정책 잠금, ops-train 스모크 완료(2026-02-26).
-7. 완료 증거: `PYENV_VERSION=coin pytest -q` 통과(`140 passed`, 2026-02-21).
-8. Phase C 상세 원문은 `docs/archive/phase_c/*`로 이동했다.
+7. `D-001` 완료: Prophet 경로 `fit/predict/save/load` 계약 문서/회귀 테스트 잠금(2026-02-26).
+8. `D-002` 완료: 모델 metadata/version 스키마(v1) 문서화 + sidecar 저장 경로 고정(2026-02-26).
+9. 완료 증거: `PYENV_VERSION=coin pytest -q` 통과(`140 passed`, 2026-02-21).
+10. Phase C 상세 원문은 `docs/archive/phase_c/*`로 이동했다.
 
 ## 2. Runtime Baseline (Post-Phase C)
 1. cadence: `UTC boundary + detection gate`
@@ -21,10 +23,10 @@
 5. ingest routing: `1d/1w/1M` 포함 전 timeframe direct fetch(derived downsample 경로 제거)
 
 ## 3. Next Priority Tasks
-1. `D-002`: 모델 메타데이터/버전 스키마 정의
-2. `D-013`: 재학습 트리거 정책 정의(시간+이벤트)
-3. `D-014`: 학습 실행 no-overlap/락 가드
-4. `D-015`: 학습 실행 관측성/알림 baseline
+1. `D-013`: 재학습 트리거 정책 정의(시간+이벤트)
+2. `D-014`: 학습 실행 no-overlap/락 가드
+3. `D-015`: 학습 실행 관측성/알림 baseline
+4. `D-003`: Shadow 추론 파이프라인 도입
 
 ## 4. Current Risks
 1. `TD-012`: 자동 재학습/승격 게이트 미구현

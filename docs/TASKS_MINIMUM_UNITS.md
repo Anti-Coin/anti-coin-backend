@@ -68,7 +68,7 @@
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
 | D-001 | P1 | 모델 계약 명시화(`fit/predict/save/load` 입출력 계약 문서화) | done (2026-02-26) | Prophet 경로 기준 계약을 `docs/MODEL_CONTRACT.md`로 고정하고, 회귀 테스트 `tests/test_model_contract.py`로 `fit` 입력 정규화(`ds` timezone-naive), `load` 우선순위(canonical > legacy), `predict` 산출물(JSON/Influx schema)을 잠금했다. |
-| D-002 | P1 | 모델 메타데이터/버전 스키마 정의 | open | 버전/학습시간/데이터 범위 기록 |
+| D-002 | P1 | 모델 메타데이터/버전 스키마 정의 | done (2026-02-26) | 모델 sidecar metadata 경로(`model_{symbol}_{timeframe}.meta.json`)와 스키마(v1)를 `docs/MODEL_METADATA_SCHEMA.md`로 고정하고, `train_model` 저장 경로에서 `schema_version/run_id/trained_at/row_count/data_range/model_version/snapshot_path/status` 기록을 강제했다. 회귀 테스트 `tests/test_train_model.py::test_train_and_save_persists_model_metadata_schema` 통과. |
 | D-003 | P1 | Shadow 추론 파이프라인 도입 | open | shadow 결과 생성, 사용자 서빙 미반영. **분해 예정**(D-003a: Shadow 실행 경로, D-003b: Shadow 결과 저장, D-003c: 격리 보장) |
 | D-004 | P1 | Champion vs Shadow 평가 리포트 | open | 최소 1개 지표 일별 산출 |
 | D-005 | P1 | 승격 게이트 정책 구현 | open | 게이트 미달 시 승격 차단 |
@@ -109,9 +109,9 @@
 > **Discussion Reference**: `docs/DISCUSSION_PHASE_D_AUDIT_2026-02-21.md`
 
 ## 3. Immediate Bundle (Revised 2026-02-26)
-1. `D-002` — 메타데이터/버전 스키마
-2. `D-013` — 재학습 트리거 정책 정의(시간+이벤트)
-3. `D-014` — 학습 실행 no-overlap/락 가드
+1. `D-013` — 재학습 트리거 정책 정의(시간+이벤트)
+2. `D-014` — 학습 실행 no-overlap/락 가드
+3. `D-015` — 학습 실행 관측성/알림 baseline
 
 ## 3.1 Previous Cycle KPI (Locked 2026-02-21)
 1. `D-018` 완료

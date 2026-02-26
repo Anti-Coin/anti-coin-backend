@@ -28,9 +28,11 @@
 3. Artifact paths:
    - canonical: `models/model_{SYMBOL}_{TIMEFRAME}.json`
    - legacy(primary timeframe only): `models/model_{SYMBOL}.json`
-4. Metadata:
-   - `run_id`, `data_range`, `row_count`, `model_version`
-   - `model_version = sha256(serialized_model)[:12]`
+4. Metadata sidecar paths:
+   - canonical: `models/model_{SYMBOL}_{TIMEFRAME}.meta.json`
+   - legacy(primary timeframe only): `models/model_{SYMBOL}.meta.json`
+5. Metadata schema:
+   - `docs/MODEL_METADATA_SCHEMA.md` (v1)
 
 ## 4. Load Contract
 1. Entry point: `workers/predict.py::run_prediction_and_save`
