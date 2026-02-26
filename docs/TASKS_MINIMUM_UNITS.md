@@ -1,6 +1,6 @@
 # Coin Predict Task Board (Active)
 
-- Last Updated: 2026-02-24
+- Last Updated: 2026-02-26
 - Rule: 활성 태스크만 유지하고, 완료 상세 이력은 Archive로 분리
 - Full Phase A History: `docs/archive/phase_a/TASKS_MINIMUM_UNITS_PHASE_A_FULL_2026-02-12.md`
 - Full Phase B History: `docs/archive/phase_b/TASKS_MINIMUM_UNITS_PHASE_B_FULL_2026-02-19.md`
@@ -78,7 +78,7 @@
 | D-009 | P2 | Drift 알림 연동 | open | 임계 초과 시 경고 발송 |
 | D-010 | **P0** | 장기 timeframe 최소 샘플 gate 구현 | **done (2026-02-21)** | `MIN_SAMPLE_BY_TIMEFRAME` config + `count_ohlcv_rows` query + `run_prediction_and_save` gate 삽입, 회귀 테스트 140 passed |
 | D-011 | P3 (Hold) | Model Coverage Matrix + Fallback Resolver 구현 | open | (보류) Dedicated 승격 정책 대신 일단 단일 Shared 모델 서빙만 유지. `shared -> insufficient_data`만 코드/검증 |
-| D-012 | **P0** | 학습 데이터 SoT 정렬 + Chunk 기반 추출 안전장치 (OOM 방지) | open | 학습 입력이 Influx SoT 기준으로 고정되고, 데이터를 한 번에 메모리에 올리지 않도록 `chunk/pagination` 기반으로 로컬 디스크(Parquet 등)에 덤프하는 방어벽 구현 |
+| D-012 | **P0** | 학습 데이터 SoT 정렬 + Chunk 기반 추출 안전장치 (OOM 방지) | open | 학습 입력이 Influx SoT 기준으로 고정되고, 데이터를 한 번에 메모리에 올리지 않도록 `chunk/pagination` 기반 추출을 적용한다. 모델 추적은 MLflow `SQLite backend`로 시작하고, 학습 반영은 `symbol+timeframe partial-success` 정책을 따른다. snapshot은 `latest 1개`만 유지하며 run metadata(`run_id`, `data_range`, `row_count`, `model_version`)를 기록한다. |
 | D-013 | P1 | 재학습 트리거 정책 정의(시간+이벤트) | open | 재학습 trigger matrix(시간 주기, candle 누적, 드리프트 신호)와 cooldown 정책이 문서/코드로 고정됨 |
 | D-014 | P1 | 학습 실행 no-overlap/락 가드 | open | 학습 동시 실행 차단, stale lock 복구 규칙, 회귀 테스트가 고정됨 |
 | D-015 | P2 | 학습 실행 관측성/알림 baseline | open | 학습 실행시간/성공-실패/최근성 메트릭과 장애 알림 기준이 운영 문서와 함께 반영됨 |
@@ -107,8 +107,8 @@
 
 > **Discussion Reference**: `docs/DISCUSSION_PHASE_D_AUDIT_2026-02-21.md`
 
-## 3. Immediate Bundle (Revised 2026-02-24)
-1. `D-012` — 학습 데이터 SoT 정렬 + Chunk 기반 OOM 방어
+## 3. Immediate Bundle (Revised 2026-02-26)
+1. `D-012` — 학습 데이터 SoT 정렬 + Chunk 기반 OOM 방어 + SQLite tracking/partial-success/snapshot latest-only 정책 잠금
 2. `D-001` — 모델 계약 명시화
 3. `D-002` — 메타데이터/버전 스키마
 

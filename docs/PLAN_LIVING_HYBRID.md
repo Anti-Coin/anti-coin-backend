@@ -1,6 +1,6 @@
 # Coin Predict Living Plan (Hybrid)
 
-- Last Updated: 2026-02-24
+- Last Updated: 2026-02-26
 - Owner: Backend/Platform
 - Status: Active
 - Full Phase A History: `docs/archive/phase_a/PLAN_LIVING_HYBRID_PHASE_A_FULL_2026-02-12.md`
@@ -65,7 +65,7 @@
 12. `D-020` 완료: 1d/1w/1M full-fill 복구 + 재감지 가드 정렬(`D-2026-02-24-64`)
 
 ## 5.1 Parallel Critical Recovery (Non-Bundle)
-1. `D-012`: 학습 데이터 SoT 정렬 + chunk 기반 OOM 방어
+1. `D-012`: 학습 데이터 SoT 정렬 + chunk 기반 OOM 방어 + 실행 정책 잠금(`D-2026-02-26-65`: MLflow SQLite backend, partial-success, snapshot latest-only + run metadata 기록)
 2. `D-001`: 모델 계약 명시화(`fit/predict/save/load`)
 3. `D-002`: 모델 메타데이터/버전 스키마 정의
 

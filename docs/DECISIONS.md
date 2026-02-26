@@ -1,6 +1,6 @@
 # Coin Predict Decision Register (Active)
 
-- Last Updated: 2026-02-24
+- Last Updated: 2026-02-26
 - Scope: 활성 결정 요약 + archive 원문 링크
 - Full Phase A History: `docs/archive/phase_a/DECISIONS_PHASE_A_FULL_2026-02-12.md`
 - Full Phase B History: `docs/archive/phase_b/DECISIONS_PHASE_B_FULL_2026-02-19.md`
@@ -69,6 +69,7 @@
 | D-2026-02-24-62 | Deletion Gate Lock + Rollback Boundary Shift | `D-032` 기준으로 삭제 진입 게이트를 잠근다. runtime 근거는 `D-028` 기록(`samples=240`, `overrun_rate=0.0`, `p95_cycle_seconds=12.57`)이며 삭제 시작점(`D-033+`)부터 rollback 기본 경계는 split 즉시 복귀가 아니라 배포 롤백(직전 정상 이미지/커밋 재배포)으로 전환한다. | `D-033+` 진행 중 성능/복구 악화 관측, 또는 split 경로 재도입 요구가 재상승할 때 |
 | D-2026-02-24-63 | Serial Path Hard Lock | `D-034` 기준으로 `PIPELINE_SERIAL_EXECUTION_ENABLED`와 compose `legacy-split` profile(`worker-publish`)을 제거해 직렬 경로를 유일 실행 계약으로 고정한다. rollback 경로는 split 즉시 복귀가 아닌 배포 롤백(직전 정상 이미지/커밋 재배포)만 사용한다. | 직렬 경로에서 overrun/복구 지연이 임계치를 넘거나, 장애 격리 요구로 split topology 재도입이 필요할 때 |
 | D-2026-02-24-64 | D-020 Closure + Full-Fill Re-detection Guard | `D-020`은 운영 복구로 종료하되 재발 방지는 코드 계약으로 잠근다. full-fill TF(`1h/1d/1w/1M`)에서 `db_first > exchange_earliest + tolerance`면 `force_rebootstrap`을 활성화해 exchange earliest부터 재수집하며, boundary detection gate skip 상태여도 backward coverage gap이 감지되면 ingest를 진행한다. | false positive 재부트스트랩 증가, 또는 장주기 TF underfill 재발 시 |
+| D-2026-02-26-65 | D-012 Training Execution Policy Lock | `D-012` 실행 기준을 잠근다. 모델 추적은 MLflow `SQLite backend`로 시작하고(file backend 미채택), 학습 결과 반영은 `symbol+timeframe partial-success`를 허용한다. snapshot 산출물은 `latest 1개`만 유지하고, 재현성은 run metadata(`run_id`, `data_range`, `row_count`, `model_version`) 기록으로 보완한다. | Model Registry stage 운영/다중 운영자 감사 요구로 중앙 서버가 필요해질 때, 또는 다중 snapshot 포렌식 요구가 생길 때 |
 
 ## 3. Decision Operation Policy
 1. 활성 문서는 요약만 유지한다(상세 서술 금지).
