@@ -1,6 +1,6 @@
 # Coin Predict Session Handoff
 
-- Last Updated: 2026-02-21
+- Last Updated: 2026-02-26
 - Branch: `dev`
 
 ## 1. Current Snapshot
@@ -9,26 +9,27 @@
 3. `/status`는 운영 신호 경로, `/history`/`/predict`는 sunset tombstone(`410`).
 4. `C-004` 완료: `worker-train` one-shot 실행 경계 + `train_model` CLI + runbook(`docs/RUNBOOK_TRAIN_JOB.md`) 고정.
 5. `C-013`~`C-016` 완료: stale RCA 후속과 monitor escalation, timeboxed 가독성 분해까지 잠금.
-6. 완료 증거: `PYENV_VERSION=coin pytest -q` 통과(`140 passed`, 2026-02-21).
-7. Phase C 상세 원문은 `docs/archive/phase_c/*`로 이동했다.
+6. `D-012` 완료: 학습 SoT/chunk 추출 안전장치 + MLflow SQLite tracking/partial-success/snapshot latest-only 정책 잠금, ops-train 스모크 완료(2026-02-26).
+7. 완료 증거: `PYENV_VERSION=coin pytest -q` 통과(`140 passed`, 2026-02-21).
+8. Phase C 상세 원문은 `docs/archive/phase_c/*`로 이동했다.
 
 ## 2. Runtime Baseline (Post-Phase C)
 1. cadence: `UTC boundary + detection gate`
-2. worker topology: `worker-ingest`/`worker-publish` 2-service
-3. publish trigger: ingest watermark advance gate
+2. worker topology: `worker-ingest` 단일 실행 경로(ingest -> publish in-cycle causal chain)
+3. publish trigger: ingest stage in-cycle 후 publish reconcile 실행
 4. monitor consistency: `symbol+timeframe` 기준 + `PRIMARY_TIMEFRAME` legacy fallback
 5. ingest routing: `1d/1w/1M` 포함 전 timeframe direct fetch(derived downsample 경로 제거)
 
 ## 3. Next Priority Tasks
-1. `D-001`: 모델 인터페이스 계약(`fit/predict/save/load`) 고정
-2. `D-002`: 모델 메타데이터/버전 스키마 정의
-3. `D-012`: 학습 데이터 SoT 정렬(Influx 기반 closed-candle snapshot)
-4. `D-013`: 재학습 트리거 정책 정의(시간+이벤트)
+1. `D-002`: 모델 메타데이터/버전 스키마 정의
+2. `D-013`: 재학습 트리거 정책 정의(시간+이벤트)
+3. `D-014`: 학습 실행 no-overlap/락 가드
+4. `D-015`: 학습 실행 관측성/알림 baseline
 
 ## 4. Current Risks
 1. `TD-012`: 자동 재학습/승격 게이트 미구현
 2. `TD-010`: 모델 인터페이스 미구현
-3. `TD-030`: 장기 TF 샘플 부족 차단/품질표시 미구현
+3. `TD-022`: prediction freshness 의미론(입력 stale 은닉 가능성) 정렬 필요
 4. `TD-009`: dev push 즉시 배포 구조 리스크
 
 ## 5. Runtime Notes

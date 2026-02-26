@@ -67,7 +67,7 @@
 ### Phase D (Model Evolution) - Active
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
-| D-001 | P1 | 모델 계약 명시화(`fit/predict/save/load` 입출력 계약 문서화) | open | 현재 Prophet 경로의 계약이 문서/테스트로 고정됨 (추상 인터페이스가 아닌 계약 수준) |
+| D-001 | P1 | 모델 계약 명시화(`fit/predict/save/load` 입출력 계약 문서화) | done (2026-02-26) | Prophet 경로 기준 계약을 `docs/MODEL_CONTRACT.md`로 고정하고, 회귀 테스트 `tests/test_model_contract.py`로 `fit` 입력 정규화(`ds` timezone-naive), `load` 우선순위(canonical > legacy), `predict` 산출물(JSON/Influx schema)을 잠금했다. |
 | D-002 | P1 | 모델 메타데이터/버전 스키마 정의 | open | 버전/학습시간/데이터 범위 기록 |
 | D-003 | P1 | Shadow 추론 파이프라인 도입 | open | shadow 결과 생성, 사용자 서빙 미반영. **분해 예정**(D-003a: Shadow 실행 경로, D-003b: Shadow 결과 저장, D-003c: 격리 보장) |
 | D-004 | P1 | Champion vs Shadow 평가 리포트 | open | 최소 1개 지표 일별 산출 |
@@ -78,7 +78,7 @@
 | D-009 | P2 | Drift 알림 연동 | open | 임계 초과 시 경고 발송 |
 | D-010 | **P0** | 장기 timeframe 최소 샘플 gate 구현 | **done (2026-02-21)** | `MIN_SAMPLE_BY_TIMEFRAME` config + `count_ohlcv_rows` query + `run_prediction_and_save` gate 삽입, 회귀 테스트 140 passed |
 | D-011 | P3 (Hold) | Model Coverage Matrix + Fallback Resolver 구현 | open | (보류) Dedicated 승격 정책 대신 일단 단일 Shared 모델 서빙만 유지. `shared -> insufficient_data`만 코드/검증 |
-| D-012 | **P0** | 학습 데이터 SoT 정렬 + Chunk 기반 추출 안전장치 (OOM 방지) | in_progress | 학습 입력이 Influx SoT 기준으로 고정되고, 데이터를 한 번에 메모리에 올리지 않도록 `chunk/pagination` 기반 추출을 적용한다. 모델 추적은 MLflow `SQLite backend`로 시작하고, 학습 반영은 `symbol+timeframe partial-success` 정책을 따른다. snapshot은 `latest 1개`만 유지하며 run metadata(`run_id`, `data_range`, `row_count`, `model_version`)를 기록한다. |
+| D-012 | **P0** | 학습 데이터 SoT 정렬 + Chunk 기반 추출 안전장치 (OOM 방지) | done (2026-02-26) | 학습 입력이 Influx SoT 기준으로 고정되고, 데이터를 한 번에 메모리에 올리지 않도록 `chunk/pagination` 기반 추출을 적용했다. 모델 추적은 MLflow `SQLite backend`로 잠그고, 학습 반영은 `symbol+timeframe partial-success` 정책을 적용했다. snapshot은 `latest 1개`만 유지하며 run metadata(`run_id`, `data_range`, `row_count`, `model_version`)를 기록한다. Prophet `ds` timezone-naive 정규화 회귀 테스트를 추가했고, `worker-train` ops-train 스모크를 통과했다. |
 | D-013 | P1 | 재학습 트리거 정책 정의(시간+이벤트) | open | 재학습 trigger matrix(시간 주기, candle 누적, 드리프트 신호)와 cooldown 정책이 문서/코드로 고정됨 |
 | D-014 | P1 | 학습 실행 no-overlap/락 가드 | open | 학습 동시 실행 차단, stale lock 복구 규칙, 회귀 테스트가 고정됨 |
 | D-015 | P2 | 학습 실행 관측성/알림 baseline | open | 학습 실행시간/성공-실패/최근성 메트릭과 장애 알림 기준이 운영 문서와 함께 반영됨 |
@@ -109,9 +109,9 @@
 > **Discussion Reference**: `docs/DISCUSSION_PHASE_D_AUDIT_2026-02-21.md`
 
 ## 3. Immediate Bundle (Revised 2026-02-26)
-1. `D-012` — 학습 데이터 SoT 정렬 + Chunk 기반 OOM 방어 + SQLite tracking/partial-success/snapshot latest-only 정책 잠금
-2. `D-001` — 모델 계약 명시화
-3. `D-002` — 메타데이터/버전 스키마
+1. `D-002` — 메타데이터/버전 스키마
+2. `D-013` — 재학습 트리거 정책 정의(시간+이벤트)
+3. `D-014` — 학습 실행 no-overlap/락 가드
 
 ## 3.1 Previous Cycle KPI (Locked 2026-02-21)
 1. `D-018` 완료

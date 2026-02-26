@@ -63,11 +63,13 @@
 10. `D-036` 완료: split 전용 watermark 상태파일/저장 계층 제거
 11. `D-037` 완료: split 전용 worker 엔트리포인트 제거
 12. `D-020` 완료: 1d/1w/1M full-fill 복구 + 재감지 가드 정렬(`D-2026-02-24-64`)
+13. `D-012` 완료: 학습 SoT/chunk 추출 안전장치 + SQLite tracking/partial-success/snapshot latest-only 잠금, `worker-train` 스모크 통과
+14. `D-001` 완료: Prophet 경로 `fit/predict/save/load` 계약을 문서(`docs/MODEL_CONTRACT.md`)와 회귀 테스트(`tests/test_model_contract.py`)로 잠금
 
 ## 5.1 Parallel Critical Recovery (Non-Bundle)
-1. `D-012`: 학습 데이터 SoT 정렬 + chunk 기반 OOM 방어 + 실행 정책 잠금(`D-2026-02-26-65`: MLflow SQLite backend, partial-success, snapshot latest-only + run metadata 기록)
-2. `D-001`: 모델 계약 명시화(`fit/predict/save/load`)
-3. `D-002`: 모델 메타데이터/버전 스키마 정의
+1. `D-002`: 모델 메타데이터/버전 스키마 정의
+2. `D-013`: 재학습 트리거 정책 정의(시간+이벤트)
+3. `D-014`: 학습 실행 no-overlap/락 가드
 4. `D-038` (hold): 학습 snapshot pre-materialize 누적 extractor는 최적화 후보로 분리하고, on-demand 경로에서 학습 시간/SLA 압력이 반복될 때만 재개한다(`D-2026-02-26-66`).
 
 ## 5.2 Previous Cycle KPI (Locked 2026-02-21)
