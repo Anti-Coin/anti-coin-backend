@@ -1,6 +1,6 @@
 # Coin Predict Living Plan (Hybrid)
 
-- Last Updated: 2026-02-23
+- Last Updated: 2026-02-26
 - Owner: Backend/Platform
 - Status: Active
 - Full Phase A History: `docs/archive/phase_a/PLAN_LIVING_HYBRID_PHASE_A_FULL_2026-02-12.md`
@@ -35,11 +35,12 @@
 | D | active | 모델 진화의 "운영 안전성" 확보(자동화 자체가 목적 아님) | D-001~D-005 핵심 게이트(인터페이스/메타데이터/shadow 비교/승격 차단) 확립 + 롤백 경로 검증 |
 
 ## 4.1 Phase C Completion Baseline
-1. worker topology는 `worker-ingest`/`worker-publish` 2-service로 고정됐다.
+1. Phase C 시점 baseline은 `worker-ingest`/`worker-publish` 2-service였다. 현재 운영 기본은 `worker-ingest` 단일 실행 경로(ingest->publish in-cycle causal chain)로 고정됐고(`D-034`), split rollback profile은 제거됐다.
 2. cadence는 `UTC boundary + detection gate` 기준으로 고정됐다.
 3. monitor consistency는 `symbol+timeframe` 기준 + `PRIMARY_TIMEFRAME` legacy fallback 경계로 고정됐다.
 4. stale 장기 지속 승격(`*_escalated`)과 runbook이 운영 기본 절차로 반영됐다.
 5. 상세 증거/변경 이력은 `docs/archive/phase_c/*`를 단일 출처로 사용한다.
+6. Phase D 전환 경로는 직렬 pipeline(`ingest -> publish` in-cycle causal chain)으로 재잠근다(`D-027`~`D-031`). `D-022`~`D-026`은 hold reference로 유지한다.
 
 ## 4.2 Phase D Model Coverage Baseline (Locked to Shared Champion)
 1. 기본 커버리지는 `timeframe-shared champion` 글로벌 단일 모델로 시작하며 이를 유지한다(전 심볼 공통).
@@ -49,16 +50,77 @@
 4. dedicated 기능은 추후 인프라가 확장 가능하거나 OOM 리스크가 완벽히 제어되었을 때만 재검토한다.
 5. 관련 정책 상세는 `D-2026-02-13-32`, 구현 단위는 `D-011`에서 관리하되, `D-011`의 우선순위를 조정한다.
 
-## 5. Next Cycle (Recommended)
-1. **`D-020` 수행**: 1d/1w/1M full-fill 복구 (운영 조치: DB 삭제 + cursor 초기화 → 재부트스트랩)
-2. `D-012` 수행: 학습 데이터 SoT 정렬 (코드 완성, TASKS 갱신 마무리)
-3. `D-001` 수행: 모델 계약 명시화(`fit/predict/save/load`, 추상 인터페이스 도입은 보류)
-4. `D-002` 수행: 모델 메타데이터/버전 스키마 정의
+## 5. Next Cycle (Revised 2026-02-24)
+1. `D-027` 완료: 직렬 전환 가드레일 잠금(`D-2026-02-24-58`)
+2. `D-028` 완료: runtime headroom 계측 계약 잠금 + baseline 기록(`D-2026-02-24-59`)
+3. `D-029` 완료: 직렬 실행 플래그 계약/코드 반영(`D-2026-02-24-60`)
+4. `D-030` 완료: serial publish reconcile 경로 단순화(`D-2026-02-24-61`)
+5. `D-031` 완료: 롤백 리허설 + 순서 레이스 회귀 테스트 고정
+6. `D-032` 완료: 삭제 전환 게이트 잠금(직렬 단일 경로 고정)
+7. `D-033` 완료: role/mode 실행 매트릭스 제거(`WORKER_EXECUTION_ROLE`, `WORKER_PUBLISH_MODE`)
+8. `D-034` 완료: 직렬 플래그/legacy split profile 제거(`D-2026-02-24-63`)
+9. `D-035` 완료: split 전용 publish gate/self-heal 분기 제거
+10. `D-036` 완료: split 전용 watermark 상태파일/저장 계층 제거
+11. `D-037` 완료: split 전용 worker 엔트리포인트 제거
+12. `D-020` 완료: 1d/1w/1M full-fill 복구 + 재감지 가드 정렬(`D-2026-02-24-64`)
 
-## 5.1 Cycle KPI (Locked 2026-02-21)
+## 5.1 Parallel Critical Recovery (Non-Bundle)
+1. `D-012`: 학습 데이터 SoT 정렬 + chunk 기반 OOM 방어 + 실행 정책 잠금(`D-2026-02-26-65`: MLflow SQLite backend, partial-success, snapshot latest-only + run metadata 기록)
+2. `D-001`: 모델 계약 명시화(`fit/predict/save/load`)
+3. `D-002`: 모델 메타데이터/버전 스키마 정의
+4. `D-038` (hold): 학습 snapshot pre-materialize 누적 extractor는 최적화 후보로 분리하고, on-demand 경로에서 학습 시간/SLA 압력이 반복될 때만 재개한다(`D-2026-02-26-66`).
+
+## 5.2 Previous Cycle KPI (Locked 2026-02-21)
 1. `D-018` 완료
-2. `D-012` 완료
-3. 전체 회귀 통과: `PYENV_VERSION=coin pytest -q`
+2. 전체 회귀 통과: `PYENV_VERSION=coin pytest -q`
+
+## 5.3 D-028 Measurement Record (Before D-029)
+1. Source: `static_data/runtime_metrics.json` (ingest role writer)
+2. Profile: `boundary + 1h 포함` 경로 적용 (`poll_loop` 10080 샘플 경로는 비적용)
+3. Runtime Evidence: `INGEST_TIMEFRAMES=1h,1d,1w,1M`
+4. Runtime Evidence: `WORKER_SCHEDULER_MODE` unset (code default `boundary`)
+5. Runtime Evidence: `WORKER_CYCLE_SECONDS` unset (code default `60`)
+6. Runtime Evidence: `RUNTIME_METRICS_WINDOW_SIZE` unset (code default `240`)
+7. Precondition(boundary profile): `RUNTIME_METRICS_WINDOW_SIZE >= 240`
+8. Precondition(boundary profile): `summary.samples >= 240`
+9. Metric Mapping: `p95_cycle_seconds := summary.p95_elapsed_seconds`
+10. Metric Mapping: `overrun_rate := summary.overrun_rate`
+11. Record `measured_at_utc`: `2026-02-24T01:01:00Z`
+12. Record `window_size`: `240`
+13. Record `samples`: `240`
+14. Record `overrun_rate_7d_baseline`: `0.0`
+15. Record `p95_cycle_seconds_7d_baseline`: `12.57`
+16. Extraction Command: `jq '{measured_at_utc: .updated_at, window_size: .window_size, samples: .summary.samples, overrun_rate_7d_baseline: .summary.overrun_rate, p95_cycle_seconds_7d_baseline: .summary.p95_elapsed_seconds}' static_data/runtime_metrics.json`
+17. Gate: precondition 충족 + baseline 기록 완료 (`D-029` 진입 허용)
+
+## 5.4 D-031 Rollback Rehearsal Record
+1. Purpose: split rollback 경로(당시 `PIPELINE_SERIAL_EXECUTION_ENABLED=0` + `legacy-split` profile)에서 publish-only state 동기화가 유지되는지 고정한다.
+2. Fixed Regression Test: `test_reload_publish_only_shared_state_uses_file_snapshot_for_split_worker`
+3. Fixed Regression Test: `test_reload_publish_only_shared_state_does_not_reload_for_ingest_worker`
+4. Verification Command: `PYENV_VERSION=coin pytest -q tests/test_pipeline_worker.py`
+5. Verification Result: `73 passed` (2026-02-24)
+6. Rollback Procedure Contract: serial off: `PIPELINE_SERIAL_EXECUTION_ENABLED=0`
+7. Rollback Procedure Contract: split publish worker on: `docker compose --profile legacy-split up -d worker-publish`
+8. Rollback Procedure Contract: publish worker standby 해제 + cycle 시작 state reload 동작 확인
+
+## 5.5 D-034 Serial Hard Lock Record
+1. Purpose: 직렬 경로를 feature flag 없이 유일 실행 계약으로 고정한다.
+2. Code Contract: `scripts/pipeline_worker.py`에서 serial 여부 결정은 `run_ingest_stage` 고정 경로만 사용한다.
+3. Config Contract: `scripts/worker_config.py`에서 `PIPELINE_SERIAL_EXECUTION_ENABLED`를 제거한다.
+4. Runtime Contract: `docker-compose.yml`에서 `legacy-split` profile/`worker-publish` 서비스를 제거한다.
+5. Ops Contract: rollback 기본 경계는 split 즉시 복귀가 아닌 배포 롤백(runbook)만 사용한다.
+6. Evidence Command: `PYENV_VERSION=coin pytest -q tests/test_pipeline_worker.py`
+7. Evidence Result: `64 passed` (2026-02-24)
+
+## 5.6 D-032 Deletion Gate Lock Record
+1. Gate Objective: `D-033` 이후 split 경로 삭제를 시작하기 전에 직렬 단일 경로 전제와 rollback 경계를 고정한다.
+2. Runtime Evidence Source: `D-028` 측정 기록(Section 5.3), `measured_at_utc=2026-02-24T01:01:00Z`.
+3. Runtime Evidence: `summary.samples=240`, `summary.overrun_rate=0.0`, `summary.p95_elapsed_seconds=12.57`.
+4. Gate Result: `p95_cycle_seconds <= 45` 조건 충족, overrun 비열화(0.0 유지)로 삭제 진입 허용.
+5. Rollback Boundary Change: split 즉시 복귀(`PIPELINE_SERIAL_EXECUTION_ENABLED=0` + `legacy-split`)를 기본 계약에서 제외한다.
+6. Rollback Boundary Change: 삭제 단계(`D-033+`)부터는 배포 롤백(이전 이미지/커밋 재배포)만 공식 rollback 경로로 사용한다.
+7. Deployment Rollback Procedure: 운영 배포에서 직전 정상 이미지 태그로 worker 재기동한다.
+8. Deployment Rollback Procedure: 배포 후 `tests/test_pipeline_worker.py` 회귀 + `/status`/manifest smoke를 수행한다.
 
 ## 6. Portfolio Capability Matrix (Current vs Next)
 | Capability | Current Evidence | Next Strengthening |
@@ -72,7 +134,7 @@
 ## 7. Current Risk Register (Top)
 1. `TD-012`: 자동 재학습/승격 게이트 미구현
 2. `TD-010`: 모델 인터페이스 미구현
-3. `TD-030`: 장기 TF 샘플 부족 차단/품질표시 미구현
+3. `TD-022`: prediction freshness 의미론(입력 stale 은닉 가능성) 정렬 필요
 4. `TD-009`: dev push 즉시 배포 구조로 인한 운영 실수 영향 확대 리스크
 
 ## 8. Change Rules

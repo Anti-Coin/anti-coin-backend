@@ -1,4 +1,6 @@
 import pytest
+import pandas as pd
+from pathlib import Path
 
 from scripts import train_model
 
@@ -61,6 +63,7 @@ def test_main_builds_training_plan_and_runs_job(monkeypatch):
         captured["symbols"] = symbols
         captured["timeframes"] = timeframes
         captured["lookback_limit"] = lookback_limit
+        return {"failed": 0}
 
     monkeypatch.setattr(train_model, "run_training_job", fake_run_training_job)
 
@@ -81,3 +84,79 @@ def test_main_builds_training_plan_and_runs_job(monkeypatch):
         "timeframes": ["1h", "1d"],
         "lookback_limit": 123,
     }
+
+
+def test_resolve_mlflow_tracking_uri_defaults_to_sqlite(monkeypatch):
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    uri = train_model._resolve_mlflow_tracking_uri()
+    expected = f"sqlite:///{Path(train_model.STATIC_DIR) / 'mlflow.db'}"
+    assert uri == expected
+
+
+def test_main_returns_error_when_training_has_partial_failure(monkeypatch):
+    monkeypatch.setattr(
+        train_model,
+        "run_training_job",
+        lambda **kwargs: {"failed": 1},
+    )
+    rc = train_model.main(["--symbols", "BTC/USDT", "--timeframes", "1h"])
+    assert rc == 1
+
+
+def test_run_training_job_allows_partial_success(monkeypatch):
+    class DummyClient:
+        def close(self):
+            return None
+
+    class DummyMlflow:
+        def __init__(self):
+            self.uri = None
+            self.experiment = None
+
+        def set_tracking_uri(self, uri):
+            self.uri = uri
+
+        def set_experiment(self, name):
+            self.experiment = name
+
+    call_state = {"count": 0}
+
+    def fake_train_and_save(*args, **kwargs):
+        call_state["count"] += 1
+        symbol = args[0]
+        if symbol == "ETH/USDT":
+            raise RuntimeError("train failed")
+        return {"status": "ok"}
+
+    monkeypatch.setattr(train_model, "_get_influx_client", lambda: DummyClient())
+    monkeypatch.setattr(train_model, "_load_mlflow_module", lambda: DummyMlflow())
+    monkeypatch.setattr(train_model, "train_and_save", fake_train_and_save)
+
+    summary = train_model.run_training_job(
+        symbols=["BTC/USDT", "ETH/USDT"],
+        timeframes=["1h"],
+        lookback_limit=10,
+    )
+
+    assert call_state["count"] == 2
+    assert summary["total"] == 2
+    assert summary["succeeded"] == 1
+    assert summary["failed"] == 1
+    assert summary["failures"][0]["symbol"] == "ETH/USDT"
+
+
+def test_prepare_prophet_train_df_converts_timezone_aware_ds_to_naive_utc():
+    df = pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                ["2026-02-26T00:00:00Z", "2026-02-26T01:00:00Z"], utc=True
+            ),
+            "close": [100.0, 101.0],
+        }
+    )
+
+    train_df = train_model._prepare_prophet_train_df(df)
+
+    assert list(train_df.columns) == ["ds", "y"]
+    assert train_df["ds"].dt.tz is None
+    assert str(train_df["ds"].dtype) == "datetime64[ns]"

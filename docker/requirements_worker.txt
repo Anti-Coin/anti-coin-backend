@@ -3,3 +3,4 @@ pandas
 influxdb-client
 prophet
 requests
+mlflow
