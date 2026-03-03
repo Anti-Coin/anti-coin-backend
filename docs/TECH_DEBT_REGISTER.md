@@ -1,6 +1,6 @@
 # Coin Predict Technical Debt Register
 
-- Last Updated: 2026-02-24
+- Last Updated: 2026-03-03
 - Purpose: 기술 부채를 세션 간 누락 없이 추적
 
 ## 1. 운용 규칙
@@ -20,9 +20,9 @@
 | TD-007 | Worker | 워커 경계 조건 테스트 부족 | 회귀 리스크 증가 | resolved | A-011-6 | pagination 종료 경계/리필 병합 경계 테스트 추가 완료 |
 | TD-008 | CI/CD | 테스트 게이트 미적용 | 실패 코드 배포 가능 | resolved | A-011-7 | CI `test` 선행 및 build/deploy 의존 게이트 적용 완료 |
 | TD-009 | Deployment | dev push 즉시 배포 구조 | 운영 실수 영향 확대 | open | (TBD) | CI/CD 정책 분리 문서화 후 적용 |
-| TD-010 | Modeling | 모델 인터페이스 미구현 | 모델 교체 비용 증가 | open | D-001 | BaseModel 추상화 도입 |
+| TD-010 | Modeling | 모델 인터페이스 미구현 | 모델 교체 비용 증가 | open | D-001 | Prophet 경로 기준 `fit/predict/save/load` 계약을 문서/테스트로 먼저 고정하고, 추상화 도입은 후속 태스크에서 재평가 |
 | TD-011 | Modeling | shadow 추론/평가 파이프라인 미구현 | 모델 비교 근거 부족 | open | D-003,D-004 | shadow 결과 저장/리포트 구현 |
-| TD-012 | Modeling | 자동 재학습/승격 게이트 미구현 | 모델 운영 수작업 부담 | open | C-004,D-005,D-006,D-007,D-012,D-013,D-014,D-015 | `C-004`로 수동 one-shot 학습 경계는 확보됨. Influx SoT 학습 입력/재학습 트리거/실행 락/학습 관측성은 D 태스크에서 후속 구현 |
+| TD-012 | Modeling | 자동 재학습/승격 게이트 미구현 | 모델 운영 수작업 부담 | open | C-004,D-005,D-006,D-007,D-013,D-014,D-015 | `C-004`로 수동 one-shot 학습 경계는 확보됐고 `D-012`로 Influx SoT 학습 입력/chunk 추출 안전장치/실행 정책 잠금이 완료됐다. 재학습 트리거/실행 락/학습 관측성은 D 태스크에서 후속 구현 |
 | TD-013 | Reliability | atomic JSON 권한 이슈 (회귀 위험) | nginx 읽기 실패 재발 가능 | mitigated | A-007,A-011-2 | 회귀 테스트 유지 및 CI 연동 |
 | TD-014 | Deployment | worker 이미지 ENTRYPOINT 고정으로 monitor 커맨드 충돌 | monitor 오작동/중복 worker 실행 가능 | resolved | A-010-6 | 범용 ENTRYPOINT + worker 기본 CMD로 분리 적용 |
 | TD-015 | Data Consistency | Influx-JSON 최신 시각 불일치 검증 미구현 | 운영자가 오래된 JSON을 정상으로 오해할 수 있음 | resolved | A-014 | Influx 최신 시각 vs static `updated_at` 비교/승격 로직 구현 + `/predict` 미래값 운영 스모크체크(전체 심볼) 확인 완료 |
@@ -45,6 +45,8 @@
 | TD-032 | Publish Recovery | static history/prediction 파일 수동 삭제 시 watermark gate가 최신으로 판정하면 파일 복구가 지연됨 | 운영자 실수 후 사용자 플레인 산출물 누락 장기화 | resolved | D-019 | publish gate skip(`up_to_date_ingest_watermark`)에서도 canonical history 파일 누락은 self-heal export를 수행하고, canonical prediction 파일 누락은 `last_success_at` 존재 조건에서 self-heal prediction을 수행하도록 고정. 장주기 DB empty/state drift는 exchange earliest full-fill로 보정 |
 | TD-033 | Ingest Recovery | `resolve_ingest_since`에 full-fill 재감지 메커니즘 부재. `last_time` 존재 시 `db_last`로 고착되어 lookback 데이터만 있는 상태에서 full-fill로 전환 불가 | 장주기 TF 데이터 부족 → prediction 차단 연쇄 | resolved | D-020 | `D-020`으로 운영 복구를 완료했고, 코드에 자동 재감지 가드를 반영했다. full-fill TF에서 `db_first vs exchange_earliest` backward gap을 감지하면 `force_rebootstrap`으로 exchange earliest 재수집을 수행하며, boundary detection gate skip 상태에서도 gap 감지 시 ingest를 override 실행한다. 회귀: `tests/test_pipeline_worker.py` D-020 케이스 통과 |
 | TD-034 | Maintainability | Python 상수 ~55개가 `worker_config.py`/`utils/config.py`에 구조 없이 평면 나열되며, `PRIMARY_TIMEFRAME` 재노출 등 의존성 혼란 존재 | 상수 탐색/수정 비용 증가 | open | D-016,D-021 | D-016 상태 관리 분리 시 역할별 그룹화(dataclass/섹션) + 재노출 패턴 제거 |
+| TD-035 | Modeling Ops | 이벤트 기반 재학습 임계치가 휴리스틱(백테스트/운영 통계 미보정) | 과재학습 또는 drift 미탐지로 비용 증가/성능 저하 가능 | open | D-013,D-009 | 30일 운영 데이터로 이벤트별 precision/실효성(재학습 후 개선율) 측정 후 임계치 재보정, enable 조건을 문서로 잠금 |
+| TD-036 | Modeling Governance | coverage 용어 드리프트 재발 위험(`shared champion` 정책 용어 vs `symbol+timeframe` 런타임 아티팩트) | 운영자 판단/롤백 기준 혼선 가능 | mitigated | D-011 | `D-2026-03-03-71` 기준으로 활성 문서 용어 통일 유지, 분기별 문서 점검 시 용어 일치 여부를 체크한다 |
 
 ## 3. 상태 정의
 1. `open`: 미해결

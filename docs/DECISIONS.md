@@ -1,6 +1,6 @@
 # Coin Predict Decision Register (Active)
 
-- Last Updated: 2026-02-26
+- Last Updated: 2026-03-03
 - Scope: 활성 결정 요약 + archive 원문 링크
 - Full Phase A History: `docs/archive/phase_a/DECISIONS_PHASE_A_FULL_2026-02-12.md`
 - Full Phase B History: `docs/archive/phase_b/DECISIONS_PHASE_B_FULL_2026-02-19.md`
@@ -41,7 +41,7 @@
 ## 2. Current Baseline Decisions (Summary)
 | ID | Topic | Current Rule | Revisit Trigger |
 |---|---|---|---|
-| D-2026-02-13-32 | Phase D Coverage Strategy | 기본은 `timeframe-shared champion` 단일화. `symbol+timeframe dedicated` 승격은 당분간 보류(Free Tier 인프라 OOM 방지 및 운영 제약 우선 고려) | shared 품질 저하 반복 및 인프라(RAM) 증설 또는 최적화 완료 시 |
+| D-2026-02-13-32 | Phase D Coverage Strategy | 초기 baseline은 `timeframe-shared champion` 단일화였다. 현재 런타임 아티팩트 경계는 `D-2026-03-03-71`(symbol+timeframe canonical)으로 보정되며, shared/dedicated 승격 정책 논의는 `D-011 hold`에서 계속 관리한다(legacy decision trace). | coverage resolver 재도입 필요, 또는 모델 아티팩트 경계 변경 필요 시 |
 | D-2026-02-13-33 | Cycle Cadence | `UTC boundary + detection gate` 하이브리드 고정 | `overrun_rate` 상승 또는 `missed_boundary` 재발 |
 | D-2026-02-13-34 | Reconciliation + Derived Guard | 내부 mismatch 즉시 critical, 외부 mismatch는 3회 연속 critical. `1d/1w/1M` direct ingest 금지 규칙은 `D-2026-02-21-51`에서 direct fetch 허용으로 대체됨(legacy decision trace). | 외부 warning 과다, 데이터 계약/대사 정책 재정의 필요 시 |
 | D-2026-02-13-35 | `1h` Underfill Guard Position | `underfill -> rebootstrap` guard는 임시 containment, RCA 전 제거 금지 | guard 재트리거 빈도 증가, 관찰 창 종료 |
@@ -71,6 +71,11 @@
 | D-2026-02-24-64 | D-020 Closure + Full-Fill Re-detection Guard | `D-020`은 운영 복구로 종료하되 재발 방지는 코드 계약으로 잠근다. full-fill TF(`1h/1d/1w/1M`)에서 `db_first > exchange_earliest + tolerance`면 `force_rebootstrap`을 활성화해 exchange earliest부터 재수집하며, boundary detection gate skip 상태여도 backward coverage gap이 감지되면 ingest를 진행한다. | false positive 재부트스트랩 증가, 또는 장주기 TF underfill 재발 시 |
 | D-2026-02-26-65 | D-012 Training Execution Policy Lock | `D-012` 실행 기준을 잠근다. 모델 추적은 MLflow `SQLite backend`로 시작하고(file backend 미채택), 학습 결과 반영은 `symbol+timeframe partial-success`를 허용한다. snapshot 산출물은 `latest 1개`만 유지하고, 재현성은 run metadata(`run_id`, `data_range`, `row_count`, `model_version`) 기록으로 보완한다. | Model Registry stage 운영/다중 운영자 감사 요구로 중앙 서버가 필요해질 때, 또는 다중 snapshot 포렌식 요구가 생길 때 |
 | D-2026-02-26-66 | Training Snapshot Strategy (On-demand 유지 + Pre-materialize Hold) | 현재 학습 데이터 추출은 `train_model.py` 실행 시점 on-demand extractor를 기본으로 유지한다. 누적 pre-materialize extractor는 `D-038 hold`로 분리하고, 전환은 학습 시간/SLA 압력이 반복될 때만 검토한다. | on-demand 경로에서 학습 시간 SLA 반복 초과, Influx query 비용/실패율 증가, 또는 동일 추출 재사용 요구가 누적될 때 |
+| D-2026-02-26-67 | D-002 Model Metadata Schema Lock | 모델 metadata/version 스키마를 v1로 잠근다. 저장 경로는 `model_{symbol}_{timeframe}.meta.json`(primary는 legacy sidecar 동시 기록)이며 필수 필드는 `schema_version/run_id/trained_at/row_count/data_range/model_version/snapshot_path/status`다. | metadata 소비 경로(운영 대시보드/승격 게이트)가 확정되거나, schema 확장(예: metrics/drift) 필요가 발생할 때 |
+| D-2026-02-26-68 | Phase D Automation Scope Lock (Auto Promotion Included) | Phase D 최종 목표를 `자동 재학습 + 자동 승격`까지 포함하는 완전 자동화로 잠근다. 단, 실행 순서는 안정성 우선으로 고정한다: 1차는 시간 기반 재학습(`1h` 일 1회) + lock/관측성, 2차는 shadow 평가/승격 게이트를 통과한 경우에만 자동 승격(`fail-closed`)을 허용한다. 이벤트 기반 트리거는 1차 범위에서 제외하고 후속 최적화로 보류한다. | 트래픽/운영자 수 증가로 학습 빈도와 승격 정책의 정밀도가 필요해지거나, 이벤트 트리거 도입의 비용 대비 효과가 확인될 때 |
+| D-2026-03-03-69 | D-013 Retraining Time Policy Lock (Phase 1) | 재학습 시간 정책을 1차로 잠근다. 실행 기준은 `00:35 UTC` daily scheduler이며 TF due matrix는 `1h/1d=매일`, `1w=매주 월요일`, `1M=매월 1일`이다. 실패 재시도는 `N=2`(backoff `10m -> 30m`)로 고정하고, no-overlap lock이 선행되지 않으면 재시도를 포함한 자동 실행을 허용하지 않는다. | 런타임 overrun/락 경합 증가, 또는 학습 완료 시각이 ingest/publish 안정 구간과 충돌할 때 |
+| D-2026-03-03-70 | D-013 Event Catalog Lock (Deferred Execution) | 이벤트 기반 재학습은 Phase 1에서 실행하지 않되, 카탈로그/임계치를 선잠금한다. 이벤트는 `EVT_PRICE_SHOCK_1H(abs_r_1h >= 4%)`, `EVT_VOL_SPIKE_24H(realized_vol_24h >= 2x rolling_median_30d)`, `EVT_MODEL_DRIFT(shadow_mae_3d > champion_mae_3d * 1.2)`로 고정한다. 공통 가드는 `2회 연속 관측 + cooldown 24h + min_model_age 12h`다. | 이벤트 오탐/미탐 비율이 허용치를 넘거나, drift 지표 정의가 변경될 때 |
+| D-2026-03-03-71 | Model Artifact Granularity Clarification | 현재 런타임 모델 아티팩트 단위는 `symbol+timeframe` canonical(`model_{symbol}_{timeframe}.json`)이다. primary timeframe에만 legacy fallback(`model_{symbol}.json`)을 유지하며, cross-symbol shared 단일 파일 모델은 현재 코드 경로에 없다. shared/dedicated 분리 승격 정책은 후속(`D-011`)에서 다룬다. | runtime load 경로가 shared 단일 파일 또는 registry resolver로 바뀔 때 |
 
 ## 3. Decision Operation Policy
 1. 활성 문서는 요약만 유지한다(상세 서술 금지).
