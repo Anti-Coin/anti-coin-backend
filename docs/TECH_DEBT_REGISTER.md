@@ -1,6 +1,6 @@
 # Coin Predict Technical Debt Register
 
-- Last Updated: 2026-02-26
+- Last Updated: 2026-03-03
 - Purpose: 기술 부채를 세션 간 누락 없이 추적
 
 ## 1. 운용 규칙
@@ -45,6 +45,8 @@
 | TD-032 | Publish Recovery | static history/prediction 파일 수동 삭제 시 watermark gate가 최신으로 판정하면 파일 복구가 지연됨 | 운영자 실수 후 사용자 플레인 산출물 누락 장기화 | resolved | D-019 | publish gate skip(`up_to_date_ingest_watermark`)에서도 canonical history 파일 누락은 self-heal export를 수행하고, canonical prediction 파일 누락은 `last_success_at` 존재 조건에서 self-heal prediction을 수행하도록 고정. 장주기 DB empty/state drift는 exchange earliest full-fill로 보정 |
 | TD-033 | Ingest Recovery | `resolve_ingest_since`에 full-fill 재감지 메커니즘 부재. `last_time` 존재 시 `db_last`로 고착되어 lookback 데이터만 있는 상태에서 full-fill로 전환 불가 | 장주기 TF 데이터 부족 → prediction 차단 연쇄 | resolved | D-020 | `D-020`으로 운영 복구를 완료했고, 코드에 자동 재감지 가드를 반영했다. full-fill TF에서 `db_first vs exchange_earliest` backward gap을 감지하면 `force_rebootstrap`으로 exchange earliest 재수집을 수행하며, boundary detection gate skip 상태에서도 gap 감지 시 ingest를 override 실행한다. 회귀: `tests/test_pipeline_worker.py` D-020 케이스 통과 |
 | TD-034 | Maintainability | Python 상수 ~55개가 `worker_config.py`/`utils/config.py`에 구조 없이 평면 나열되며, `PRIMARY_TIMEFRAME` 재노출 등 의존성 혼란 존재 | 상수 탐색/수정 비용 증가 | open | D-016,D-021 | D-016 상태 관리 분리 시 역할별 그룹화(dataclass/섹션) + 재노출 패턴 제거 |
+| TD-035 | Modeling Ops | 이벤트 기반 재학습 임계치가 휴리스틱(백테스트/운영 통계 미보정) | 과재학습 또는 drift 미탐지로 비용 증가/성능 저하 가능 | open | D-013,D-009 | 30일 운영 데이터로 이벤트별 precision/실효성(재학습 후 개선율) 측정 후 임계치 재보정, enable 조건을 문서로 잠금 |
+| TD-036 | Modeling Governance | coverage 용어 드리프트 재발 위험(`shared champion` 정책 용어 vs `symbol+timeframe` 런타임 아티팩트) | 운영자 판단/롤백 기준 혼선 가능 | mitigated | D-011 | `D-2026-03-03-71` 기준으로 활성 문서 용어 통일 유지, 분기별 문서 점검 시 용어 일치 여부를 체크한다 |
 
 ## 3. 상태 정의
 1. `open`: 미해결

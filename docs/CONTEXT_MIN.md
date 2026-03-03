@@ -1,6 +1,6 @@
 # Coin Predict Context (Minimum)
 
-- Last Updated: 2026-02-21
+- Last Updated: 2026-03-03
 - Purpose: 새 세션에서 최소 토큰으로 현재 상태를 정렬하기 위한 요약
 
 ## 1. Snapshot
@@ -16,16 +16,16 @@
 3. 활성 문서는 요약/현재 실행 기준만 유지한다.
 
 ## 3. Phase D Active Baseline
-1. 기본 모델 커버리지는 `timeframe-shared champion`으로 시작한다(`D-2026-02-13-32`).
-2. dedicated 도입은 승격 조건(최소 샘플/성능 개선/비용 허용) 충족 시에만 허용한다.
-3. fallback 체인은 `dedicated -> shared -> insufficient_data`로 고정한다.
-4. 실패 은닉 금지: dedicated 실패를 shared로 조용히 대체하지 않고 상태/사유를 노출한다.
+1. 현재 런타임 모델 아티팩트 단위는 `symbol+timeframe canonical`이다(`D-2026-03-03-71`).
+2. primary timeframe에는 legacy fallback(`model_{symbol}.json`)을 유지한다.
+3. shared/dedicated coverage resolver는 `D-011` hold로 남아 있다.
+4. 모델 부재/샘플 부족(`model_missing`/`insufficient_data`)은 상태/사유를 숨기지 않고 노출한다.
 
 ## 4. Current Priority Tasks
-1. `D-001`: 모델 인터페이스 계약(`fit/predict/save/load`) 고정
-2. `D-002`: 모델 메타데이터/버전 스키마 정의
-3. `D-012`: 학습 데이터 SoT 정렬(Influx 기반 closed-candle snapshot)
-4. `D-013`: 재학습 트리거 정책 정의(시간+이벤트)
+1. `D-013`: 재학습 트리거 정책 정의(1차 시간 기반, 이벤트는 도입 조건만 고정)
+2. `D-014`: 학습 실행 no-overlap/락 가드
+3. `D-015`: 학습 실행 관측성/알림 baseline
+4. `D-003`: Shadow 추론 파이프라인 도입(서빙 분리)
 
 ## 5. Recent Completion (2026-02-20)
 1. `C-013`: `pipeline_worker` timeboxed micro-refactor(동작 불변)

@@ -1,6 +1,6 @@
 # Coin Predict Session Handoff
 
-- Last Updated: 2026-02-26
+- Last Updated: 2026-03-03
 - Branch: `dev`
 
 ## 1. Current Snapshot
@@ -21,12 +21,15 @@
 3. publish trigger: ingest stage in-cycle 후 publish reconcile 실행
 4. monitor consistency: `symbol+timeframe` 기준 + `PRIMARY_TIMEFRAME` legacy fallback
 5. ingest routing: `1d/1w/1M` 포함 전 timeframe direct fetch(derived downsample 경로 제거)
+6. model artifact boundary: `symbol+timeframe canonical` + primary legacy fallback(`D-2026-03-03-71`)
 
 ## 3. Next Priority Tasks
-1. `D-013`: 재학습 트리거 정책 정의(시간+이벤트)
+1. `D-013`: 재학습 트리거 정책 정의 — in_progress(2026-03-03), `00:35 UTC` + retry `N=2` + event catalog lock(실행 보류)
 2. `D-014`: 학습 실행 no-overlap/락 가드
 3. `D-015`: 학습 실행 관측성/알림 baseline
-4. `D-003`: Shadow 추론 파이프라인 도입
+4. `D-003`: Shadow 추론 파이프라인 도입(서빙 분리)
+5. `D-004`: Champion vs Shadow 평가 리포트
+6. `D-005`: 자동 승격 게이트(`fail-closed`)
 
 ## 4. Current Risks
 1. `TD-012`: 자동 재학습/승격 게이트 미구현
