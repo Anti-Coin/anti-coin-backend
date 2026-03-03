@@ -1,6 +1,6 @@
 # Coin Predict Living Plan (Hybrid)
 
-- Last Updated: 2026-02-26
+- Last Updated: 2026-03-03
 - Owner: Backend/Platform
 - Status: Active
 - Full Phase A History: `docs/archive/phase_a/PLAN_LIVING_HYBRID_PHASE_A_FULL_2026-02-12.md`
@@ -32,7 +32,7 @@
 | A | completed | 수집/복구/상태판정 신뢰성 확보 | A-001~A-019 완료 + Exit Criteria 충족 |
 | B | completed | 다중 timeframe 전환 + 1m 비대칭 서빙 + 저장소 제약 내 운영 정합성 확보 | B-001~B-008 종료 (`B-005` sunset 완료, `B-008` sunset scope close) |
 | C | completed | 장애 전파 범위 축소와 운영 관측성 강화 | C-001~C-016 완료 + 회귀/운영 smoke 근거 확보 |
-| D | active | 모델 진화의 "운영 안전성" 확보(자동화 자체가 목적 아님) | D-001~D-005 핵심 게이트(인터페이스/메타데이터/shadow 비교/승격 차단) 확립 + 롤백 경로 검증 |
+| D | active | 모델 운영의 완전 자동화(자동 재학습 + 자동 승격)를 안정성 우선으로 단계 도입 | `D-013~D-015`로 자동 재학습 기반(트리거/락/관측성) 잠금 + `D-003~D-005`로 shadow 비교/승격 게이트를 통과한 자동 승격 경로 고정 + 롤백 경로 검증 |
 
 ## 4.1 Phase C Completion Baseline
 1. Phase C 시점 baseline은 `worker-ingest`/`worker-publish` 2-service였다. 현재 운영 기본은 `worker-ingest` 단일 실행 경로(ingest->publish in-cycle causal chain)로 고정됐고(`D-034`), split rollback profile은 제거됐다.
@@ -42,13 +42,12 @@
 5. 상세 증거/변경 이력은 `docs/archive/phase_c/*`를 단일 출처로 사용한다.
 6. Phase D 전환 경로는 직렬 pipeline(`ingest -> publish` in-cycle causal chain)으로 재잠근다(`D-027`~`D-031`). `D-022`~`D-026`은 hold reference로 유지한다.
 
-## 4.2 Phase D Model Coverage Baseline (Locked to Shared Champion)
-1. 기본 커버리지는 `timeframe-shared champion` 글로벌 단일 모델로 시작하며 이를 유지한다(전 심볼 공통).
-2. `symbol+timeframe dedicated` 승격/관리는 당분간 **보류(Hold)**한다. 오라클 프리 티어(ARM)의 물리적 한계(RAM)와 운영 복잡도를 고려해, 단일 모델 기반 파이프라인의 안전성부터 확보한다.
-3. serving fallback 체인:
-   - shared -> `insufficient_data` 차단
-4. dedicated 기능은 추후 인프라가 확장 가능하거나 OOM 리스크가 완벽히 제어되었을 때만 재검토한다.
-5. 관련 정책 상세는 `D-2026-02-13-32`, 구현 단위는 `D-011`에서 관리하되, `D-011`의 우선순위를 조정한다.
+## 4.2 Phase D Model Coverage Baseline (Current Runtime Artifact Boundary)
+1. 현재 런타임 모델 아티팩트 단위는 `symbol+timeframe canonical`이다(`models/model_{SYMBOL}_{TIMEFRAME}.json`).
+2. primary timeframe에는 legacy fallback(`models/model_{SYMBOL}.json`)을 유지한다.
+3. 현재 코드 경로에는 cross-symbol shared 단일 파일 모델이 없다.
+4. shared/dedicated coverage resolver와 자동 승격 정책은 `D-011`(hold) 및 `D-003~D-005`에서 후속으로 고정한다.
+5. 관련 정책 상세는 `D-2026-03-03-71`, 후속 구현 단위는 `D-011`에서 관리한다.
 
 ## 5. Next Cycle (Revised 2026-02-24)
 1. `D-027` 완료: 직렬 전환 가드레일 잠금(`D-2026-02-24-58`)
@@ -63,12 +62,25 @@
 10. `D-036` 완료: split 전용 watermark 상태파일/저장 계층 제거
 11. `D-037` 완료: split 전용 worker 엔트리포인트 제거
 12. `D-020` 완료: 1d/1w/1M full-fill 복구 + 재감지 가드 정렬(`D-2026-02-24-64`)
+13. `D-012` 완료: 학습 SoT/chunk 추출 안전장치 + SQLite tracking/partial-success/snapshot latest-only 잠금, `worker-train` 스모크 통과
+14. `D-001` 완료: Prophet 경로 `fit/predict/save/load` 계약을 문서(`docs/MODEL_CONTRACT.md`)와 회귀 테스트(`tests/test_model_contract.py`)로 잠금
+15. `D-002` 완료: 모델 metadata/version 스키마(v1) 문서화(`docs/MODEL_METADATA_SCHEMA.md`) + sidecar 저장 경로 고정
 
 ## 5.1 Parallel Critical Recovery (Non-Bundle)
-1. `D-012`: 학습 데이터 SoT 정렬 + chunk 기반 OOM 방어 + 실행 정책 잠금(`D-2026-02-26-65`: MLflow SQLite backend, partial-success, snapshot latest-only + run metadata 기록)
-2. `D-001`: 모델 계약 명시화(`fit/predict/save/load`)
-3. `D-002`: 모델 메타데이터/버전 스키마 정의
-4. `D-038` (hold): 학습 snapshot pre-materialize 누적 extractor는 최적화 후보로 분리하고, on-demand 경로에서 학습 시간/SLA 압력이 반복될 때만 재개한다(`D-2026-02-26-66`).
+1. `D-013`: 재학습 트리거 정책 정의(1차 시간 기반, 이벤트는 도입 조건만 잠금)
+2. `D-014`: 학습 실행 no-overlap/락 가드
+3. `D-015`: 학습 실행 관측성/알림 baseline
+4. `D-003`: Shadow 추론 파이프라인 도입(서빙 분리)
+5. `D-004`: Champion vs Shadow 평가 리포트(일별)
+6. `D-005`: 자동 승격 게이트(`fail-closed`)
+7. `D-038` (hold): 학습 snapshot pre-materialize 누적 extractor는 최적화 후보로 분리하고, on-demand 경로에서 학습 시간/SLA 압력이 반복될 때만 재개한다(`D-2026-02-26-66`).
+
+## 5.7 Phase D Delivery Forecast (Best-Effort, 2026-02-26)
+1. Wave 1 (`D-013~D-015`): 4~6 영업일
+2. Wave 2 (`D-003~D-005`): 7~10 영업일
+3. Wave 3 (`D-006~D-008`, 자동 루프/롤백 절차 완성): 4~7 영업일
+4. End-to-end(검증/문서 동기화 포함): 총 3~5주
+5. 리스크 버퍼: 테스트 실패/운영 스모크 이슈 발생 시 +1~2주
 
 ## 5.2 Previous Cycle KPI (Locked 2026-02-21)
 1. `D-018` 완료

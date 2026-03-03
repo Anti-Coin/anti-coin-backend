@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ from influxdb_client import InfluxDBClient
 from scripts.data_extractor import extract_ohlcv_to_parquet, _get_influx_client
 from prophet.serialize import model_to_json
 
+from utils.file_io import atomic_write_json
 from utils.config import PRIMARY_TIMEFRAME, TARGET_SYMBOLS
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -59,6 +61,15 @@ def _resolve_model_paths(symbol: str, timeframe: str) -> tuple[Path, Path | None
     legacy_path: Path | None = None
     if timeframe == PRIMARY_TIMEFRAME:
         legacy_path = MODELS_DIR / f"model_{safe_symbol}.json"
+    return canonical_path, legacy_path
+
+
+def _resolve_model_metadata_paths(symbol: str, timeframe: str) -> tuple[Path, Path | None]:
+    safe_symbol = symbol.replace("/", "_")
+    canonical_path = MODELS_DIR / f"model_{safe_symbol}_{timeframe}.meta.json"
+    legacy_path: Path | None = None
+    if timeframe == PRIMARY_TIMEFRAME:
+        legacy_path = MODELS_DIR / f"model_{safe_symbol}.meta.json"
     return canonical_path, legacy_path
 
 
@@ -106,6 +117,10 @@ def _to_utc_text(value) -> str:
     return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _utc_now_text() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _prepare_prophet_train_df(df: pd.DataFrame) -> pd.DataFrame:
     """
     Prophet requires timezone-naive datetimes in `ds`.
@@ -117,6 +132,31 @@ def _prepare_prophet_train_df(df: pd.DataFrame) -> pd.DataFrame:
     ds_utc = pd.to_datetime(train_df["ds"], utc=True, errors="raise")
     train_df["ds"] = ds_utc.dt.tz_convert("UTC").dt.tz_localize(None)
     return train_df
+
+
+def _build_model_metadata(
+    *,
+    run_id: str,
+    symbol: str,
+    timeframe: str,
+    row_count: int,
+    data_range: dict[str, str | None],
+    model_version: str | None,
+    snapshot_path: Path,
+    status: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "run_id": run_id,
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "trained_at": _utc_now_text(),
+        "row_count": row_count,
+        "data_range": data_range,
+        "model_version": model_version,
+        "snapshot_path": str(snapshot_path),
+        "status": status,
+    }
 
 
 def train_and_save(
@@ -150,15 +190,16 @@ def train_and_save(
         mlflow.log_metric("row_count", row_count)
 
         if df.empty:
-            metadata = {
-                "run_id": run_id,
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "row_count": 0,
-                "data_range": {"start": None, "end": None},
-                "model_version": None,
-                "status": "skipped_insufficient_data",
-            }
+            metadata = _build_model_metadata(
+                run_id=run_id,
+                symbol=symbol,
+                timeframe=timeframe,
+                row_count=0,
+                data_range={"start": None, "end": None},
+                model_version=None,
+                snapshot_path=parquet_path,
+                status="skipped_insufficient_data",
+            )
             mlflow.log_dict(metadata, "run_metadata.json")
             mlflow.set_tag("train_status", "skipped_insufficient_data")
             print(f"[{symbol}] 학습 데이터 부족. 건너뜁니다.")
@@ -189,20 +230,31 @@ def train_and_save(
             with open(legacy_path, "w") as fout:
                 fout.write(serialized_model)
 
-        metadata = {
-            "run_id": run_id,
-            "symbol": symbol,
-            "timeframe": timeframe,
-            "row_count": row_count,
-            "data_range": data_range,
-            "model_version": model_version,
-            "status": "ok",
-        }
+        metadata = _build_model_metadata(
+            run_id=run_id,
+            symbol=symbol,
+            timeframe=timeframe,
+            row_count=row_count,
+            data_range=data_range,
+            model_version=model_version,
+            snapshot_path=parquet_path,
+            status="ok",
+        )
+        canonical_meta_path, legacy_meta_path = _resolve_model_metadata_paths(
+            symbol, timeframe
+        )
+        atomic_write_json(canonical_meta_path, metadata, indent=2)
+        if legacy_meta_path is not None:
+            atomic_write_json(legacy_meta_path, metadata, indent=2)
+
         mlflow.log_param("model_version", model_version)
         mlflow.log_dict(metadata, "run_metadata.json")
         mlflow.log_artifact(str(canonical_path), artifact_path="models")
         if legacy_path is not None:
             mlflow.log_artifact(str(legacy_path), artifact_path="models")
+        mlflow.log_artifact(str(canonical_meta_path), artifact_path="models")
+        if legacy_meta_path is not None:
+            mlflow.log_artifact(str(legacy_meta_path), artifact_path="models")
         mlflow.set_tag("train_status", "ok")
 
         print(f"[{canonical_path}] 모델 저장 완료!")

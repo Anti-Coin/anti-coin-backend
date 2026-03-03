@@ -1,6 +1,8 @@
+import json
 import pytest
 import pandas as pd
 from pathlib import Path
+from types import SimpleNamespace
 
 from scripts import train_model
 
@@ -48,6 +50,21 @@ def test_resolve_model_paths_non_primary_skips_legacy_path():
     canonical, legacy = train_model._resolve_model_paths("BTC/USDT", "1d")
 
     assert canonical.name == "model_BTC_USDT_1d.json"
+    assert legacy is None
+
+
+def test_resolve_model_metadata_paths_primary_writes_legacy_path():
+    canonical, legacy = train_model._resolve_model_metadata_paths("BTC/USDT", "1h")
+
+    assert canonical.name == "model_BTC_USDT_1h.meta.json"
+    assert legacy is not None
+    assert legacy.name == "model_BTC_USDT.meta.json"
+
+
+def test_resolve_model_metadata_paths_non_primary_skips_legacy_path():
+    canonical, legacy = train_model._resolve_model_metadata_paths("BTC/USDT", "1d")
+
+    assert canonical.name == "model_BTC_USDT_1d.meta.json"
     assert legacy is None
 
 
@@ -160,3 +177,97 @@ def test_prepare_prophet_train_df_converts_timezone_aware_ds_to_naive_utc():
     assert list(train_df.columns) == ["ds", "y"]
     assert train_df["ds"].dt.tz is None
     assert str(train_df["ds"].dtype) == "datetime64[ns]"
+
+
+def test_train_and_save_persists_model_metadata_schema(tmp_path, monkeypatch):
+    models_dir = tmp_path / "models"
+    static_dir = tmp_path / "static_data"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    static_dir.mkdir(parents=True, exist_ok=True)
+
+    snapshot_path = tmp_path / "snapshot.parquet"
+    pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(
+                ["2026-02-26T00:00:00Z", "2026-02-26T01:00:00Z"], utc=True
+            ),
+            "close": [100.0, 101.0],
+        }
+    ).to_parquet(snapshot_path, index=False)
+
+    monkeypatch.setattr(train_model, "MODELS_DIR", models_dir)
+    monkeypatch.setattr(train_model, "STATIC_DIR", static_dir)
+    monkeypatch.setattr(
+        train_model,
+        "extract_ohlcv_to_parquet",
+        lambda *args, **kwargs: snapshot_path,
+    )
+
+    class DummyProphet:
+        def __init__(self, daily_seasonality=True):
+            self.daily_seasonality = daily_seasonality
+            self.fitted = False
+
+        def fit(self, df):
+            self.fitted = True
+            self.fit_input = df.copy()
+
+    monkeypatch.setattr(train_model, "Prophet", DummyProphet)
+    monkeypatch.setattr(
+        train_model,
+        "model_to_json",
+        lambda model: "{\"model\":\"serialized\"}",
+    )
+
+    class DummyRunContext:
+        def __enter__(self):
+            return SimpleNamespace(info=SimpleNamespace(run_id="run-123"))
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class DummyMlflow:
+        def start_run(self, run_name=None):
+            return DummyRunContext()
+
+        def log_params(self, params):
+            return None
+
+        def log_metric(self, key, value):
+            return None
+
+        def log_dict(self, payload, artifact_file):
+            return None
+
+        def set_tag(self, key, value):
+            return None
+
+        def log_param(self, key, value):
+            return None
+
+        def log_artifact(self, local_path, artifact_path=None):
+            return None
+
+    result = train_model.train_and_save(
+        "BTC/USDT",
+        "1h",
+        lookback_limit=10,
+        client=object(),
+        mlflow=DummyMlflow(),
+    )
+
+    metadata_path = models_dir / "model_BTC_USDT_1h.meta.json"
+    assert metadata_path.exists()
+
+    payload = json.loads(metadata_path.read_text())
+    assert payload["schema_version"] == 1
+    assert payload["symbol"] == "BTC/USDT"
+    assert payload["timeframe"] == "1h"
+    assert payload["run_id"] == "run-123"
+    assert payload["row_count"] == 2
+    assert payload["data_range"]["start"] == "2026-02-26T00:00:00Z"
+    assert payload["data_range"]["end"] == "2026-02-26T01:00:00Z"
+    assert payload["snapshot_path"] == str(snapshot_path)
+    assert payload["status"] == "ok"
+    assert payload["trained_at"].endswith("Z")
+    assert payload["model_version"] == result["model_version"]
