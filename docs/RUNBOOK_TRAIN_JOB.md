@@ -1,6 +1,6 @@
 # Runbook: Standalone Training Job (`worker-train`)
 
-- Last Updated: 2026-02-20
+- Last Updated: 2026-03-04
 - Scope: `C-004` one-shot training execution and rollback
 
 ## 1. Purpose
@@ -17,10 +17,14 @@
 2. `cp -a models "models_backup_${ts}"`
 
 ## 4. Execute
-1. 기본 실행
+1. 서버/기본 실행
    - `docker compose --profile ops-train run --rm worker-train`
-2. 대상/시간축 제한 실행
+2. 서버/대상-시간축 제한 실행
    - `docker compose --profile ops-train run --rm worker-train --symbols BTC/USDT --timeframes 1h --lookback-limit 500`
+3. 로컬 코드 기반 스모크 실행(`docker-compose.local.yml` 사용)
+   - `docker compose -f docker-compose.yml -f docker-compose.local.yml --env-file .env.prod --profile ops-train run --rm worker-train`
+4. 로컬 코드 기반 대상-시간축 제한 실행
+   - `docker compose -f docker-compose.yml -f docker-compose.local.yml --env-file .env.prod --profile ops-train run --rm worker-train --symbols BTC/USDT --timeframes 1h --lookback-limit 500`
 
 ## 5. Verify
 1. 실행 로그에 `[Train] completed`가 남는지 확인한다.

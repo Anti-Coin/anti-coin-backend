@@ -1,6 +1,6 @@
 # Coin Predict Technical Debt Register
 
-- Last Updated: 2026-03-03
+- Last Updated: 2026-03-04
 - Purpose: 기술 부채를 세션 간 누락 없이 추적
 
 ## 1. 운용 규칙
@@ -19,7 +19,7 @@
 | TD-006 | API | manifest 미구현 | 상태 가시성 부족 | resolved | B-004 | worker cycle에서 `static_data/manifest.json` 생성(심볼/타임프레임 상태 요약 + health 병합) 및 회귀 테스트 완료 |
 | TD-007 | Worker | 워커 경계 조건 테스트 부족 | 회귀 리스크 증가 | resolved | A-011-6 | pagination 종료 경계/리필 병합 경계 테스트 추가 완료 |
 | TD-008 | CI/CD | 테스트 게이트 미적용 | 실패 코드 배포 가능 | resolved | A-011-7 | CI `test` 선행 및 build/deploy 의존 게이트 적용 완료 |
-| TD-009 | Deployment | dev push 즉시 배포 구조 | 운영 실수 영향 확대 | open | (TBD) | CI/CD 정책 분리 문서화 후 적용 |
+| TD-009 | Deployment | dev push 즉시 배포 구조 | 운영 실수 영향 확대 | resolved | D-2026-03-04-77 | deploy workflow를 `main` 전용으로 잠그고(`dev`는 CI-only), 로컬 스모크 게이트를 표준 경로로 반영했다. |
 | TD-010 | Modeling | 모델 인터페이스 미구현 | 모델 교체 비용 증가 | open | D-001 | Prophet 경로 기준 `fit/predict/save/load` 계약을 문서/테스트로 먼저 고정하고, 추상화 도입은 후속 태스크에서 재평가 |
 | TD-011 | Modeling | shadow 추론/평가 파이프라인 미구현 | 모델 비교 근거 부족 | open | D-003,D-004 | shadow 결과 저장/리포트 구현 |
 | TD-012 | Modeling | 자동 재학습/승격 게이트 미구현 | 모델 운영 수작업 부담 | open | C-004,D-005,D-006,D-007,D-013,D-014,D-015 | `C-004`로 수동 one-shot 학습 경계는 확보됐고 `D-012`로 Influx SoT 학습 입력/chunk 추출 안전장치/실행 정책 잠금이 완료됐다. 재학습 트리거/실행 락/학습 관측성은 D 태스크에서 후속 구현 |

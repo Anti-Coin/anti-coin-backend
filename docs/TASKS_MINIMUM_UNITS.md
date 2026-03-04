@@ -1,6 +1,6 @@
 # Coin Predict Task Board (Active)
 
-- Last Updated: 2026-03-03
+- Last Updated: 2026-03-04
 - Rule: 활성 태스크만 유지하고, 완료 상세 이력은 Archive로 분리
 - Full Phase A History: `docs/archive/phase_a/TASKS_MINIMUM_UNITS_PHASE_A_FULL_2026-02-12.md`
 - Full Phase B History: `docs/archive/phase_b/TASKS_MINIMUM_UNITS_PHASE_B_FULL_2026-02-19.md`
@@ -88,7 +88,7 @@
 | D-019 | P1 | static 파일 self-heal + 장주기 full-fill/full-serving 정렬 | done (2026-02-21) | publish gate skip 상태에서도 canonical history 누락은 self-heal export, canonical prediction 누락은 `last_success_at` 존재 시 self-heal prediction을 수행하며, `1d/1w/1M` DB empty/state drift는 exchange earliest 기준 full-fill을 사용한다. 회귀 테스트(`PYENV_VERSION=coin pytest -q`) 통과 |
 | D-020 | **P0** | 1d/1w/1M full-fill 복구 (운영 조치 + prediction 연쇄 복구) | done (2026-02-24) | 운영 조치(InfluxDB 1d/1w/1M 정리 + `ingest_state.json` cursor 제거)로 full-fill을 완료했고, 코드 레벨에서 backward coverage 재감지(`db_first vs exchange_earliest`) + detection skip override를 추가해 동일 증상의 재진입 경로를 축소했다. 검증: `PYENV_VERSION=coin pytest -q tests/test_pipeline_worker.py -k "rebootstrap or fullfill or D-020"` (`7 passed`) |
 | D-021 | P2 | Python 상수/config 역할별 그룹화 | open | `worker_config.py` + `utils/config.py` 상수 ~55개를 역할별 섹션/dataclass로 구조화하고 재노출 패턴 제거. D-016 수행 시 함께 처리 |
-| D-022 | **P0** | publish 비대칭 스케줄러 전환 (`ingest=boundary`, `publish=poll_loop 60s`) | hold (2026-02-24) | `D-2026-02-24-57` 해제 전까지 실행 보류. 재개 시 long TF publish lag p95 <= 1m 및 overrun 비열화를 검증한다 |
+| D-022 | **P0** | publish 비대칭 스케줄러 전환 (`ingest=boundary`, `publish=poll_loop 60s`) | hold (legacy reference) | `D-2026-03-04-76`(scheduler boundary hard lock) 기준으로 기본 재개 대상이 아니다. policy rollback으로 `poll_loop` 재도입이 승인된 경우에만 재평가한다. |
 | D-023 | **P0** | projector decision 함수 도입(그림자 모드, 동작 불변) | hold (2026-02-24) | `D-2026-02-24-57` 해제 전까지 실행 보류. 재개 시 기존 gate 대비 diff 로그/지표를 확보한다 |
 | D-024 | **P0** | publish 실행 경로 projector 전환, self-heal 분기 흡수 | hold (2026-02-24) | `D-2026-02-24-57` 해제 전까지 실행 보류. 재개 시 artifact missing이 일반 reconcile 경로에서 복구됨을 검증한다 |
 | D-025 | P1 | watermark 상태파일 3종/게이트 함수 제거 | hold (2026-02-24) | `D-2026-02-24-57` 해제 전까지 실행 보류. 재개 시 `ingest/predict/export_watermarks.json` 제거와 회귀 정리를 완료한다 |
@@ -105,16 +105,35 @@
 | D-036 | P1 | split 전용 watermark 상태파일/저장 계층 삭제 | done (2026-02-24) | `predict_watermarks.json`/`export_watermarks.json` 경로와 관련 load/save 코드를 제거했다. `WorkerPersistentState`는 `ingest_watermarks`만 유지하며, `utils/pipeline_runtime_state.py`에서 `WatermarkStore`를 삭제해 저장 계층을 `symbol_activation` 전용으로 축소했다. 회귀: `PYENV_VERSION=coin pytest -q tests/test_pipeline_worker.py` (`61 passed`) |
 | D-037 | P2 | 미사용 워커 엔트리포인트 제거(`worker_publish/predict/export`) | done (2026-02-24) | `scripts/worker_publish.py`, `scripts/worker_predict.py`, `scripts/worker_export.py`를 삭제하고 `scripts/worker_ingest.py` 단일 엔트리포인트로 고정했다. `.env.example`의 `WORKER_PUBLISH_MODE`와 `worker_config`의 role/mode 상수도 제거해 설정 drift를 정리했다. 회귀: `PYENV_VERSION=coin pytest -q tests/test_pipeline_worker.py` (`61 passed`) |
 | D-038 | P2 | Training Snapshot Pre-Materialize (optional) | hold (2026-02-26) | 기본 경로는 on-demand extractor를 유지한다. 재개는 학습 시간/SLA 압력이 반복될 때만 허용하며, 전환 전후 비교 지표(`train_total_seconds`, `influx_query_seconds`, `failure_rate`, `peak_memory_mb`)를 고정 수집하고 SoT 정합성/원자적 스냅샷 쓰기/모델-스냅샷 버전 링크 검증을 통과해야 한다. |
+| D-039 | P1 | 상태 파일 필드 인벤토리 감사(legacy/중복/파생 정리) | done (2026-03-03) | `manifest/runtime_metrics/prediction_health/symbol_activation/ingest_watermarks`에 대해 필드 단위 인벤토리(`SoT/Derived/Diagnostic/Legacy-Compat`)와 제거 후보 우선순위를 `docs/STATE_FIELD_INVENTORY.md`로 고정했다. `Keep-By-Design` 필드와 destructive cleanup 전 open question을 함께 잠금했다. |
+| D-049 | P1 | CI/CD 브랜치 게이트 분리(`dev` CI-only, `main` deploy-only) | done (2026-03-04) | `.github/workflows/ci.yml`을 추가해 `main/dev` CI(test)를 분리했고, `deploy.yml`은 `main push + workflow_dispatch`로 제한했다. 로컬 스모크 경로는 `docker-compose.local.yml` override로 고정했다. |
+| D-040 | **P0** | Legacy Kill Stage 1: 모델 fallback 제거 | open | `workers/predict.py`에서 `model_{symbol}_{timeframe}.json`만 로드하고 legacy model fallback을 제거한다. canonical 누락 시 `model_missing` fail-closed가 테스트/스모크에서 확인되어야 한다. |
+| D-041 | **P0** | Legacy Kill Stage 2: static dual-write 제거 | open | prediction/history canonical-only write로 전환하고 legacy 파일 쓰기를 제거한다. canonical-only 경로로 admin/ops/status 회귀와 스모크가 통과해야 한다. |
+| D-042 | P1 | Legacy Kill Stage 3: Influx legacy query fallback 제거 | open | ingest/monitor 경로에서 no-timeframe legacy query fallback을 제거하고 timeframe-tag row만 신뢰한다. full-fill/rebootstrap/activation 회귀 테스트와 스모크가 통과해야 한다. |
+| D-043 | P1 | Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`) | open | 단일 `manifest.v2` payload에 `public`/`ops` 섹션 계약을 고정하고 writer/consumer를 분리한다. FE는 `public`만, admin/ops는 `ops`만 사용해야 한다. |
+| D-044 | P1 | 상태 스키마 정규화(`symbol_activation`/`prediction_health`) | open | 중복 identity/파생 필드를 정규화한다(예: `symbol_activation` 단일 SoT 상태 기준). 상태 파일 read/write 계약 테스트를 고정한다. |
+| D-045 | P2 | Orchestrator 모듈화 인터페이스 잠금 | open | `state_store`/`model_io`/`policy_eval` 인터페이스를 문서+코드로 고정하고, `pipeline_worker`는 조합 책임으로 축소한다. 회귀 테스트 통과. |
+| D-046 | **P0** | Status-Monitor 판정 경로 단일화(모니터 기준) | open | `/status`와 monitor가 동일 evaluator + 동일 Influx-JSON consistency rule을 사용한다. Influx 조회 실패 시 JSON 판정을 유지하며, 양 경로의 동일 입력/동일 출력 회귀 테스트가 고정된다. |
+| D-047 | P1 | Scheduler mode boundary 단일화(`poll_loop` 제거) | open | `WORKER_SCHEDULER_MODE=boundary` 단일 계약으로 고정하고 `poll_loop`/invalid fallback을 제거한다. 잘못된 설정은 fail-fast가 테스트와 스모크에서 검증되어야 한다. |
+| D-048 | P2 (Hold) | 상태 파일 축소/통합 검증(`prediction_health`/`ingest_watermarks`) | open | `prediction_health`의 redundant identity 필드 제거를 적용하고, `ingest_watermarks` 제거 가능성을 `ingest_state` 대체 설계+회귀 테스트로 검증한다. 인과/재시작 경계가 깨지면 파일 유지 결정을 문서로 잠근다. |
 
 > **Discussion Reference**: `docs/DISCUSSION_PHASE_D_AUDIT_2026-02-21.md`
 
-## 3. Immediate Bundle (Revised 2026-03-03)
+## 3. Immediate Bundle (Revised 2026-03-04)
 1. `D-013` — 재학습 트리거 정책 정의(1차 시간 기반)
-2. `D-014` — 학습 실행 no-overlap/락 가드
-3. `D-015` — 학습 실행 관측성/알림 baseline
-4. `D-003` — Shadow 추론 파이프라인 도입
-5. `D-004` — Champion vs Shadow 평가 리포트
-6. `D-005` — 승격 게이트 정책 구현(`fail-closed`)
+2. `D-046` — Status-Monitor 판정 경로 단일화(모니터 기준)
+3. `D-040` — Legacy Kill Stage 1: 모델 fallback 제거
+4. `D-041` — Legacy Kill Stage 2: static dual-write 제거
+5. `D-042` — Legacy Kill Stage 3: Influx legacy query fallback 제거
+6. `D-043` — Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
+7. `D-047` — Scheduler mode boundary 단일화(`poll_loop` 제거)
+8. `D-044` — 상태 스키마 정규화
+9. `D-045` — Orchestrator 모듈화 인터페이스 잠금
+10. `D-014` — 학습 실행 no-overlap/락 가드
+11. `D-015` — 학습 실행 관측성/알림 baseline
+12. `D-003` — Shadow 추론 파이프라인 도입
+13. `D-004` — Champion vs Shadow 평가 리포트
+14. `D-005` — 승격 게이트 정책 구현(`fail-closed`)
 
 ## 3.1 Previous Cycle KPI (Locked 2026-02-21)
 1. `D-018` 완료

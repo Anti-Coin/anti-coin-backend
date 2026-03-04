@@ -1,6 +1,6 @@
 # Coin Predict Context (Minimum)
 
-- Last Updated: 2026-03-03
+- Last Updated: 2026-03-04
 - Purpose: 새 세션에서 최소 토큰으로 현재 상태를 정렬하기 위한 요약
 
 ## 1. Snapshot
@@ -23,9 +23,12 @@
 
 ## 4. Current Priority Tasks
 1. `D-013`: 재학습 트리거 정책 정의(1차 시간 기반, 이벤트는 도입 조건만 고정)
-2. `D-014`: 학습 실행 no-overlap/락 가드
-3. `D-015`: 학습 실행 관측성/알림 baseline
-4. `D-003`: Shadow 추론 파이프라인 도입(서빙 분리)
+2. `D-046`: Status-Monitor 판정 경로 단일화(모니터 기준)
+3. `D-040`: Legacy Kill Stage 1(모델 fallback 제거)
+4. `D-041`: Legacy Kill Stage 2(static dual-write 제거)
+5. `D-042`: Legacy Kill Stage 3(legacy query fallback 제거, ingest+monitor)
+6. `D-043`: Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public/ops`)
+7. `D-047`: Scheduler mode boundary 단일화(`poll_loop` 제거)
 
 ## 5. Recent Completion (2026-02-20)
 1. `C-013`: `pipeline_worker` timeboxed micro-refactor(동작 불변)
@@ -51,7 +54,7 @@
 1. `TD-012`: 자동 재학습/승격 게이트 미구현
 2. `TD-010`: 모델 인터페이스 미구현
 3. `TD-022`: prediction freshness 의미론(입력 stale 은닉 가능성) 정렬 필요
-4. `TD-009`: dev push 즉시 배포 구조 리스크
+4. `TD-035`: 이벤트 기반 재학습 임계치 휴리스틱(미보정) 리스크
 
 ## 9. Deep References
 1. 현재 운영 결정: `docs/DECISIONS.md`

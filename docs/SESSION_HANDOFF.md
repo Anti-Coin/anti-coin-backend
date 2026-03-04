@@ -1,6 +1,6 @@
 # Coin Predict Session Handoff
 
-- Last Updated: 2026-03-03
+- Last Updated: 2026-03-04
 - Branch: `dev`
 
 ## 1. Current Snapshot
@@ -19,28 +19,35 @@
 1. cadence: `UTC boundary + detection gate`
 2. worker topology: `worker-ingest` 단일 실행 경로(ingest -> publish in-cycle causal chain)
 3. publish trigger: ingest stage in-cycle 후 publish reconcile 실행
-4. monitor consistency: `symbol+timeframe` 기준 + `PRIMARY_TIMEFRAME` legacy fallback
+4. monitor consistency current baseline: `symbol+timeframe` 기준 + `PRIMARY_TIMEFRAME` legacy fallback
 5. ingest routing: `1d/1w/1M` 포함 전 timeframe direct fetch(derived downsample 경로 제거)
 6. model artifact boundary: `symbol+timeframe canonical` + primary legacy fallback(`D-2026-03-03-71`)
+7. next refactor lock: `/status` 판정은 monitor 기준 parity로 전환(`D-046`), scheduler는 `boundary` 단일 모드로 잠금(`D-047`)
 
 ## 3. Next Priority Tasks
 1. `D-013`: 재학습 트리거 정책 정의 — in_progress(2026-03-03), `00:35 UTC` + retry `N=2` + event catalog lock(실행 보류)
-2. `D-014`: 학습 실행 no-overlap/락 가드
-3. `D-015`: 학습 실행 관측성/알림 baseline
-4. `D-003`: Shadow 추론 파이프라인 도입(서빙 분리)
-5. `D-004`: Champion vs Shadow 평가 리포트
-6. `D-005`: 자동 승격 게이트(`fail-closed`)
+2. `D-046`: Status-Monitor 판정 경로 단일화(모니터 기준)
+3. `D-040`: Legacy Kill Stage 1 — 모델 fallback 제거
+4. `D-041`: Legacy Kill Stage 2 — static dual-write 제거
+5. `D-042`: Legacy Kill Stage 3 — Influx legacy query fallback 제거(ingest+monitor)
+6. `D-043`: Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
+7. `D-047`: Scheduler mode boundary 단일화(`poll_loop` 제거)
+8. `D-044`: 상태 스키마 정규화
+9. `D-045`: Orchestrator 모듈화 인터페이스 잠금
 
 ## 4. Current Risks
 1. `TD-012`: 자동 재학습/승격 게이트 미구현
 2. `TD-010`: 모델 인터페이스 미구현
 3. `TD-022`: prediction freshness 의미론(입력 stale 은닉 가능성) 정렬 필요
-4. `TD-009`: dev push 즉시 배포 구조 리스크
+4. `TD-035`: 이벤트 기반 재학습 임계치 휴리스틱(미보정) 리스크
 
 ## 5. Runtime Notes
 1. 로컬 `.env`는 참고용이며, 실제 서버 런타임은 `.env.prod` 기준 주입이다.
 2. sunset 이후 운영 기본 점검은 `/status` + static 산출물 확인 경로를 사용한다.
 3. 학습 실행은 상시 서비스가 아니라 one-shot runbook 절차를 따른다.
+4. 고위험 구조개편은 로컬 테스트 + 로컬 스모크 통과 전 `dev` push를 금지한다(`D-2026-03-03-72`).
+5. 배포 워크플로우는 `main` push(또는 수동 dispatch)만 허용한다(`D-2026-03-04-77`).
+6. 로컬 스모크는 `docker-compose.local.yml` override로 로컬 Dockerfile build 이미지를 사용한다.
 
 ## 6. Quick Verify Commands
 1. `PYENV_VERSION=coin pytest -q`

@@ -1,6 +1,6 @@
 # Coin Predict Living Plan (Hybrid)
 
-- Last Updated: 2026-03-03
+- Last Updated: 2026-03-04
 - Owner: Backend/Platform
 - Status: Active
 - Full Phase A History: `docs/archive/phase_a/PLAN_LIVING_HYBRID_PHASE_A_FULL_2026-02-12.md`
@@ -37,7 +37,7 @@
 ## 4.1 Phase C Completion Baseline
 1. Phase C 시점 baseline은 `worker-ingest`/`worker-publish` 2-service였다. 현재 운영 기본은 `worker-ingest` 단일 실행 경로(ingest->publish in-cycle causal chain)로 고정됐고(`D-034`), split rollback profile은 제거됐다.
 2. cadence는 `UTC boundary + detection gate` 기준으로 고정됐다.
-3. monitor consistency는 `symbol+timeframe` 기준 + `PRIMARY_TIMEFRAME` legacy fallback 경계로 고정됐다.
+3. monitor consistency 현재 baseline은 `symbol+timeframe` 기준 + `PRIMARY_TIMEFRAME` legacy fallback 경계다. `D-046/D-042`에서 `/status` parity + legacy 제거로 전환한다.
 4. stale 장기 지속 승격(`*_escalated`)과 runbook이 운영 기본 절차로 반영됐다.
 5. 상세 증거/변경 이력은 `docs/archive/phase_c/*`를 단일 출처로 사용한다.
 6. Phase D 전환 경로는 직렬 pipeline(`ingest -> publish` in-cycle causal chain)으로 재잠근다(`D-027`~`D-031`). `D-022`~`D-026`은 hold reference로 유지한다.
@@ -65,6 +65,7 @@
 13. `D-012` 완료: 학습 SoT/chunk 추출 안전장치 + SQLite tracking/partial-success/snapshot latest-only 잠금, `worker-train` 스모크 통과
 14. `D-001` 완료: Prophet 경로 `fit/predict/save/load` 계약을 문서(`docs/MODEL_CONTRACT.md`)와 회귀 테스트(`tests/test_model_contract.py`)로 잠금
 15. `D-002` 완료: 모델 metadata/version 스키마(v1) 문서화(`docs/MODEL_METADATA_SCHEMA.md`) + sidecar 저장 경로 고정
+16. `D-049` 완료: CI/CD 브랜치 게이트 분리(`dev` CI-only, `main` deploy-only) + 로컬 스모크 override(`docker-compose.local.yml`) 고정
 
 ## 5.1 Parallel Critical Recovery (Non-Bundle)
 1. `D-013`: 재학습 트리거 정책 정의(1차 시간 기반, 이벤트는 도입 조건만 잠금)
@@ -74,6 +75,15 @@
 5. `D-004`: Champion vs Shadow 평가 리포트(일별)
 6. `D-005`: 자동 승격 게이트(`fail-closed`)
 7. `D-038` (hold): 학습 snapshot pre-materialize 누적 extractor는 최적화 후보로 분리하고, on-demand 경로에서 학습 시간/SLA 압력이 반복될 때만 재개한다(`D-2026-02-26-66`).
+
+## 5.8 Phase D Refactor Program (Locked 2026-03-04)
+1. 고위험 구조개편은 Track 순서를 고정한다: `legacy kill -> contract split -> modularization` (`D-2026-03-03-72`).
+2. 실행 게이트는 `로컬 테스트 + 로컬 스모크` 선행이다. 검증 전 `dev` push는 금지한다.
+3. Track A (Legacy Kill): 모델/정적산출물/쿼리 fallback 제거 + status/monitor fallback 제거(`D-040~D-042`, `D-046`).
+4. Track B (Contract Split): 별도 파일 분리 대신 단일 `manifest.v2` 내 `public`/`ops` 섹션 분리(`D-043`).
+5. Track C (Modularization): state/model/orchestrator 인터페이스 경계 기반 분리(`D-044~D-045`).
+6. 상세 단계/검증/롤백 기준은 `docs/PHASE_D_REFACTOR_EXECUTION_PLAN.md`를 단일 실행 기준으로 사용한다.
+7. scheduler는 `boundary` 단일 모드로 잠그고(`D-047`), invalid mode fallback은 fail-fast로 전환한다.
 
 ## 5.7 Phase D Delivery Forecast (Best-Effort, 2026-02-26)
 1. Wave 1 (`D-013~D-015`): 4~6 영업일
@@ -147,7 +157,7 @@
 1. `TD-012`: 자동 재학습/승격 게이트 미구현
 2. `TD-010`: 모델 인터페이스 미구현
 3. `TD-022`: prediction freshness 의미론(입력 stale 은닉 가능성) 정렬 필요
-4. `TD-009`: dev push 즉시 배포 구조로 인한 운영 실수 영향 확대 리스크
+4. `TD-035`: 이벤트 기반 재학습 임계치 휴리스틱(미보정) 리스크
 
 ## 8. Change Rules
 1. 정책 변경은 `docs/DECISIONS.md`를 먼저 갱신한다.

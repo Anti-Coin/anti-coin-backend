@@ -8,14 +8,18 @@ Authoritative for: repository structure and ownership boundaries.
 - `workers/ingest.py`: ingest/downsample domain logic.
 - `workers/predict.py`: prediction/health domain logic.
 - `workers/export.py`: static export/manifest domain logic.
-- `scripts/worker_ingest.py`, `scripts/worker_publish.py`, `scripts/worker_predict.py`, `scripts/worker_export.py`: role-specific worker entrypoints.
+- `scripts/worker_ingest.py`: runtime ingest worker entrypoint (in-cycle predict/export 포함).
+- `scripts/worker_train.py`: one-shot training worker entrypoint.
+- `scripts/status_monitor.py`: status monitor process entrypoint.
 - `admin/app.py`: Streamlit dashboard for monitoring and visualization.
 
 ### Infra and runtime
 - `docker-compose.yml`: service topology and runtime wiring.
+- `docker-compose.local.yml`: local smoke override (local Dockerfile build images).
 - `docker/`: Dockerfiles and per-service requirements.
 - `nginx/default.conf`: static artifact serving config.
 - `prometheus/prometheus.yml`: monitoring scrape config.
+- `.github/workflows/ci.yml`: CI test workflow (`main/dev` push, PR gate).
 - `.github/workflows/deploy.yml`: build/push/deploy pipeline.
 
 ### Data/artifact paths
@@ -25,7 +29,7 @@ Authoritative for: repository structure and ownership boundaries.
 - `docs/`: living plan, task board, decisions, debt register, handoff.
 
 ## Current Data Flow
-`ccxt/binance -> worker-ingest -> InfluxDB -> worker-publish -> static JSON -> nginx/static + fastapi -> streamlit`
+`ccxt/binance -> worker-ingest(ingest->predict->export in-cycle) -> InfluxDB/static JSON -> nginx/static + fastapi -> streamlit`
 
 ## To-Be (Planned, Not Implemented Yet)
 Planned modular structure may include:

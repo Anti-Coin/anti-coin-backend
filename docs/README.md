@@ -18,8 +18,10 @@
 ## 2. Deep Read (When Needed)
 1. `docs/ENGINEERING_CONSTITUTION.md`
 2. `docs/TEST_STRATEGY.md`
-3. `docs/GLOSSARY.md`
-4. `docs/archive/README.md`
+3. `docs/STATE_FIELD_INVENTORY.md`
+4. `docs/PHASE_D_REFACTOR_EXECUTION_PLAN.md`
+5. `docs/GLOSSARY.md`
+6. `docs/archive/README.md`
 
 ## 3. Document Roles
 1. `CONTEXT_MIN`: 최소 컨텍스트 요약
@@ -29,7 +31,9 @@
 5. `TASKS_MINIMUM_UNITS`: 활성 태스크 보드
 6. `DISCUSSION`: 활성 쟁점/후속 후보 요약 + archive 원문 링크
 7. `RUNBOOK_*`: 운영 개입/복구 절차
-8. `archive/*`: 무손실 상세 이력 원장
+8. `STATE_FIELD_INVENTORY`: 상태 파일 필드 인벤토리/제거 후보 감사 기준
+9. `PHASE_D_REFACTOR_EXECUTION_PLAN`: 고위험 리팩토링 단계/검증/롤백 실행 기준
+10. `archive/*`: 무손실 상세 이력 원장
 
 ## 4. Update Rules
 1. 정책 변경: `DECISIONS` 우선 갱신

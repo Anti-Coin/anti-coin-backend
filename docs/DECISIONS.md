@@ -1,6 +1,6 @@
 # Coin Predict Decision Register (Active)
 
-- Last Updated: 2026-03-03
+- Last Updated: 2026-03-04
 - Scope: 활성 결정 요약 + archive 원문 링크
 - Full Phase A History: `docs/archive/phase_a/DECISIONS_PHASE_A_FULL_2026-02-12.md`
 - Full Phase B History: `docs/archive/phase_b/DECISIONS_PHASE_B_FULL_2026-02-19.md`
@@ -76,6 +76,12 @@
 | D-2026-03-03-69 | D-013 Retraining Time Policy Lock (Phase 1) | 재학습 시간 정책을 1차로 잠근다. 실행 기준은 `00:35 UTC` daily scheduler이며 TF due matrix는 `1h/1d=매일`, `1w=매주 월요일`, `1M=매월 1일`이다. 실패 재시도는 `N=2`(backoff `10m -> 30m`)로 고정하고, no-overlap lock이 선행되지 않으면 재시도를 포함한 자동 실행을 허용하지 않는다. | 런타임 overrun/락 경합 증가, 또는 학습 완료 시각이 ingest/publish 안정 구간과 충돌할 때 |
 | D-2026-03-03-70 | D-013 Event Catalog Lock (Deferred Execution) | 이벤트 기반 재학습은 Phase 1에서 실행하지 않되, 카탈로그/임계치를 선잠금한다. 이벤트는 `EVT_PRICE_SHOCK_1H(abs_r_1h >= 4%)`, `EVT_VOL_SPIKE_24H(realized_vol_24h >= 2x rolling_median_30d)`, `EVT_MODEL_DRIFT(shadow_mae_3d > champion_mae_3d * 1.2)`로 고정한다. 공통 가드는 `2회 연속 관측 + cooldown 24h + min_model_age 12h`다. | 이벤트 오탐/미탐 비율이 허용치를 넘거나, drift 지표 정의가 변경될 때 |
 | D-2026-03-03-71 | Model Artifact Granularity Clarification | 현재 런타임 모델 아티팩트 단위는 `symbol+timeframe` canonical(`model_{symbol}_{timeframe}.json`)이다. primary timeframe에만 legacy fallback(`model_{symbol}.json`)을 유지하며, cross-symbol shared 단일 파일 모델은 현재 코드 경로에 없다. shared/dedicated 분리 승격 정책은 후속(`D-011`)에서 다룬다. | runtime load 경로가 shared 단일 파일 또는 registry resolver로 바뀔 때 |
+| D-2026-03-03-72 | High-Risk Refactor Execution Gate Lock | 고위험 구조개편은 `legacy kill -> contract split -> modularization` 순서로 고정한다. 실행 게이트는 `로컬 테스트 + 로컬 스모크` 선행이며, 검증 전 `dev` push(자동 배포 유발)를 금지한다. 단계별 롤백 경계는 stage 커밋 단위로 유지한다. | 브랜치/배포 정책이 변경되거나, 로컬 스모크와 서버 런타임의 괴리가 반복될 때 |
+| D-2026-03-04-73 | Status-Monitor Parity Lock | `/status` 판정은 monitor 기준으로 잠근다. `utils.prediction_status` 공통 evaluator와 Influx-JSON consistency override 규칙을 API/monitor에 동일 적용한다. Influx 조회 실패 시 JSON 판정을 유지한다. | false positive/negative 비율이 허용치를 넘거나 Influx query 비용이 임계치를 초과할 때 |
+| D-2026-03-04-74 | Manifest Contract Consolidation Lock | `public_manifest`/`ops_manifest` 파일 분리 대신 단일 `manifest.v2` 내 `public`/`ops` 섹션 분리로 고정한다(1회 atomic write). | payload 크기/캐시 정책 충돌로 별도 파일 분리가 필요해질 때 |
+| D-2026-03-04-75 | Legacy Fallback Retirement Scope Lock | legacy fallback 제거 범위를 model/static/Influx query뿐 아니라 status/monitor read path까지 확장한다. no-timeframe fallback과 primary legacy prediction file fallback을 단계적으로 제거한다(`fail-closed`). | canonical 누락률 상승 또는 운영 경보 급증 시 |
+| D-2026-03-04-76 | Scheduler Mode Hard Lock | worker scheduler mode는 `boundary` 단일값으로 잠근다. `poll_loop` 모드와 invalid mode fallback을 제거하고, 잘못된 설정은 fail-fast로 종료한다. | boundary scheduler 장애로 `poll_loop` 재도입 필요가 발생할 때 |
+| D-2026-03-04-77 | CI/CD Branch Gate Lock | CI와 CD를 분리하고 배포 트리거를 `main` 전용으로 잠근다. `dev`는 CI-only 통합 브랜치로 유지하며, 배포 전 로컬 스모크 게이트(`docker-compose.local.yml`)를 필수 경계로 둔다. | 브랜치 전략 변경, 다중 환경 배포, 또는 배포 승인 체계 변경 시 |
 
 ## 3. Decision Operation Policy
 1. 활성 문서는 요약만 유지한다(상세 서술 금지).

@@ -1,6 +1,6 @@
 # Stale Escalation Runbook
 
-- Last Updated: 2026-02-20
+- Last Updated: 2026-03-04
 - Scope: monitor alert-only 운영에서 stale 장기 지속 사건 대응
 
 ## 1. Purpose
@@ -34,15 +34,19 @@
 3. `corrupt_escalated` 발생
 
 ## 5. Operator Checklist
-1. `manifest.json`에서 해당 키의 `prediction.updated_at`, `status`, `serve_allowed`를 확인한다.
+1. manifest 계약 확인:
+1. 현재 경로는 `manifest.json`이다.
+2. `D-043` 적용 후에는 `manifest.v2.ops` 섹션에서 동일 키를 확인한다.
+2. manifest에서 해당 키의 `prediction.updated_at`, `status`, `serve_allowed`를 확인한다.
 2. `prediction_health.json`에서 `last_success_at`, `last_failure_at`, `consecutive_failures`를 확인한다.
-3. `ingest_watermarks.json`, `predict_watermarks.json`, `export_watermarks.json`의 전진 여부를 비교한다.
-4. `runtime_metrics.json`에서 최근 cycle `result`, `detection_gate_*`, `ingest_since_source_counts`를 확인한다.
-5. 필요 시 worker/monitor 로그를 확인하고 원인 분류를 기록한다.
+3. `ingest_watermarks.json`의 해당 키 전진 여부를 확인한다.
+4. `ingest_state.json`에서 같은 키의 `last_closed_ts/status`를 교차 확인한다.
+5. `runtime_metrics.json`에서 최근 cycle `result`, `detection_gate_*`, `ingest_since_source_counts`를 확인한다.
+6. 필요 시 worker/monitor 로그를 확인하고 원인 분류를 기록한다.
 
 ## 6. Classification Guide
 1. 정상 대기 가능성:
-1. 장주기 TF 경계 전이며 watermarks가 최근 경계 기준으로 정합적일 때
+1. 장주기 TF 경계 전이며 ingest watermark/cursor가 최근 경계 기준으로 정합적일 때
 2. 방치 가능성:
 1. watermark/updated_at가 장시간 정체되고 동일 상태가 escalation 임계 이상 반복될 때
 3. 데이터 무결성 위험:
