@@ -17,6 +17,12 @@ services:
       - DOCKER_INFLUXDB_INIT_ORG=coin # 조직 이름
       - DOCKER_INFLUXDB_INIT_BUCKET=market_data # 버킷 이름 (DB 명)
       - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=my-super-secret-auth-token
+    healthcheck:
+      test: ["CMD", "influx", "ping", "--host", "http://localhost:8086"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     restart: always
 
   nginx:
@@ -41,6 +47,9 @@ services:
       INFLUXDB_BUCKET: ${INFLUXDB_BUCKET}
     ports:
       - "8000:8000"
+    depends_on:
+      influxdb:
+        condition: service_healthy
     restart: always
     volumes:
       - ./static_data:/app/static_data
@@ -69,7 +78,8 @@ services:
       PREDICTION_DISABLED_TIMEFRAMES: ${PREDICTION_DISABLED_TIMEFRAMES}
       DISK_USAGE_PATH: ${DISK_USAGE_PATH}
     depends_on:
-      - influxdb
+      influxdb:
+        condition: service_healthy
     restart: always
     volumes:
       - ./models:/app/models
@@ -93,6 +103,9 @@ services:
       TRAIN_TIMEFRAMES: ${TRAIN_TIMEFRAMES}
       TRAIN_LOOKBACK_LIMIT: ${TRAIN_LOOKBACK_LIMIT}
       ENABLE_MULTI_TIMEFRAMES: ${ENABLE_MULTI_TIMEFRAMES}
+    depends_on:
+      influxdb:
+        condition: service_healthy
     restart: "no"
     volumes:
       - ./models:/app/models

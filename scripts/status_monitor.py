@@ -1,6 +1,6 @@
 import os
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -8,11 +8,14 @@ import requests
 from influxdb_client import InfluxDBClient
 
 from utils.config import INGEST_TIMEFRAMES, PRIMARY_TIMEFRAME, TARGET_SYMBOLS
-from utils.freshness import parse_utc_timestamp
 from utils.logger import get_logger
 from utils.prediction_status import (
     PredictionStatusSnapshot,
     evaluate_prediction_status,
+)
+from utils.status_consistency import (
+    apply_influx_json_consistency as _apply_influx_json_consistency,
+    get_latest_ohlcv_timestamp as _get_latest_ohlcv_timestamp,
 )
 
 logger = get_logger(__name__)
@@ -171,40 +174,6 @@ def detect_escalation_event(
     return None
 
 
-def _extract_latest_timestamp_from_result(result) -> datetime | None:
-    """
-    Flux query 결과에서 전역 latest `_time`를 추출한다.
-
-    Why:
-    - `last()`가 series별 table을 반환할 수 있어 단일 table 가정을 피해야 한다.
-    """
-    latest_ts: datetime | None = None
-    for table in result:
-        for record in getattr(table, "records", []):
-            ts = record.get_time()
-            if ts is None:
-                continue
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            else:
-                ts = ts.astimezone(timezone.utc)
-            if latest_ts is None or ts > latest_ts:
-                latest_ts = ts
-    return latest_ts
-
-
-def _query_latest_ohlcv_timestamp(query_api, query: str) -> datetime | None:
-    """
-    주어진 Flux query를 실행해 latest `_time`를 반환한다.
-    """
-    try:
-        result = query_api.query(query=query)
-    except Exception as e:
-        logger.error(f"[Monitor] Influx latest ohlcv query failed: {e}")
-        return None
-    return _extract_latest_timestamp_from_result(result)
-
-
 def get_latest_ohlcv_timestamp(
     query_api, symbol: str, timeframe: str
 ) -> datetime | None:
@@ -215,89 +184,19 @@ def get_latest_ohlcv_timestamp(
     Compatibility:
     - PRIMARY_TIMEFRAME는 legacy(no-timeframe-tag) row fallback을 허용한다.
     """
-    if query_api is None or not INFLUXDB_BUCKET:
-        return None
-
-    scoped_query = f"""
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -30d)
-      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
-      |> filter(fn: (r) => r["symbol"] == "{symbol}")
-      |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
-      |> last(column: "_time")
-    """
-    latest_ts = _query_latest_ohlcv_timestamp(query_api, scoped_query)
-    if latest_ts is not None:
-        return latest_ts
-
-    if timeframe != PRIMARY_TIMEFRAME:
-        return None
-
-    legacy_query = f"""
-    from(bucket: "{INFLUXDB_BUCKET}")
-      |> range(start: -30d)
-      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
-      |> filter(fn: (r) => r["symbol"] == "{symbol}")
-      |> filter(fn: (r) => not exists r["timeframe"])
-      |> last(column: "_time")
-    """
-    return _query_latest_ohlcv_timestamp(query_api, legacy_query)
+    return _get_latest_ohlcv_timestamp(
+        query_api,
+        symbol,
+        timeframe,
+        INFLUXDB_BUCKET,
+        PRIMARY_TIMEFRAME,
+    )
 
 
 def apply_influx_json_consistency(
     snapshot: MonitorSnapshot, latest_ohlcv_ts: datetime | None
 ) -> MonitorSnapshot:
-    """
-    Influx(SoT)와 JSON(파생 산출물) 간 시각 갭을 추가 검증한다.
-
-    기본 정책:
-    1) JSON 자체가 이미 missing/corrupt면 그 결과를 우선한다.
-    2) Influx 정보가 없으면 오탐을 피하기 위해 JSON 판정을 유지한다.
-    3) 갭이 hard_limit을 넘는 경우에만 hard_stale로 승격한다.
-    """
-    # Influx 설정이 없거나, 쿼리 실패/결과 없음 (Influx 장애를 서비스 장애로 오탐 가능)
-    # 따라서, JSON 기준 판정을 존중하여 return.
-    if latest_ohlcv_ts is None:
-        return snapshot
-    # 이미 JSON에서 판정된 상태라면, Influx 기준으로 판정하지 않음.
-    if snapshot.status in {"missing", "corrupt"}:
-        return snapshot
-    # updated_at: JSON이 언제 생성 되었는 지 없고,
-    # hard_limit_minutes: 허용 가능한 최대 갭이 없으면,
-    # Influx vs. JSON 간 갭 규칙을 적용할 수 없음.
-    if snapshot.updated_at is None or snapshot.hard_limit_minutes is None:
-        return snapshot
-
-    # 파싱 실패 => timestamp 형식 오류/문자열 오염 등.
-    updated_at = parse_utc_timestamp(snapshot.updated_at)
-    if updated_at is None:
-        return replace(
-            snapshot,
-            status="corrupt",
-            detail="influx_json_mismatch: invalid snapshot updated_at",
-        )
-
-    # 앞/뒤 관계보다 "절대 시각 차이"가 중요하므로 absolute gap으로 계산.
-    gap = updated_at - latest_ohlcv_ts
-    if gap < timedelta(0):
-        gap = -gap
-
-    # JSON 존중. 아마 status = healthy
-    max_gap = timedelta(minutes=snapshot.hard_limit_minutes)
-    if gap <= max_gap:
-        return snapshot
-
-    gap_minutes = round(gap.total_seconds() / 60, 2)
-    return replace(
-        snapshot,
-        status="hard_stale",
-        detail=(
-            "influx_json_mismatch: "
-            f"ohlcv_last={latest_ohlcv_ts.strftime('%Y-%m-%dT%H:%M:%SZ')}, "
-            f"prediction_updated_at={snapshot.updated_at}, "
-            f"gap_minutes={gap_minutes}"
-        ),
-    )
+    return _apply_influx_json_consistency(snapshot, latest_ohlcv_ts)
 
 
 def run_monitor_cycle(

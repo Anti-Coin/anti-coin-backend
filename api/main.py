@@ -9,8 +9,16 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from utils.logger import get_logger
-from utils.config import FRESHNESS_THRESHOLDS, FRESHNESS_HARD_THRESHOLDS
+from utils.config import (
+    FRESHNESS_THRESHOLDS,
+    FRESHNESS_HARD_THRESHOLDS,
+    PRIMARY_TIMEFRAME,
+)
 from utils.prediction_status import evaluate_prediction_status
+from utils.status_consistency import (
+    apply_influx_json_consistency,
+    get_latest_ohlcv_timestamp,
+)
 
 logger = get_logger(__name__)
 
@@ -124,6 +132,18 @@ def _load_prediction_health(symbol: str, timeframe: str) -> dict:
     }
 
 
+def _resolve_influx_query_api():
+    """Return query_api if Influx client is ready; otherwise None."""
+    if client is None:
+        return None
+
+    try:
+        return client.query_api()
+    except Exception as e:
+        logger.error(f"Failed to resolve Influx query API: {e}")
+        return None
+
+
 # InfluxDB 쿼리 헬퍼 함수
 def query_influx(symbol: str, measurement: str, days: int = 30):
     query_api = client.query_api()
@@ -201,7 +221,7 @@ def check_status(symbol: str, timeframe: str = "1h"):
     - 파일이 없거나, 너무 오래되었으면 503에러 반환
     """
     try:
-        snapshot = evaluate_prediction_status(
+        base_snapshot = evaluate_prediction_status(
             symbol=symbol,
             timeframe=timeframe,
             now=datetime.now(timezone.utc),
@@ -209,6 +229,20 @@ def check_status(symbol: str, timeframe: str = "1h"):
             soft_thresholds=FRESHNESS_THRESHOLDS,
             hard_thresholds=FRESHNESS_HARD_THRESHOLDS,
         )
+        latest_ohlcv_ts = get_latest_ohlcv_timestamp(
+            _resolve_influx_query_api(),
+            symbol,
+            timeframe,
+            INFLUXDB_BUCKET,
+            PRIMARY_TIMEFRAME,
+        )
+        snapshot = apply_influx_json_consistency(base_snapshot, latest_ohlcv_ts)
+        if snapshot.status != base_snapshot.status:
+            logger.warning(
+                "[Status API] Consistency override: "
+                f"{symbol} {timeframe} {base_snapshot.status}->{snapshot.status} "
+                f"detail={snapshot.detail}"
+            )
 
         if snapshot.status == "missing":
             raise HTTPException(status_code=503, detail="Not initialized yet.")

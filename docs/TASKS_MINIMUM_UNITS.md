@@ -1,6 +1,6 @@
 # Coin Predict Task Board (Active)
 
-- Last Updated: 2026-03-04
+- Last Updated: 2026-03-05
 - Rule: 활성 태스크만 유지하고, 완료 상세 이력은 Archive로 분리
 - Full Phase A History: `docs/archive/phase_a/TASKS_MINIMUM_UNITS_PHASE_A_FULL_2026-02-12.md`
 - Full Phase B History: `docs/archive/phase_b/TASKS_MINIMUM_UNITS_PHASE_B_FULL_2026-02-19.md`
@@ -113,20 +113,22 @@
 | D-043 | P1 | Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`) | open | 단일 `manifest.v2` payload에 `public`/`ops` 섹션 계약을 고정하고 writer/consumer를 분리한다. FE는 `public`만, admin/ops는 `ops`만 사용해야 한다. |
 | D-044 | P1 | 상태 스키마 정규화(`symbol_activation`/`prediction_health`) | open | 중복 identity/파생 필드를 정규화한다(예: `symbol_activation` 단일 SoT 상태 기준). 상태 파일 read/write 계약 테스트를 고정한다. |
 | D-045 | P2 | Orchestrator 모듈화 인터페이스 잠금 | open | `state_store`/`model_io`/`policy_eval` 인터페이스를 문서+코드로 고정하고, `pipeline_worker`는 조합 책임으로 축소한다. 회귀 테스트 통과. |
-| D-046 | **P0** | Status-Monitor 판정 경로 단일화(모니터 기준) | open | `/status`와 monitor가 동일 evaluator + 동일 Influx-JSON consistency rule을 사용한다. Influx 조회 실패 시 JSON 판정을 유지하며, 양 경로의 동일 입력/동일 출력 회귀 테스트가 고정된다. |
+| D-046 | **P0** | Status-Monitor 판정 경로 단일화(모니터 기준) | done (2026-03-04) | `/status`가 monitor와 동일한 Influx-JSON consistency override(`apply_influx_json_consistency`)를 사용하도록 정렬했다. Influx 조회 실패/결과 없음(`latest_ohlcv_ts is None`)은 JSON 판정을 그대로 유지한다. 회귀: `PYENV_VERSION=coin pytest -q tests/test_api_status.py tests/test_status_monitor.py` (`37 passed`). |
 | D-047 | P1 | Scheduler mode boundary 단일화(`poll_loop` 제거) | open | `WORKER_SCHEDULER_MODE=boundary` 단일 계약으로 고정하고 `poll_loop`/invalid fallback을 제거한다. 잘못된 설정은 fail-fast가 테스트와 스모크에서 검증되어야 한다. |
-| D-048 | P2 (Hold) | 상태 파일 축소/통합 검증(`prediction_health`/`ingest_watermarks`) | open | `prediction_health`의 redundant identity 필드 제거를 적용하고, `ingest_watermarks` 제거 가능성을 `ingest_state` 대체 설계+회귀 테스트로 검증한다. 인과/재시작 경계가 깨지면 파일 유지 결정을 문서로 잠근다. |
+| D-048 | P2 (Hold) | 상태 파일 축소/통합 검증(`prediction_health`/`ingest_watermarks`) | open | 축소 우선순위는 `prediction_health redundant identity -> symbol_activation redundant/derived -> 나머지`로 잠근다. `ingest_watermarks` 제거 가능성은 `ingest_state` 대체 설계+회귀 테스트로 검증하고, 인과/재시작 경계가 깨지면 파일 유지 결정을 문서로 잠근다. |
+| D-050 | P1 | Operator Usecase Baseline 문서 잠금 | done (2026-03-05) | 운영자 기준 stage 계약(ingest/predict/export/serve/monitor), 실패 전파 스키마(`stage/cause/impact`), 상태 파일 축소 우선순위를 `docs/PIPELINE_OPERATOR_USECASES.md`로 고정했다. |
+| D-051 | P1 | D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리 | in_progress (2026-03-05) | API가 monitor 엔트리포인트 모듈을 직접 import하지 않고 공통 판정 로직을 `utils/*` 공유 모듈로 분리한다. 동시에 유즈케이스 기반 refactor 후보(공통 모듈/인터페이스/env 축소/fallback 제거/state 축소)를 매트릭스로 고정하고 단계별 실행 순서를 제시한다. compose는 Influx healthcheck + `service_healthy` 의존성 경계로 보강한다. 로컬 스모크(이미지 빌드 + fastapi import + monitor/ingest/train 최소 실행) 증거 확보 시 done 전환한다. |
 
 > **Discussion Reference**: `docs/DISCUSSION_PHASE_D_AUDIT_2026-02-21.md`
 
 ## 3. Immediate Bundle (Revised 2026-03-04)
 1. `D-013` — 재학습 트리거 정책 정의(1차 시간 기반)
-2. `D-046` — Status-Monitor 판정 경로 단일화(모니터 기준)
-3. `D-040` — Legacy Kill Stage 1: 모델 fallback 제거
-4. `D-041` — Legacy Kill Stage 2: static dual-write 제거
-5. `D-042` — Legacy Kill Stage 3: Influx legacy query fallback 제거
-6. `D-043` — Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
-7. `D-047` — Scheduler mode boundary 단일화(`poll_loop` 제거)
+2. `D-040` — Legacy Kill Stage 1: 모델 fallback 제거
+3. `D-041` — Legacy Kill Stage 2: static dual-write 제거
+4. `D-042` — Legacy Kill Stage 3: Influx legacy query fallback 제거
+5. `D-043` — Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
+6. `D-047` — Scheduler mode boundary 단일화(`poll_loop` 제거)
+7. `D-051` — D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리
 8. `D-044` — 상태 스키마 정규화
 9. `D-045` — Orchestrator 모듈화 인터페이스 잠금
 10. `D-014` — 학습 실행 no-overlap/락 가드

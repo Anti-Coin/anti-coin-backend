@@ -1,4 +1,4 @@
-ccxt
+ccxt==4.3.97
 pandas
 influxdb-client
 prophet

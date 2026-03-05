@@ -5,6 +5,10 @@ import pytest
 from fastapi import HTTPException
 
 import api.main as api_main
+from scripts.status_monitor import (
+    apply_influx_json_consistency,
+    evaluate_symbol_timeframe,
+)
 
 
 def test_history_endpoint_returns_410_after_sunset():
@@ -302,3 +306,110 @@ def test_check_status_marks_degraded_when_prediction_health_file_is_corrupted(
     assert response["status"] == "fresh"
     assert response["degraded"] is True
     assert response["degraded_reason"] == "prediction_health_read_error"
+
+
+def test_check_status_applies_influx_json_consistency_override(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(api_main, "STATIC_DIR", tmp_path)
+    monkeypatch.setattr(
+        api_main, "PREDICTION_HEALTH_FILE", tmp_path / "prediction_health.json"
+    )
+    monkeypatch.setattr(
+        api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=10)}
+    )
+    monkeypatch.setattr(
+        api_main, "FRESHNESS_HARD_THRESHOLDS", {"1h": timedelta(minutes=20)}
+    )
+
+    now = datetime.now(timezone.utc)
+    _write_prediction_file(
+        tmp_path, "BTC/USDT", {"updated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    )
+    monkeypatch.setattr(api_main, "_resolve_influx_query_api", lambda: object())
+    monkeypatch.setattr(
+        api_main,
+        "get_latest_ohlcv_timestamp",
+        lambda *_: now - timedelta(minutes=40),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        api_main.check_status("BTC/USDT")
+
+    assert exc.value.status_code == 503
+    assert "hard limit" in exc.value.detail
+
+
+def test_check_status_keeps_json_decision_when_influx_unavailable(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(api_main, "STATIC_DIR", tmp_path)
+    monkeypatch.setattr(
+        api_main, "PREDICTION_HEALTH_FILE", tmp_path / "prediction_health.json"
+    )
+    monkeypatch.setattr(
+        api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=1)}
+    )
+    monkeypatch.setattr(
+        api_main, "FRESHNESS_HARD_THRESHOLDS", {"1h": timedelta(minutes=3)}
+    )
+
+    updated_at = datetime.now(timezone.utc) - timedelta(minutes=2)
+    _write_prediction_file(
+        tmp_path,
+        "BTC/USDT",
+        {"updated_at": updated_at.strftime("%Y-%m-%dT%H:%M:%SZ")},
+    )
+    monkeypatch.setattr(api_main, "_resolve_influx_query_api", lambda: object())
+    monkeypatch.setattr(
+        api_main, "get_latest_ohlcv_timestamp", lambda *_: None
+    )
+
+    response = api_main.check_status("BTC/USDT")
+    assert response["status"] == "stale"
+    assert "warning" in response
+
+
+def test_check_status_matches_monitor_evaluator_output_when_consistent(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(api_main, "STATIC_DIR", tmp_path)
+    monkeypatch.setattr(
+        api_main, "PREDICTION_HEALTH_FILE", tmp_path / "prediction_health.json"
+    )
+    monkeypatch.setattr(
+        api_main, "FRESHNESS_THRESHOLDS", {"1h": timedelta(minutes=10)}
+    )
+    monkeypatch.setattr(
+        api_main, "FRESHNESS_HARD_THRESHOLDS", {"1h": timedelta(minutes=20)}
+    )
+
+    now = datetime.now(timezone.utc)
+    _write_prediction_file(
+        tmp_path, "BTC/USDT", {"updated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
+    )
+    monkeypatch.setattr(api_main, "_resolve_influx_query_api", lambda: object())
+    monkeypatch.setattr(
+        api_main,
+        "get_latest_ohlcv_timestamp",
+        lambda *_: now,
+    )
+
+    api_response = api_main.check_status("BTC/USDT")
+
+    monitor_base = evaluate_symbol_timeframe(
+        symbol="BTC/USDT",
+        timeframe="1h",
+        now=now,
+        static_dir=tmp_path,
+        soft_thresholds={"1h": timedelta(minutes=10)},
+        hard_thresholds={"1h": timedelta(minutes=20)},
+    )
+    monitor_snapshot = apply_influx_json_consistency(monitor_base, now)
+
+    assert api_response["status"] == monitor_snapshot.status
+    assert api_response["updated_at"] == monitor_snapshot.updated_at
+    assert api_response["threshold_minutes"] == {
+        "soft": monitor_snapshot.soft_limit_minutes,
+        "hard": monitor_snapshot.hard_limit_minutes,
+    }

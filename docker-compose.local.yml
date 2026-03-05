@@ -1,6 +1,9 @@
 version: "3.8"
 
 # Local smoke override.
+# NOTE:
+#   - 이 파일은 base compose를 대체하지 않는다.
+#   - 반드시 `-f docker-compose.yml -f docker-compose.local.yml` 순서로 함께 사용한다.
 # Usage example:
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml --env-file .env.prod up -d --build
 #   docker compose -f docker-compose.yml -f docker-compose.local.yml --env-file .env.prod --profile ops-train run --rm worker-train
