@@ -1680,13 +1680,13 @@ def test_run_ingest_step_routes_long_timeframes_to_exchange_fetch(monkeypatch):
     expected_since = datetime(2026, 2, 1, 0, 0, tzinfo=timezone.utc)
     called_timeframes: list[str] = []
 
-    def fake_fetch(write_api, symbol, since, timeframe):
+    def fake_fetch(ctx, write_api, symbol, since, timeframe):
         assert symbol == "BTC/USDT"
         assert since == expected_since
         called_timeframes.append(timeframe)
         return expected_latest, "saved"
 
-    monkeypatch.setattr("scripts.pipeline_worker.fetch_and_save", fake_fetch)
+    monkeypatch.setattr("workers.ingest.fetch_and_save", fake_fetch)
 
     for timeframe in ("1d", "1w", "1M"):
         latest, result = run_ingest_step(
@@ -1740,13 +1740,13 @@ def test_run_ingest_step_routes_base_to_exchange_fetch(monkeypatch):
     expected_latest = datetime(2026, 2, 12, 1, 0, tzinfo=timezone.utc)
     expected_since = datetime(2026, 2, 1, 0, 0, tzinfo=timezone.utc)
 
-    def fake_fetch(write_api, symbol, since, timeframe):
+    def fake_fetch(ctx, write_api, symbol, since, timeframe):
         assert symbol == "BTC/USDT"
         assert since == expected_since
         assert timeframe == "1h"
         return expected_latest, "saved"
 
-    monkeypatch.setattr("scripts.pipeline_worker.fetch_and_save", fake_fetch)
+    monkeypatch.setattr("workers.ingest.fetch_and_save", fake_fetch)
 
     latest, result = run_ingest_step(
         write_api=object(),

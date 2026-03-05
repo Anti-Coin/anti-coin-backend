@@ -759,7 +759,7 @@ def run_ingest_step(
     """
     모든 timeframe ingest를 direct exchange fetch 경로로 실행한다.
     """
-    return fetch_and_save(write_api, symbol, since, timeframe)
+    return ingest_ops.fetch_and_save(_ctx(), write_api, symbol, since, timeframe)
 
 
 def run_ingest_step_outcome(
@@ -996,18 +996,6 @@ def build_symbol_activation_entry(
         exchange_earliest=exchange_earliest,
         existing_entry=existing_entry,
     )
-
-
-def fetch_and_save(
-    write_api, symbol, since_ts, timeframe
-) -> tuple[datetime | None, str]:
-    """
-    base ingest 실행 래퍼.
-
-    Called from:
-    - run_ingest_step
-    """
-    return ingest_ops.fetch_and_save(_ctx(), write_api, symbol, since_ts, timeframe)
 
 
 def count_ohlcv_rows(query_api, *, symbol: str, timeframe: str) -> int:
