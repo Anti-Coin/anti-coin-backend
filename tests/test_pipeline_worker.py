@@ -32,7 +32,6 @@ from scripts.pipeline_worker import (
     resolve_ingest_since,
     resolve_disk_watermark_level,
     run_ingest_step,
-    run_prediction_and_save,
     run_worker,
     should_block_initial_backfill,
     should_enforce_1m_retention,
@@ -52,6 +51,7 @@ from workers.ingest import (
     refill_detected_gaps,
 )
 from workers.predict import upsert_prediction_health as predict_upsert_prediction_health
+from workers.predict import run_prediction_and_save as predict_run_prediction_and_save
 from utils.serve_policy import evaluate_serve_allowed
 from utils.ingest_state import IngestStateStore
 from utils.pipeline_contracts import (
@@ -335,7 +335,8 @@ def test_run_prediction_and_save_skips_disabled_timeframe(monkeypatch):
         {"1m"},
     )
 
-    result, error = run_prediction_and_save(
+    result, error = predict_run_prediction_and_save(
+        pipeline_worker_module,
         write_api=None,
         query_api=None,
         symbol="BTC/USDT",
@@ -360,7 +361,8 @@ def test_min_sample_gate_blocks_insufficient_data(monkeypatch):
         "workers.ingest.count_ohlcv_rows",
         lambda ctx, query_api, *, symbol, timeframe: 50,
     )
-    result, error = run_prediction_and_save(
+    result, error = predict_run_prediction_and_save(
+        pipeline_worker_module,
         write_api=None,
         query_api=None,
         symbol="BTC/USDT",
@@ -388,7 +390,8 @@ def test_min_sample_gate_allows_sufficient_data(monkeypatch):
         "scripts.pipeline_worker.MODELS_DIR",
         Path("/nonexistent_models_dir"),
     )
-    result, error = run_prediction_and_save(
+    result, error = predict_run_prediction_and_save(
+        pipeline_worker_module,
         write_api=None,
         query_api=None,
         symbol="BTC/USDT",
@@ -413,7 +416,8 @@ def test_min_sample_gate_skips_unknown_timeframe(monkeypatch):
         "scripts.pipeline_worker.MODELS_DIR",
         Path("/nonexistent_models_dir"),
     )
-    result, error = run_prediction_and_save(
+    result, error = predict_run_prediction_and_save(
+        pipeline_worker_module,
         write_api=None,
         query_api=None,
         symbol="BTC/USDT",

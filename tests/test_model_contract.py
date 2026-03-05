@@ -3,6 +3,7 @@ import json
 import pandas as pd
 
 from scripts import pipeline_worker, train_model
+from workers import predict as predict_ops
 
 
 def test_fit_contract_normalizes_ds_to_timezone_naive():
@@ -69,7 +70,8 @@ def test_predict_contract_uses_canonical_model_and_writes_json_and_influx(
     monkeypatch.setattr(pipeline_worker, "INFLUXDB_ORG", "test_org")
 
     write_api = FakeWriteAPI()
-    result, error = pipeline_worker.run_prediction_and_save(
+    result, error = predict_ops.run_prediction_and_save(
+        pipeline_worker,
         write_api=write_api,
         query_api=None,
         symbol="BTC/USDT",
@@ -135,7 +137,8 @@ def test_predict_contract_fails_closed_when_only_legacy_model_exists(
     monkeypatch.setattr(pipeline_worker, "PREDICTION_DISABLED_TIMEFRAMES", set())
     monkeypatch.setattr(pipeline_worker, "MIN_SAMPLE_BY_TIMEFRAME", {})
 
-    result, error = pipeline_worker.run_prediction_and_save(
+    result, error = predict_ops.run_prediction_and_save(
+        pipeline_worker,
         write_api=object(),
         query_api=None,
         symbol="BTC/USDT",

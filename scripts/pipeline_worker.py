@@ -855,20 +855,6 @@ def get_last_timestamp(query_api, symbol, timeframe, *, full_range: bool = False
     )
 
 
-def run_prediction_and_save(
-    write_api, query_api, symbol, timeframe
-) -> tuple[str, str | None]:
-    """
-    prediction 실행 래퍼.
-
-    Called from:
-    - run_worker() predict stage
-    """
-    return predict_ops.run_prediction_and_save(
-        _ctx(), write_api, query_api, symbol, timeframe
-    )
-
-
 def run_prediction_and_save_outcome(
     write_api,
     query_api,
@@ -878,7 +864,8 @@ def run_prediction_and_save_outcome(
     """
     prediction 단계 문자열 결과를 Enum 상태로 정규화한다.
     """
-    raw_result, prediction_error = run_prediction_and_save(
+    raw_result, prediction_error = predict_ops.run_prediction_and_save(
+        _ctx(),
         write_api,
         query_api,
         symbol,
