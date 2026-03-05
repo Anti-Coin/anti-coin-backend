@@ -42,7 +42,7 @@ class SymbolActivationStore:
           "version": 1,
           "updated_at": "...Z",
           "entries": {
-            "BTC/USDT": {"state": "backfilling", "visibility": "hidden_backfilling", ...}
+            "BTC/USDT": {"state": "backfilling", "coverage_start_at": "...Z", ...}
           }
         }
         """

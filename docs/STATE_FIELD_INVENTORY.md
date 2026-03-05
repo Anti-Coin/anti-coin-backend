@@ -1,6 +1,6 @@
 # State Field Inventory Audit
 
-- Last Updated: 2026-03-04
+- Last Updated: 2026-03-05
 - Scope: `manifest`(`manifest.json` -> `manifest.v2`), `runtime_metrics.json`, `prediction_health.json`, `symbol_activation.json`, `ingest_watermarks.json`
 - Goal: 조용한 fallback/중복 상태를 줄이고 `Fail-Closed + SoT 명확화`를 위한 제거 후보를 식별한다.
 
@@ -72,10 +72,10 @@
 | Field | Class | Consumers | Audit Verdict | Notes |
 |---|---|---|---|---|
 | `version`, `updated_at` | Diagnostic | ingest/export/ops | Keep | |
-| `entries[symbol].symbol` | Redundant(identity) | ingest/export | Drop candidate | map key와 중복 |
+| `entries[symbol].symbol` | Redundant(identity) | ingest/export | Done (dropped) | `TS-004` 완료(2026-03-05) |
 | `entries[symbol].state` | SoT(onboarding) | ingest/export/admin | Keep | canonical state 추천 |
-| `entries[symbol].visibility` | Derived from state | ingest/export/admin | Derive candidate | 상태 enum에서 계산 가능 |
-| `entries[symbol].is_full_backfilled` | Derived from state+coverage | ingest/export/admin | Derive candidate | 중복 가능성 높음 |
+| `entries[symbol].visibility` | Derived from state | ingest/export/admin | Done (derive-on-read) | `TS-005` 완료(2026-03-05) |
+| `entries[symbol].is_full_backfilled` | Derived from state+coverage | ingest/export/admin | Done (derive-on-read) | `TS-005` 완료(2026-03-05) |
 | `entries[symbol].coverage_start_at/end_at` | SoT(coverage) | ingest/admin | Keep | 운영 판단 근거 |
 | `entries[symbol].exchange_earliest_at` | SoT(reference) | ingest/admin | Keep | full-fill 비교 기준 |
 | `entries[symbol].ready_at` | SoT(event time) | admin/ops | Keep | 전이 시각 추적 |
@@ -90,7 +90,7 @@
 1. P0: 모델/정적산출물 legacy fallback 제거(`model`, `prediction/history dual-write`).
 2. P0: `prediction_health` redundant identity 필드(`symbol`, `timeframe`) 제거.
 3. P1: `manifest.v2` 계약 분리(단일 파일 내 `public` 최소 필드 + `ops` 상세 필드).
-4. P1: `symbol_activation` 정규화(`state` 단일 SoT, `visibility/is_full_backfilled` 파생화).
+4. P1: `symbol_activation` 정규화(`state` 단일 SoT, `visibility/is_full_backfilled` 파생화) — done (2026-03-05, TS-004/005).
 5. P2: `runtime_metrics.recent_cycles` 보존 정책 축소(용량 상한/회전 정책 강화).
 
 ## 5. Keep-By-Design (Do Not Remove)
@@ -101,9 +101,9 @@
 ## 6. Open Questions Before Destructive Cleanup
 1. `manifest.v2.public` 필드 최소셋을 어디까지 고정할지(`degraded` 포함 여부).
 2. `manifest.v2.ops` 보존 기간/용량 상한은 얼마로 둘 것인지.
-3. `symbol_activation`에서 `state`를 단일 SoT로 고정할지, 아니면 `is_full_backfilled`를 단일 SoT로 둘지.
+3. `symbol_activation` SoT는 `state`로 고정했고(`TS-005`), 파생 필드 persisted는 제거했다.
 
-## 7. File Elimination Feasibility (2026-03-04)
+## 7. File Elimination Feasibility (2026-03-05)
 1. `prediction_health.json`
 1. 필드 축소 가능: `entries[key].symbol`, `entries[key].timeframe`는 제거 가능(키와 중복).
 2. 파일 삭제는 현재 비권장: `/status` degraded 신호와 recovery 이력의 owner이므로 즉시 제거 시 상태 정직성 저하 위험.
@@ -115,4 +115,4 @@
 2. 축소 후보: `recent_cycles` 보존 길이 축소.
 4. `symbol_activation.json`
 1. 파일 삭제 비권장: onboarding hide 정책 owner.
-2. 축소 후보: `symbol`, `visibility`, `is_full_backfilled` 파생 전환.
+2. 축소 조치 완료: `symbol`, `visibility`, `is_full_backfilled` persisted 제거(2026-03-05, `TS-004/005`).

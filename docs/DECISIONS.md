@@ -87,6 +87,7 @@
 | D-2026-03-05-80 | Export Failure Hard-Block Lock | export 실패는 soft-stale로 완화하지 않고, 영향 symbol/timeframe의 `serve_allowed=false`를 강제한다. prediction 실패는 `last-good + degraded`를 유지하되, export 실패는 사용자 플레인 publish 계약 위반으로 분리 취급한다. | 사용자 플레인 경계 정책이 변경되거나, export 경로의 원자적 성공 증거 모델이 바뀔 때 |
 | D-2026-03-05-81 | Train Artifact Canonical-Only Lock | `worker-train` 산출물 저장 경로를 canonical-only로 잠근다(`model_{symbol}_{timeframe}.json`, `.meta.json`). primary legacy sidecar write(`model_{symbol}.json`, `.meta.json`)는 제거해 model contract와 운영 문서의 드리프트를 축소한다. | legacy consumer 재도입 요구, 또는 롤백 호환성 요구가 발생할 때 |
 | D-2026-03-05-82 | Storage Guard Unknown-Level Fail-Closed Lock | storage guard level 정규화에서 unknown 값은 `normal`로 완화하지 않고 `block`으로 강등한다(`coerce_storage_guard_level`). unknown 입력을 fail-open으로 처리하지 않도록 잠근다. | storage watermark taxonomy가 확장되거나, unknown 처리 정책을 명시적으로 변경할 때 |
+| D-2026-03-05-83 | Symbol Activation State-Only Persistence Lock | `symbol_activation.json` persisted payload는 key-identity 기반으로 `state/coverage*/ready_at/updated_at`만 저장한다. `symbol/visibility/is_full_backfilled`는 파일에서 제거하고, 로드/manifest 경로에서 state 기반 파생으로 복원한다. | admin/manifest가 state 외 필드의 persisted SoT를 요구하거나, activation 스키마 버전 업이 필요할 때 |
 
 ## 3. Decision Operation Policy
 1. 활성 문서는 요약만 유지한다(상세 서술 금지).

@@ -139,10 +139,7 @@ class SymbolActivationEntryPayload(TypedDict):
     symbol_activation.json entries 내부 단일 row payload.
     """
 
-    symbol: str
     state: str
-    visibility: str
-    is_full_backfilled: bool
     coverage_start_at: str | None
     coverage_end_at: str | None
     exchange_earliest_at: str | None
@@ -286,10 +283,7 @@ class SymbolActivationSnapshot:
         """
         updated_at_text = format_utc_datetime(self.updated_at)
         return {
-            "symbol": self.symbol,
             "state": self.state.value,
-            "visibility": self.visibility.value,
-            "is_full_backfilled": self.is_full_backfilled,
             "coverage_start_at": format_utc_datetime(self.coverage_start_at),
             "coverage_end_at": format_utc_datetime(self.coverage_end_at),
             "exchange_earliest_at": format_utc_datetime(self.exchange_earliest_at),

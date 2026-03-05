@@ -13,12 +13,14 @@ from scripts.pipeline_worker import (
     _evaluate_underfill_rebootstrap,
     _fetch_ohlcv_paginated,
     _lookback_days_for_timeframe,
+    _load_symbol_activation,
     _load_watermark_entries,
     _minimum_required_lookback_rows,
     _record_ingest_outcome_state,
     _refill_detected_gaps,
     _run_ingest_timeframe_step,
     _run_publish_timeframe_step,
+    _save_symbol_activation,
     _save_watermark_entries,
     WorkerPersistentState,
     append_runtime_cycle_metrics,
@@ -217,6 +219,39 @@ def test_symbol_activation_snapshot_derives_flags_from_state_when_conflicted():
     assert snapshot.state.value == "backfilling"
     assert snapshot.visibility.value == "hidden_backfilling"
     assert snapshot.is_full_backfilled is False
+
+
+def test_symbol_activation_store_persists_state_only_fields(tmp_path):
+    symbol = "BTC/USDT"
+    path = tmp_path / "symbol_activation.json"
+    now = datetime(2026, 3, 5, 12, 0, tzinfo=timezone.utc)
+    snapshot = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "state": "ready_for_serving",
+            "coverage_start_at": "2026-03-01T00:00:00Z",
+            "coverage_end_at": "2026-03-05T12:00:00Z",
+            "exchange_earliest_at": "2020-01-01T00:00:00Z",
+            "ready_at": "2026-03-05T11:59:00Z",
+            "updated_at": "2026-03-05T12:00:00Z",
+        },
+        fallback_now=now,
+    )
+
+    _save_symbol_activation({symbol: snapshot}, path=path)
+    payload = json.loads(path.read_text())
+    entry = payload["entries"][symbol]
+
+    assert entry["state"] == "ready_for_serving"
+    assert "symbol" not in entry
+    assert "visibility" not in entry
+    assert "is_full_backfilled" not in entry
+
+    loaded = _load_symbol_activation(path=path)
+    loaded_snapshot = loaded[symbol]
+    assert loaded_snapshot.state.value == "ready_for_serving"
+    assert loaded_snapshot.visibility.value == "visible"
+    assert loaded_snapshot.is_full_backfilled is True
 
 
 def test_prediction_enabled_for_timeframe_respects_disabled_set(monkeypatch):
@@ -1275,8 +1310,6 @@ def test_build_runtime_manifest_marks_hidden_symbol_unservable(tmp_path):
         symbol_activation_entries={
             symbol: {
                 "state": "backfilling",
-                "visibility": "hidden_backfilling",
-                "is_full_backfilled": False,
                 "coverage_start_at": "2026-01-01T00:00:00Z",
                 "coverage_end_at": "2026-02-13T11:00:00Z",
             }

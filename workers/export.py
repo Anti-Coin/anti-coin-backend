@@ -12,6 +12,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from utils.pipeline_contracts import SymbolActivationSnapshot, format_utc_datetime
 from utils.serve_policy import evaluate_serve_allowed
 
 
@@ -81,7 +82,9 @@ def build_runtime_manifest(
     now: datetime | None = None,
     static_dir: Path | None = None,
     prediction_health_path: Path | None = None,
-    symbol_activation_entries: dict[str, dict] | None = None,
+    symbol_activation_entries: (
+        dict[str, SymbolActivationSnapshot | dict] | None
+    ) = None,
 ) -> dict:
     """
     런타임 manifest payload를 생성한다.
@@ -118,16 +121,25 @@ def build_runtime_manifest(
     visible_symbols: set[str] = set()
 
     for symbol in symbols:
-        activation = activation_entries.get(symbol, {})
-        visibility = (
-            "visible"
-            if activation.get("visibility") != "hidden_backfilling"
-            else "hidden_backfilling"
-        )
-        symbol_state = activation.get("state", "ready_for_serving")
-        is_full_backfilled = bool(
-            activation.get("is_full_backfilled", visibility == "visible")
-        )
+        raw_activation = activation_entries.get(symbol)
+        if raw_activation is None:
+            activation_snapshot = SymbolActivationSnapshot.from_payload(
+                symbol=symbol,
+                payload={"state": "ready_for_serving"},
+                fallback_now=resolved_now,
+            )
+        elif isinstance(raw_activation, SymbolActivationSnapshot):
+            activation_snapshot = raw_activation
+        else:
+            activation_snapshot = SymbolActivationSnapshot.from_payload(
+                symbol=symbol,
+                payload=raw_activation if isinstance(raw_activation, dict) else {},
+                fallback_now=resolved_now,
+            )
+
+        visibility = activation_snapshot.visibility.value
+        symbol_state = activation_snapshot.state.value
+        is_full_backfilled = activation_snapshot.is_full_backfilled
         if visibility == "visible":
             visible_symbols.add(symbol)
         symbol_state_counts[symbol_state] = (
@@ -201,10 +213,14 @@ def build_runtime_manifest(
                     "visibility": visibility,
                     "symbol_state": symbol_state,
                     "is_full_backfilled": is_full_backfilled,
-                    "coverage_start_at": activation.get("coverage_start_at"),
-                    "coverage_end_at": activation.get("coverage_end_at"),
-                    "exchange_earliest_at": activation.get(
-                        "exchange_earliest_at"
+                    "coverage_start_at": format_utc_datetime(
+                        activation_snapshot.coverage_start_at
+                    ),
+                    "coverage_end_at": format_utc_datetime(
+                        activation_snapshot.coverage_end_at
+                    ),
+                    "exchange_earliest_at": format_utc_datetime(
+                        activation_snapshot.exchange_earliest_at
                     ),
                     "serve_allowed": serve_allowed,
                 }

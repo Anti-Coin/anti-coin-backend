@@ -273,10 +273,7 @@ def _load_symbol_activation(
         "updated_at": "2022-01-01T00:00:00Z",
         "entries": {
           "BTC/USDT": {
-            "symbol": "BTC/USDT",
             "state": "ready_for_serving",
-            "visibility": "visible",
-            "is_full_backfilled": true,
             "coverage_start_at": "2017-08-17T04:00:00Z",
             "coverage_end_at": "2026-02-17T08:00:00Z",
             "exchange_earliest_at": "2017-08-17T04:00:00Z",
@@ -377,10 +374,7 @@ def _default_symbol_activation_entry(
     return SymbolActivationSnapshot.from_payload(
         symbol=symbol,
         payload={
-            "symbol": symbol,
             "state": "registered",
-            "visibility": "hidden_backfilling",
-            "is_full_backfilled": False,
             "coverage_start_at": None,
             "coverage_end_at": None,
             "exchange_earliest_at": None,
