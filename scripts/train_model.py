@@ -23,8 +23,8 @@ from prophet.serialize import model_to_json
 
 from utils.file_io import atomic_write_json
 from utils.model_store import (
-    resolve_model_metadata_paths,
-    resolve_model_paths,
+    resolve_canonical_model_metadata_path,
+    resolve_canonical_model_path,
 )
 from utils.config import PRIMARY_TIMEFRAME, TARGET_SYMBOLS
 
@@ -60,23 +60,15 @@ def _parse_env_int(name: str, *, default: int) -> int:
 
 
 def _resolve_model_paths(symbol: str, timeframe: str) -> tuple[Path, Path | None]:
-    paths = resolve_model_paths(
-        MODELS_DIR,
-        symbol,
-        timeframe,
-        primary_timeframe=PRIMARY_TIMEFRAME,
-    )
-    return paths.canonical, paths.legacy
+    canonical_path = resolve_canonical_model_path(MODELS_DIR, symbol, timeframe)
+    return canonical_path, None
 
 
 def _resolve_model_metadata_paths(symbol: str, timeframe: str) -> tuple[Path, Path | None]:
-    paths = resolve_model_metadata_paths(
-        MODELS_DIR,
-        symbol,
-        timeframe,
-        primary_timeframe=PRIMARY_TIMEFRAME,
+    canonical_path = resolve_canonical_model_metadata_path(
+        MODELS_DIR, symbol, timeframe
     )
-    return paths.canonical, paths.legacy
+    return canonical_path, None
 
 
 def _resolve_mlflow_tracking_uri() -> str:
@@ -223,7 +215,7 @@ def train_and_save(
         model = Prophet(daily_seasonality=True)
         model.fit(train_df)
 
-        # 저장 (canonical은 timeframe suffix 고정, primary는 legacy도 동시 기록)
+        # 저장 (canonical-only)
         MODELS_DIR.mkdir(parents=True, exist_ok=True)
         canonical_path, legacy_path = _resolve_model_paths(symbol, timeframe)
         serialized_model = model_to_json(model)
@@ -232,9 +224,6 @@ def train_and_save(
         ]
         with open(canonical_path, "w") as fout:
             fout.write(serialized_model)
-        if legacy_path is not None:
-            with open(legacy_path, "w") as fout:
-                fout.write(serialized_model)
 
         metadata = _build_model_metadata(
             run_id=run_id,
@@ -250,22 +239,14 @@ def train_and_save(
             symbol, timeframe
         )
         atomic_write_json(canonical_meta_path, metadata, indent=2)
-        if legacy_meta_path is not None:
-            atomic_write_json(legacy_meta_path, metadata, indent=2)
 
         mlflow.log_param("model_version", model_version)
         mlflow.log_dict(metadata, "run_metadata.json")
         mlflow.log_artifact(str(canonical_path), artifact_path="models")
-        if legacy_path is not None:
-            mlflow.log_artifact(str(legacy_path), artifact_path="models")
         mlflow.log_artifact(str(canonical_meta_path), artifact_path="models")
-        if legacy_meta_path is not None:
-            mlflow.log_artifact(str(legacy_meta_path), artifact_path="models")
         mlflow.set_tag("train_status", "ok")
 
         print(f"[{canonical_path}] 모델 저장 완료!")
-        if legacy_path is not None:
-            print(f"[{legacy_path}] legacy 모델 동기화 완료!")
         return metadata
 
 

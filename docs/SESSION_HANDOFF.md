@@ -1,6 +1,6 @@
 # Coin Predict Session Handoff
 
-- Last Updated: 2026-03-04
+- Last Updated: 2026-03-05
 - Branch: `dev`
 
 ## 1. Current Snapshot
@@ -19,9 +19,9 @@
 1. cadence: `UTC boundary + detection gate`
 2. worker topology: `worker-ingest` 단일 실행 경로(ingest -> publish in-cycle causal chain)
 3. publish trigger: ingest stage in-cycle 후 publish reconcile 실행
-4. monitor consistency current baseline: `symbol+timeframe` 기준 + `PRIMARY_TIMEFRAME` legacy fallback
+4. monitor consistency current baseline: `symbol+timeframe` 기준(legacy query fallback 제거)
 5. ingest routing: `1d/1w/1M` 포함 전 timeframe direct fetch(derived downsample 경로 제거)
-6. model artifact boundary: `symbol+timeframe canonical` + primary legacy fallback(`D-2026-03-03-71`)
+6. model artifact boundary: `symbol+timeframe canonical` (train/predict canonical-only)
 7. next refactor lock: `/status` 판정은 monitor 기준 parity로 전환(`D-046`), scheduler는 `boundary` 단일 모드로 잠금(`D-047`)
 
 ## 3. Next Priority Tasks

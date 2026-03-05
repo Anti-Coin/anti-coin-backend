@@ -31,6 +31,15 @@ def resolve_canonical_model_path(
     return models_dir / f"model_{safe_symbol}_{timeframe}.json"
 
 
+def resolve_canonical_model_metadata_path(
+    models_dir: Path,
+    symbol: str,
+    timeframe: str,
+) -> Path:
+    safe_symbol = to_safe_symbol(symbol)
+    return models_dir / f"model_{safe_symbol}_{timeframe}.meta.json"
+
+
 def resolve_model_paths(
     models_dir: Path,
     symbol: str,

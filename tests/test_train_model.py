@@ -38,12 +38,11 @@ def test_parse_env_int_falls_back_to_default(monkeypatch):
     assert train_model._parse_env_int("TRAIN_LOOKBACK_LIMIT", default=500) == 500
 
 
-def test_resolve_model_paths_primary_writes_legacy_path():
+def test_resolve_model_paths_primary_skips_legacy_path():
     canonical, legacy = train_model._resolve_model_paths("BTC/USDT", "1h")
 
     assert canonical.name == "model_BTC_USDT_1h.json"
-    assert legacy is not None
-    assert legacy.name == "model_BTC_USDT.json"
+    assert legacy is None
 
 
 def test_resolve_model_paths_non_primary_skips_legacy_path():
@@ -53,12 +52,11 @@ def test_resolve_model_paths_non_primary_skips_legacy_path():
     assert legacy is None
 
 
-def test_resolve_model_metadata_paths_primary_writes_legacy_path():
+def test_resolve_model_metadata_paths_primary_skips_legacy_path():
     canonical, legacy = train_model._resolve_model_metadata_paths("BTC/USDT", "1h")
 
     assert canonical.name == "model_BTC_USDT_1h.meta.json"
-    assert legacy is not None
-    assert legacy.name == "model_BTC_USDT.meta.json"
+    assert legacy is None
 
 
 def test_resolve_model_metadata_paths_non_primary_skips_legacy_path():
@@ -271,3 +269,5 @@ def test_train_and_save_persists_model_metadata_schema(tmp_path, monkeypatch):
     assert payload["status"] == "ok"
     assert payload["trained_at"].endswith("Z")
     assert payload["model_version"] == result["model_version"]
+    assert not (models_dir / "model_BTC_USDT.json").exists()
+    assert not (models_dir / "model_BTC_USDT.meta.json").exists()

@@ -1,11 +1,10 @@
 # Model Metadata Schema
 
-- Last Updated: 2026-02-26
+- Last Updated: 2026-03-05
 - Scope: D-002 (모델 메타데이터/버전 스키마 정의)
 
 ## 1. Artifact Path
-1. Canonical: `models/model_{SYMBOL}_{TIMEFRAME}.meta.json`
-2. Legacy(primary timeframe only): `models/model_{SYMBOL}.meta.json`
+1. Canonical-only: `models/model_{SYMBOL}_{TIMEFRAME}.meta.json`
 
 ## 2. Schema (v1)
 1. `schema_version` (int): metadata schema version (`1`)

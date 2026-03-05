@@ -1,6 +1,6 @@
 # Coin Predict Context (Minimum)
 
-- Last Updated: 2026-03-04
+- Last Updated: 2026-03-05
 - Purpose: 새 세션에서 최소 토큰으로 현재 상태를 정렬하기 위한 요약
 
 ## 1. Snapshot
@@ -17,7 +17,7 @@
 
 ## 3. Phase D Active Baseline
 1. 현재 런타임 모델 아티팩트 단위는 `symbol+timeframe canonical`이다(`D-2026-03-03-71`).
-2. primary timeframe에는 legacy fallback(`model_{symbol}.json`)을 유지한다.
+2. 학습/추론 모두 canonical 모델/metadata 경로(`model_{symbol}_{timeframe}*.json`)를 사용한다.
 3. shared/dedicated coverage resolver는 `D-011` hold로 남아 있다.
 4. 모델 부재/샘플 부족(`model_missing`/`insufficient_data`)은 상태/사유를 숨기지 않고 노출한다.
 

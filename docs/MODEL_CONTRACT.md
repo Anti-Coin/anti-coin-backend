@@ -26,11 +26,9 @@
 2. Serialization:
    - `prophet.serialize.model_to_json(model)` 사용
 3. Artifact paths:
-   - canonical: `models/model_{SYMBOL}_{TIMEFRAME}.json`
-   - legacy(primary timeframe only): `models/model_{SYMBOL}.json`
+   - canonical-only: `models/model_{SYMBOL}_{TIMEFRAME}.json`
 4. Metadata sidecar paths:
-   - canonical: `models/model_{SYMBOL}_{TIMEFRAME}.meta.json`
-   - legacy(primary timeframe only): `models/model_{SYMBOL}.meta.json`
+   - canonical-only: `models/model_{SYMBOL}_{TIMEFRAME}.meta.json`
 5. Metadata schema:
    - `docs/MODEL_METADATA_SCHEMA.md` (v1)
 

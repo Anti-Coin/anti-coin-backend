@@ -1,6 +1,6 @@
 # Runbook: Standalone Training Job (`worker-train`)
 
-- Last Updated: 2026-03-04
+- Last Updated: 2026-03-05
 - Scope: `C-004` one-shot training execution and rollback
 
 ## 1. Purpose
@@ -29,8 +29,8 @@
 ## 5. Verify
 1. 실행 로그에 `[Train] completed`가 남는지 확인한다.
 2. 산출물 파일 확인:
-   - canonical: `models/model_{SYMBOL}_{TIMEFRAME}.json`
-   - legacy(primary only): `models/model_{SYMBOL}.json`
+   - canonical model: `models/model_{SYMBOL}_{TIMEFRAME}.json`
+   - canonical metadata: `models/model_{SYMBOL}_{TIMEFRAME}.meta.json`
 3. 회귀 테스트:
    - `PYENV_VERSION=coin pytest -q tests/test_train_model.py`
 
