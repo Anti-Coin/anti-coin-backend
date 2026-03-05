@@ -181,18 +181,13 @@ def run_prediction_and_save(
             return "skipped", "insufficient_data"
 
     safe_symbol = symbol.replace("/", "_")
-    model_candidates = [
-        ctx.MODELS_DIR / f"model_{safe_symbol}_{timeframe}.json",
-        ctx.MODELS_DIR / f"model_{safe_symbol}.json",
-    ]
-    # timeframe 전용 모델 우선, 없으면 legacy 단일 모델 fallback.
-    # 이 순서를 유지하면 다중 timeframe 전환 중에도 서비스 중단 없이 점진 전환 가능하다.
-    model_file = next(
-        (candidate for candidate in model_candidates if candidate.exists()),
-        None,
-    )
-    if model_file is None:
-        ctx.logger.warning(f"[{symbol} {timeframe}] 모델 없음")
+    model_file = ctx.MODELS_DIR / f"model_{safe_symbol}_{timeframe}.json"
+    # D-040: legacy 단일 모델 fallback을 제거하고 canonical-only로 잠근다.
+    # canonical 누락은 fail-closed(model_missing)로 처리한다.
+    if not model_file.exists():
+        ctx.logger.warning(
+            f"[{symbol} {timeframe}] canonical model missing: {model_file}"
+        )
         return "failed", "model_missing"
 
     try:

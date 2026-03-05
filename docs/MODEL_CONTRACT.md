@@ -1,7 +1,7 @@
 # Model Contract (Prophet Baseline)
 
-- Last Updated: 2026-02-26
-- Scope: D-001 (`fit/predict/save/load` contract lock)
+- Last Updated: 2026-03-05
+- Scope: D-001 + D-040 (`fit/predict/save/load` contract lock, load fallback 제거)
 - Non-goal: 추상 인터페이스(`BaseModel`) 도입
 
 ## 1. Purpose
@@ -36,13 +36,14 @@
 
 ## 4. Load Contract
 1. Entry point: `workers/predict.py::run_prediction_and_save`
-2. Candidate order:
-   - 1순위: timeframe-specific canonical
-   - 2순위: legacy primary model
+2. Candidate:
+   - timeframe-specific canonical only: `models/model_{SYMBOL}_{TIMEFRAME}.json`
+3. Policy:
+   - canonical 모델이 없으면 legacy를 읽지 않고 fail-closed 처리한다(`model_missing`).
 3. Deserialization:
    - `prophet.serialize.model_from_json(...)` 사용
 4. Failure code:
-   - 파일 미존재 시 `("failed", "model_missing")`
+   - canonical 파일 미존재 시 `("failed", "model_missing")`
 
 ## 5. Predict Contract
 1. Entry point: `workers/predict.py::run_prediction_and_save`
@@ -65,5 +66,5 @@
 1. `tests/test_model_contract.py`
 2. 검증 항목:
    - fit 입력 정규화(`ds` timezone-naive)
-   - load 우선순위(canonical > legacy)
+   - canonical 모델 로드 + legacy-only 상태 fail-closed(`model_missing`)
    - predict 산출물 schema(JSON + Influx) 고정
