@@ -272,7 +272,9 @@ def write_runtime_manifest(
     now: datetime | None = None,
     static_dir: Path | None = None,
     prediction_health_path: Path | None = None,
-    symbol_activation_entries: dict[str, dict] | None = None,
+    symbol_activation_entries: (
+        dict[str, SymbolActivationSnapshot | dict] | None
+    ) = None,
     path: Path | None = None,
 ) -> None:
     """

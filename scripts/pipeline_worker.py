@@ -691,43 +691,6 @@ def run_ingest_step_outcome(
     )
 
 
-def write_runtime_manifest(
-    symbols: list[str],
-    timeframes: list[str],
-    *,
-    now: datetime | None = None,
-    static_dir: Path | None = None,
-    prediction_health_path: Path | None = None,
-    symbol_activation_entries: dict[str, SymbolActivationSnapshot | dict] | None = None,
-    path: Path | None = None,
-) -> None:
-    """
-    runtime manifest 저장 래퍼.
-
-    Called from:
-    - run_worker() export stage 완료 시점
-    """
-    serialized_activation_entries: dict[str, dict] | None = None
-    if symbol_activation_entries is not None:
-        serialized_activation_entries = {}
-        for symbol, entry in symbol_activation_entries.items():
-            if isinstance(entry, SymbolActivationSnapshot):
-                serialized_activation_entries[symbol] = entry.to_payload()
-            elif isinstance(entry, dict):
-                serialized_activation_entries[symbol] = entry
-
-    export_ops.write_runtime_manifest(
-        _ctx(),
-        symbols,
-        timeframes,
-        now=now,
-        static_dir=static_dir,
-        prediction_health_path=prediction_health_path,
-        symbol_activation_entries=serialized_activation_entries,
-        path=path,
-    )
-
-
 def run_prediction_and_save_outcome(
     write_api,
     query_api,
@@ -1414,7 +1377,8 @@ def _persist_cycle_runtime_state(
 
     if run_export_stage:
         try:
-            write_runtime_manifest(
+            export_ops.write_runtime_manifest(
+                _ctx(),
                 TARGET_COINS,
                 TIMEFRAMES,
                 symbol_activation_entries=state.symbol_activation_entries,

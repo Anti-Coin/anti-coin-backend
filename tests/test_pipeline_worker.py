@@ -29,7 +29,6 @@ from scripts.pipeline_worker import (
     run_worker,
     should_block_initial_backfill,
     should_enforce_1m_retention,
-    write_runtime_manifest,
 )
 import scripts.pipeline_worker as pipeline_worker_module
 import scripts.worker_config as worker_config
@@ -37,6 +36,7 @@ from workers.export import (
     build_runtime_manifest as export_build_runtime_manifest,
     save_history_to_json as export_save_history_to_json,
     update_full_history_file as export_update_full_history_file,
+    write_runtime_manifest as export_write_runtime_manifest,
 )
 from workers import ingest as ingest_ops_module
 from workers.ingest import (
@@ -539,7 +539,8 @@ def test_write_runtime_manifest_writes_manifest_file(tmp_path):
     timeframe = "1h"
     manifest_path = tmp_path / "manifest.json"
 
-    write_runtime_manifest(
+    export_write_runtime_manifest(
+        pipeline_worker_module,
         [symbol],
         [timeframe],
         now=datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc),
