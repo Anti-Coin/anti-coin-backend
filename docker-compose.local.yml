@@ -14,6 +14,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.fastapi
+    depends_on:
+      influxdb:
+        condition: service_healthy
 
   streamlit:
     image: coin-local-streamlit:dev
@@ -26,15 +29,26 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
+    depends_on:
+      influxdb:
+        condition: service_healthy
 
   worker-train:
     image: coin-local-worker:dev
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
+    depends_on:
+      influxdb:
+        condition: service_healthy
 
   monitor:
     image: coin-local-worker:dev
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
+    depends_on:
+      influxdb:
+        condition: service_healthy
+      worker-ingest:
+        condition: service_started
