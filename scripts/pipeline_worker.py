@@ -1464,6 +1464,7 @@ def _run_publish_timeframe_step(
             timeframe=timeframe,
             prediction_ok=prediction_ok,
             error=prediction_outcome.error,
+            path=PREDICTION_HEALTH_FILE,
         )
         if is_degraded and not was_degraded:
             logger.warning(

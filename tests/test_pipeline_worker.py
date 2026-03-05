@@ -1864,7 +1864,21 @@ def test_run_publish_timeframe_step_runs_prediction_with_ingest_watermark(
             error=None,
         )
 
-    def fake_upsert_prediction_health(*args, **kwargs):
+    def fake_upsert_prediction_health(
+        ctx,
+        symbol: str,
+        timeframe: str,
+        *,
+        prediction_ok: bool,
+        error: str | None = None,
+        path: Path,
+    ):
+        assert ctx is pipeline_worker_module
+        assert symbol == "BTC/USDT"
+        assert timeframe == "1h"
+        assert prediction_ok is True
+        assert error is None
+        assert path == pipeline_worker_module.PREDICTION_HEALTH_FILE
         calls["health"] += 1
         return {"degraded": False}, False, False
 
