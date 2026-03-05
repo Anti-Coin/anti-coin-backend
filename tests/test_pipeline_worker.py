@@ -36,7 +36,6 @@ from scripts.pipeline_worker import (
     run_ingest_step,
     run_prediction_and_save,
     run_worker,
-    save_history_to_json,
     should_block_initial_backfill,
     should_enforce_1m_retention,
     update_full_history_file,
@@ -45,6 +44,7 @@ from scripts.pipeline_worker import (
 )
 import scripts.pipeline_worker as pipeline_worker_module
 import scripts.worker_config as worker_config
+from workers.export import save_history_to_json as export_save_history_to_json
 from workers.ingest import (
     detect_gaps_from_ms_timestamps,
     fetch_ohlcv_paginated,
@@ -436,7 +436,9 @@ def test_save_history_to_json_writes_timeframe_aware_files(tmp_path, monkeypatch
         ]
     ).set_index("timestamp")
 
-    save_history_to_json(df, "BTC/USDT", "4h")
+    export_save_history_to_json(
+        pipeline_worker_module, df, "BTC/USDT", "4h"
+    )
 
     canonical_path = tmp_path / "history_BTC_USDT_4h.json"
     assert canonical_path.exists()

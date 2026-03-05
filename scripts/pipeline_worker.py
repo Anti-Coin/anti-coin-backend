@@ -998,16 +998,6 @@ def build_symbol_activation_entry(
     )
 
 
-def save_history_to_json(df, symbol, timeframe):
-    """
-    history JSON 저장 래퍼.
-
-    Called from:
-    - update_full_history_file wrapper 경유
-    """
-    export_ops.save_history_to_json(_ctx(), df, symbol, timeframe)
-
-
 def fetch_and_save(
     write_api, symbol, since_ts, timeframe
 ) -> tuple[datetime | None, str]:
