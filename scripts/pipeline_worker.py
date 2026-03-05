@@ -11,7 +11,6 @@ Why this file exists:
 """
 
 import ccxt
-import pandas as pd
 from influxdb_client import InfluxDBClient
 from influxdb_client.client.write_api import SYNCHRONOUS
 import json
@@ -1019,62 +1018,6 @@ def fetch_and_save(
     - run_ingest_step
     """
     return ingest_ops.fetch_and_save(_ctx(), write_api, symbol, since_ts, timeframe)
-
-
-def _fetch_ohlcv_paginated(
-    exchange, symbol: str, timeframe: str, since_ms: int, until_ms: int
-) -> tuple[pd.DataFrame, int]:
-    """
-    거래소 페이지 조회 래퍼.
-
-    Called from:
-    - tests/호환 코드 경유
-    """
-    return ingest_ops.fetch_ohlcv_paginated(
-        _ctx(),
-        exchange=exchange,
-        symbol=symbol,
-        timeframe=timeframe,
-        since_ms=since_ms,
-        until_ms=until_ms,
-    )
-
-
-def _detect_gaps_from_ms_timestamps(timestamps_ms: list[int], timeframe: str):
-    """
-    gap 탐지 래퍼.
-
-    Called from:
-    - tests/호환 코드 경유
-    """
-    return ingest_ops.detect_gaps_from_ms_timestamps(
-        _ctx(), timestamps_ms=timestamps_ms, timeframe=timeframe
-    )
-
-
-def _refill_detected_gaps(
-    exchange,
-    symbol: str,
-    timeframe: str,
-    source_df: pd.DataFrame,
-    gaps,
-    last_closed_ms: int,
-) -> tuple[pd.DataFrame, int]:
-    """
-    gap refill 래퍼.
-
-    Called from:
-    - tests/호환 코드 경유
-    """
-    return ingest_ops.refill_detected_gaps(
-        _ctx(),
-        exchange=exchange,
-        symbol=symbol,
-        timeframe=timeframe,
-        source_df=source_df,
-        gaps=gaps,
-        last_closed_ms=last_closed_ms,
-    )
 
 
 def count_ohlcv_rows(query_api, *, symbol: str, timeframe: str) -> int:

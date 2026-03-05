@@ -8,16 +8,13 @@ import pandas as pd
 import pytest
 
 from scripts.pipeline_worker import (
-    _detect_gaps_from_ms_timestamps,
     _coerce_storage_guard_level,
     _evaluate_underfill_rebootstrap,
-    _fetch_ohlcv_paginated,
     _lookback_days_for_timeframe,
     _load_symbol_activation,
     _load_watermark_entries,
     _minimum_required_lookback_rows,
     _record_ingest_outcome_state,
-    _refill_detected_gaps,
     _run_ingest_timeframe_step,
     _run_publish_timeframe_step,
     _save_symbol_activation,
@@ -46,7 +43,13 @@ from scripts.pipeline_worker import (
     upsert_prediction_health,
     write_runtime_manifest,
 )
+import scripts.pipeline_worker as pipeline_worker_module
 import scripts.worker_config as worker_config
+from workers.ingest import (
+    detect_gaps_from_ms_timestamps,
+    fetch_ohlcv_paginated,
+    refill_detected_gaps,
+)
 from utils.serve_policy import evaluate_serve_allowed
 from utils.ingest_state import IngestStateStore
 from utils.pipeline_contracts import (
@@ -104,7 +107,8 @@ def test_fetch_ohlcv_paginated_respects_until_ms():
     ]
     exchange = FakeExchange(candles)
 
-    loaded, pages = _fetch_ohlcv_paginated(
+    loaded, pages = fetch_ohlcv_paginated(
+        pipeline_worker_module,
         exchange=exchange,
         symbol="BTC/USDT",
         timeframe="1h",
@@ -136,11 +140,14 @@ def test_refill_detected_gaps_recovers_missing_candle():
         ],
         columns=["timestamp", "open", "high", "low", "close", "volume"],
     )
-    gaps = _detect_gaps_from_ms_timestamps(
-        source_df["timestamp"].tolist(), timeframe="1h"
+    gaps = detect_gaps_from_ms_timestamps(
+        pipeline_worker_module,
+        source_df["timestamp"].tolist(),
+        timeframe="1h",
     )
 
-    merged, refill_pages = _refill_detected_gaps(
+    merged, refill_pages = refill_detected_gaps(
+        pipeline_worker_module,
         exchange=exchange,
         symbol="BTC/USDT",
         timeframe="1h",
