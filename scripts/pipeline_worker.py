@@ -760,18 +760,6 @@ def write_runtime_manifest(
     )
 
 
-def get_last_timestamp(query_api, symbol, timeframe, *, full_range: bool = False):
-    """
-    DB latest 조회 래퍼.
-
-    Called from:
-    - run_worker() ingest/detection/activation 판단
-    """
-    return ingest_ops.get_last_timestamp(
-        _ctx(), query_api, symbol, timeframe, full_range=full_range
-    )
-
-
 def run_prediction_and_save_outcome(
     write_api,
     query_api,
@@ -1128,7 +1116,8 @@ def _run_ingest_timeframe_step(
     4) ingest watermark는 메모리에서만 전진시키고 cycle 종료에 파일 커밋한다.
     """
     state_since = ingest_state_store.get_last_closed(symbol, timeframe)
-    last_time = get_last_timestamp(
+    last_time = ingest_ops.get_last_timestamp(
+        _ctx(),
         query_api,
         symbol,
         timeframe,

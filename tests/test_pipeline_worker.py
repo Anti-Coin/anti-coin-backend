@@ -22,7 +22,6 @@ from scripts.pipeline_worker import (
     append_runtime_cycle_metrics,
     enforce_1m_retention,
     get_disk_usage_percent,
-    get_last_timestamp,
     initialize_boundary_schedule,
     prediction_enabled_for_timeframe,
     resolve_boundary_due_timeframes,
@@ -1254,7 +1253,8 @@ def test_get_last_timestamp_queries_only_timeframe_rows(
         fake_query_last_timestamp,
     )
 
-    result = get_last_timestamp(
+    result = ingest_ops_module.get_last_timestamp(
+        pipeline_worker_module,
         query_api=object(),
         symbol="BTC/USDT",
         timeframe="1h",
@@ -1484,7 +1484,7 @@ def test_run_ingest_timeframe_step_blocked_storage_guard_stops_without_watermark
         lambda **kwargs: (None, "blocked_storage_guard"),
     )
     monkeypatch.setattr(
-        "scripts.pipeline_worker.get_last_timestamp",
+        "workers.ingest.get_last_timestamp",
         lambda *args, **kwargs: None,
     )
 
@@ -1545,7 +1545,7 @@ def test_run_ingest_timeframe_step_reads_db_last_with_full_range_for_1d(
         return None
 
     monkeypatch.setattr(
-        "scripts.pipeline_worker.get_last_timestamp",
+        "workers.ingest.get_last_timestamp",
         fake_get_last_timestamp,
     )
     monkeypatch.setattr(
@@ -1603,7 +1603,7 @@ def test_run_ingest_timeframe_step_long_tf_skip_syncs_watermark_and_allows_publi
     )
 
     monkeypatch.setattr(
-        "scripts.pipeline_worker.get_last_timestamp",
+        "workers.ingest.get_last_timestamp",
         lambda *args, **kwargs: latest_saved_at,
     )
     monkeypatch.setattr(
@@ -1666,7 +1666,7 @@ def test_run_ingest_timeframe_step_non_materialized_skip_still_blocks_publish(
     )
 
     monkeypatch.setattr(
-        "scripts.pipeline_worker.get_last_timestamp",
+        "workers.ingest.get_last_timestamp",
         lambda *args, **kwargs: datetime(2026, 2, 19, 11, 0, tzinfo=timezone.utc),
     )
     monkeypatch.setattr(
