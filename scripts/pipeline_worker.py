@@ -98,7 +98,6 @@ from scripts.worker_config import (  # noqa: F401
     SYMBOL_ACTIVATION_SOURCE_TIMEFRAME,
     TARGET_COINS,
     TIMEFRAMES,
-    VALID_WORKER_SCHEDULER_MODES,
     WORKER_SCHEDULER_MODE,
 )
 from scripts.worker_guards import (  # noqa: F401
@@ -2077,12 +2076,11 @@ def run_worker():
     4) runtime metrics 기록 및 sleep/overrun 처리
     """
     scheduler_mode = WORKER_SCHEDULER_MODE
-    if scheduler_mode not in VALID_WORKER_SCHEDULER_MODES:
-        logger.warning(
-            "[Scheduler] unsupported WORKER_SCHEDULER_MODE=%s, fallback to poll_loop.",
-            scheduler_mode,
+    if scheduler_mode != "boundary":
+        raise ValueError(
+            "[Scheduler] unsupported WORKER_SCHEDULER_MODE="
+            f"{scheduler_mode}. expected=boundary"
         )
-        scheduler_mode = "poll_loop"
 
     # D-033: role/mode 실행 매트릭스를 제거하고 단일 실행 경로를 고정한다.
     run_ingest_stage = True

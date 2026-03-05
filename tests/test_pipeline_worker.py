@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from scripts.pipeline_worker import (
     _detect_gaps_from_ms_timestamps,
@@ -31,6 +32,7 @@ from scripts.pipeline_worker import (
     resolve_disk_watermark_level,
     run_ingest_step,
     run_prediction_and_save,
+    run_worker,
     save_history_to_json,
     should_block_initial_backfill,
     should_enforce_1m_retention,
@@ -1558,6 +1560,40 @@ def test_run_ingest_step_routes_long_timeframes_to_exchange_fetch(monkeypatch):
         assert result == "saved"
 
     assert called_timeframes == ["1d", "1w", "1M"]
+
+
+def test_run_worker_fails_fast_when_scheduler_mode_is_poll_loop(monkeypatch):
+    monkeypatch.setattr("scripts.pipeline_worker.WORKER_SCHEDULER_MODE", "poll_loop")
+
+    class _SentinelInfluxClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("InfluxDBClient should not be created")
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.InfluxDBClient", _SentinelInfluxClient
+    )
+
+    with pytest.raises(ValueError) as exc:
+        run_worker()
+
+    assert "expected=boundary" in str(exc.value)
+
+
+def test_run_worker_fails_fast_when_scheduler_mode_is_invalid(monkeypatch):
+    monkeypatch.setattr("scripts.pipeline_worker.WORKER_SCHEDULER_MODE", "invalid")
+
+    class _SentinelInfluxClient:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("InfluxDBClient should not be created")
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.InfluxDBClient", _SentinelInfluxClient
+    )
+
+    with pytest.raises(ValueError) as exc:
+        run_worker()
+
+    assert "expected=boundary" in str(exc.value)
 
 
 def test_run_ingest_step_routes_base_to_exchange_fetch(monkeypatch):
