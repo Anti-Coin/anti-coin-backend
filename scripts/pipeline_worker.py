@@ -760,16 +760,6 @@ def write_runtime_manifest(
     )
 
 
-def get_first_timestamp(query_api, symbol: str, timeframe: str) -> datetime | None:
-    """
-    DB earliest 조회 래퍼.
-
-    Called from:
-    - build_symbol_activation_entry
-    """
-    return ingest_ops.get_first_timestamp(_ctx(), query_api, symbol, timeframe)
-
-
 def get_last_timestamp(query_api, symbol, timeframe, *, full_range: bool = False):
     """
     DB latest 조회 래퍼.
@@ -1084,7 +1074,12 @@ def _evaluate_underfill_rebootstrap(
 
     # 2) backward coverage: full-fill TF의 historical gap 검사
     if timeframe in DB_FULL_FILL_TIMEFRAMES and exchange_earliest is not None:
-        db_first = get_first_timestamp(query_api, symbol, timeframe)
+        db_first = ingest_ops.get_first_timestamp(
+            _ctx(),
+            query_api,
+            symbol,
+            timeframe,
+        )
         if db_first is not None and db_first > exchange_earliest + timedelta(
             hours=FULL_BACKFILL_TOLERANCE_HOURS
         ):

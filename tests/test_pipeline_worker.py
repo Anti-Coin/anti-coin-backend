@@ -21,7 +21,6 @@ from scripts.pipeline_worker import (
     WorkerPersistentState,
     append_runtime_cycle_metrics,
     enforce_1m_retention,
-    get_first_timestamp,
     get_disk_usage_percent,
     get_last_timestamp,
     initialize_boundary_schedule,
@@ -1185,7 +1184,7 @@ def test_evaluate_underfill_rebootstrap_detects_backward_gap(monkeypatch):
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "scripts.pipeline_worker.get_first_timestamp",
+        "workers.ingest.get_first_timestamp",
         lambda *args, **kwargs: db_first,
     )
 
@@ -1209,7 +1208,7 @@ def test_evaluate_underfill_rebootstrap_skips_when_filled(monkeypatch):
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-        "scripts.pipeline_worker.get_first_timestamp",
+        "workers.ingest.get_first_timestamp",
         lambda *args, **kwargs: db_first,
     )
 
@@ -1282,7 +1281,8 @@ def test_get_first_timestamp_queries_only_timeframe_rows(
         fake_query_first_timestamp,
     )
 
-    result = get_first_timestamp(
+    result = ingest_ops_module.get_first_timestamp(
+        pipeline_worker_module,
         query_api=object(),
         symbol="BTC/USDT",
         timeframe="1h",
