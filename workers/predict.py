@@ -14,6 +14,7 @@ from pathlib import Path
 import pandas as pd
 from prophet.serialize import model_from_json
 
+from workers import ingest as ingest_ops
 from utils.model_store import resolve_canonical_model_path
 from utils.prediction_health_store import (
     load_prediction_health_entries,
@@ -157,8 +158,11 @@ def run_prediction_and_save(
     # ── D-010: min sample gate ──
     min_sample = ctx.MIN_SAMPLE_BY_TIMEFRAME.get(timeframe)
     if min_sample is not None:
-        sample_count = ctx.count_ohlcv_rows(
-            query_api, symbol=symbol, timeframe=timeframe
+        sample_count = ingest_ops.count_ohlcv_rows(
+            ctx,
+            query_api,
+            symbol=symbol,
+            timeframe=timeframe,
         )
         if sample_count < min_sample:
             ctx.logger.info(

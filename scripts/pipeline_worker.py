@@ -879,18 +879,6 @@ def get_last_timestamp(query_api, symbol, timeframe, *, full_range: bool = False
     )
 
 
-def count_ohlcv_rows(query_api, *, symbol: str, timeframe: str) -> int:
-    """
-    OHLCV 총 행 수 조회 래퍼.
-
-    Called from:
-    - workers.predict.run_prediction_and_save (D-010 min sample gate)
-    """
-    return ingest_ops.count_ohlcv_rows(
-        _ctx(), query_api, symbol=symbol, timeframe=timeframe
-    )
-
-
 def run_prediction_and_save(
     write_api, query_api, symbol, timeframe
 ) -> tuple[str, str | None]:

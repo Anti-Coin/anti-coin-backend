@@ -352,8 +352,8 @@ def test_min_sample_gate_blocks_insufficient_data(monkeypatch):
     )
     # count_ohlcv_rows가 미달 값을 반환하도록 monkeypatch
     monkeypatch.setattr(
-        "scripts.pipeline_worker.count_ohlcv_rows",
-        lambda query_api, *, symbol, timeframe: 50,
+        "workers.ingest.count_ohlcv_rows",
+        lambda ctx, query_api, *, symbol, timeframe: 50,
     )
     result, error = run_prediction_and_save(
         write_api=None,
@@ -376,8 +376,8 @@ def test_min_sample_gate_allows_sufficient_data(monkeypatch):
         {"1d": 120},
     )
     monkeypatch.setattr(
-        "scripts.pipeline_worker.count_ohlcv_rows",
-        lambda query_api, *, symbol, timeframe: 500,
+        "workers.ingest.count_ohlcv_rows",
+        lambda ctx, query_api, *, symbol, timeframe: 500,
     )
     monkeypatch.setattr(
         "scripts.pipeline_worker.MODELS_DIR",
