@@ -747,41 +747,6 @@ def run_ingest_step_outcome(
     )
 
 
-def build_runtime_manifest(
-    symbols: list[str],
-    timeframes: list[str],
-    *,
-    now: datetime | None = None,
-    static_dir: Path | None = None,
-    prediction_health_path: Path | None = None,
-    symbol_activation_entries: dict[str, SymbolActivationSnapshot | dict] | None = None,
-) -> dict:
-    """
-    runtime manifest 생성 래퍼.
-
-    Called from:
-    - write_runtime_manifest
-    """
-    serialized_activation_entries: dict[str, dict] | None = None
-    if symbol_activation_entries is not None:
-        serialized_activation_entries = {}
-        for symbol, entry in symbol_activation_entries.items():
-            if isinstance(entry, SymbolActivationSnapshot):
-                serialized_activation_entries[symbol] = entry.to_payload()
-            elif isinstance(entry, dict):
-                serialized_activation_entries[symbol] = entry
-
-    return export_ops.build_runtime_manifest(
-        _ctx(),
-        symbols,
-        timeframes,
-        now=now,
-        static_dir=static_dir,
-        prediction_health_path=prediction_health_path,
-        symbol_activation_entries=serialized_activation_entries,
-    )
-
-
 def write_runtime_manifest(
     symbols: list[str],
     timeframes: list[str],

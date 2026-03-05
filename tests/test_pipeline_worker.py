@@ -21,7 +21,6 @@ from scripts.pipeline_worker import (
     _save_watermark_entries,
     WorkerPersistentState,
     append_runtime_cycle_metrics,
-    build_runtime_manifest,
     enforce_1m_retention,
     get_first_timestamp,
     get_disk_usage_percent,
@@ -39,6 +38,7 @@ from scripts.pipeline_worker import (
 import scripts.pipeline_worker as pipeline_worker_module
 import scripts.worker_config as worker_config
 from workers.export import (
+    build_runtime_manifest as export_build_runtime_manifest,
     save_history_to_json as export_save_history_to_json,
     update_full_history_file as export_update_full_history_file,
 )
@@ -505,7 +505,8 @@ def test_build_runtime_manifest_merges_freshness_and_health(tmp_path):
         )
     )
 
-    manifest = build_runtime_manifest(
+    manifest = export_build_runtime_manifest(
+        pipeline_worker_module,
         [symbol],
         [timeframe],
         now=now,
@@ -1323,7 +1324,8 @@ def test_build_runtime_manifest_marks_hidden_symbol_unservable(tmp_path):
         )
     )
 
-    manifest = build_runtime_manifest(
+    manifest = export_build_runtime_manifest(
+        pipeline_worker_module,
         [symbol],
         [timeframe],
         now=now,
