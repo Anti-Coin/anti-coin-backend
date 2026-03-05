@@ -647,30 +647,6 @@ def append_runtime_cycle_metrics(
     return summary
 
 
-def upsert_prediction_health(
-    symbol: str,
-    timeframe: str,
-    *,
-    prediction_ok: bool,
-    error: str | None = None,
-    path: Path = PREDICTION_HEALTH_FILE,
-) -> tuple[dict, bool, bool]:
-    """
-    prediction health 업데이트 래퍼.
-
-    Called from:
-    - run_worker() predict stage 결과 처리
-    """
-    return predict_ops.upsert_prediction_health(
-        _ctx(),
-        symbol=symbol,
-        timeframe=timeframe,
-        prediction_ok=prediction_ok,
-        error=error,
-        path=path,
-    )
-
-
 def _lookback_days_for_timeframe(timeframe: str) -> int:
     """
     timeframe별 기본 조회/초기 백필 범위를 반환한다.
@@ -912,16 +888,6 @@ def run_prediction_and_save_outcome(
         result=parse_prediction_execution_result(raw_result),
         error=prediction_error,
     )
-
-
-def update_full_history_file(query_api, symbol, timeframe) -> bool:
-    """
-    history export 실행 래퍼.
-
-    Called from:
-    - run_worker() export stage
-    """
-    return export_ops.update_full_history_file(_ctx(), query_api, symbol, timeframe)
 
 
 @dataclass
@@ -1464,7 +1430,12 @@ def _run_publish_timeframe_step(
                 cycle_export_gate_skip_counts.get(reason, 0) + 1
             )
         else:
-            export_ok = update_full_history_file(query_api, symbol, timeframe)
+            export_ok = export_ops.update_full_history_file(
+                _ctx(),
+                query_api,
+                symbol,
+                timeframe,
+            )
             if not export_ok:
                 _log_stage_failure_context(
                     "export",
@@ -1514,9 +1485,10 @@ def _run_publish_timeframe_step(
             return
 
         prediction_ok = prediction_outcome.result == PredictionExecutionResult.OK
-        health, was_degraded, is_degraded = upsert_prediction_health(
-            symbol,
-            timeframe,
+        health, was_degraded, is_degraded = predict_ops.upsert_prediction_health(
+            _ctx(),
+            symbol=symbol,
+            timeframe=timeframe,
             prediction_ok=prediction_ok,
             error=prediction_outcome.error,
         )

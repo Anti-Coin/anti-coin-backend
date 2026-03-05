@@ -36,13 +36,14 @@ from scripts.pipeline_worker import (
     run_worker,
     should_block_initial_backfill,
     should_enforce_1m_retention,
-    update_full_history_file,
-    upsert_prediction_health,
     write_runtime_manifest,
 )
 import scripts.pipeline_worker as pipeline_worker_module
 import scripts.worker_config as worker_config
-from workers.export import save_history_to_json as export_save_history_to_json
+from workers.export import (
+    save_history_to_json as export_save_history_to_json,
+    update_full_history_file as export_update_full_history_file,
+)
 from workers.ingest import (
     evaluate_detection_gate as ingest_evaluate_detection_gate,
     detect_gaps_from_ms_timestamps,
@@ -50,6 +51,7 @@ from workers.ingest import (
     get_exchange_latest_closed_timestamp as ingest_get_exchange_latest_closed_timestamp,
     refill_detected_gaps,
 )
+from workers.predict import upsert_prediction_health as predict_upsert_prediction_health
 from utils.serve_policy import evaluate_serve_allowed
 from utils.ingest_state import IngestStateStore
 from utils.pipeline_contracts import (
@@ -168,9 +170,10 @@ def test_refill_detected_gaps_recovers_missing_candle():
 def test_upsert_prediction_health_tracks_failure_and_recovery(tmp_path):
     health_path = tmp_path / "prediction_health.json"
 
-    first, was_degraded, is_degraded = upsert_prediction_health(
-        "BTC/USDT",
-        "1h",
+    first, was_degraded, is_degraded = predict_upsert_prediction_health(
+        pipeline_worker_module,
+        symbol="BTC/USDT",
+        timeframe="1h",
         prediction_ok=False,
         error="model_missing",
         path=health_path,
@@ -181,9 +184,10 @@ def test_upsert_prediction_health_tracks_failure_and_recovery(tmp_path):
     assert first["last_success_at"] is None
     assert first["last_error"] == "model_missing"
 
-    second, was_degraded, is_degraded = upsert_prediction_health(
-        "BTC/USDT",
-        "1h",
+    second, was_degraded, is_degraded = predict_upsert_prediction_health(
+        pipeline_worker_module,
+        symbol="BTC/USDT",
+        timeframe="1h",
         prediction_ok=False,
         error="model_missing",
         path=health_path,
@@ -192,9 +196,10 @@ def test_upsert_prediction_health_tracks_failure_and_recovery(tmp_path):
     assert is_degraded is True
     assert second["consecutive_failures"] == 2
 
-    third, was_degraded, is_degraded = upsert_prediction_health(
-        "BTC/USDT",
-        "1h",
+    third, was_degraded, is_degraded = predict_upsert_prediction_health(
+        pipeline_worker_module,
+        symbol="BTC/USDT",
+        timeframe="1h",
         prediction_ok=True,
         path=health_path,
     )
@@ -1790,14 +1795,16 @@ def test_run_publish_timeframe_step_runs_export_with_ingest_watermark(
     )
     calls = {"export": 0}
 
-    def fake_update_full_history_file(query_api, target_symbol, target_timeframe):
+    def fake_update_full_history_file(
+        ctx, query_api, target_symbol, target_timeframe
+    ):
         assert target_symbol == symbol
         assert target_timeframe == timeframe
         calls["export"] += 1
         return True
 
     monkeypatch.setattr(
-        "scripts.pipeline_worker.update_full_history_file",
+        "workers.export.update_full_history_file",
         fake_update_full_history_file,
     )
 
@@ -1862,7 +1869,7 @@ def test_run_publish_timeframe_step_runs_prediction_with_ingest_watermark(
         fake_run_prediction_and_save_outcome,
     )
     monkeypatch.setattr(
-        "scripts.pipeline_worker.upsert_prediction_health",
+        "workers.predict.upsert_prediction_health",
         fake_upsert_prediction_health,
     )
 
@@ -1964,7 +1971,15 @@ def test_update_full_history_file_uses_full_range_for_long_timeframes(monkeypatc
     )
 
     query_api = FakeQueryAPI()
-    assert update_full_history_file(query_api, "BTC/USDT", "1d") is True
+    assert (
+        export_update_full_history_file(
+            pipeline_worker_module,
+            query_api,
+            "BTC/USDT",
+            "1d",
+        )
+        is True
+    )
     assert "|> range(start: 0)" in captured_queries[0]
 
 
@@ -1994,5 +2009,13 @@ def test_update_full_history_file_keeps_lookback_range_for_1h(monkeypatch):
     )
 
     query_api = FakeQueryAPI()
-    assert update_full_history_file(query_api, "BTC/USDT", "1h") is True
+    assert (
+        export_update_full_history_file(
+            pipeline_worker_module,
+            query_api,
+            "BTC/USDT",
+            "1h",
+        )
+        is True
+    )
     assert "|> range(start: -30d)" in captured_queries[0]
