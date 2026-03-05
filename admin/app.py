@@ -51,7 +51,11 @@ if manifest_payload is None:
     st.error("Manifest payload is empty.")
     st.stop()
 
-summary = manifest_payload.get("summary", {})
+ops_payload = manifest_payload.get("ops")
+if manifest_payload.get("version") == 2 and isinstance(ops_payload, dict):
+    summary = ops_payload.get("summary", {})
+else:
+    summary = manifest_payload.get("summary", {})
 entries_df = flatten_manifest_entries(
     manifest_payload, now=datetime.now(timezone.utc)
 )
