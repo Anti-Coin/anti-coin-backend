@@ -188,6 +188,11 @@ def test_upsert_prediction_health_tracks_failure_and_recovery(tmp_path):
     assert third["last_success_at"] is not None
     assert third["last_failure_at"] is not None
 
+    payload = json.loads(health_path.read_text())
+    stored = payload["entries"]["BTC/USDT|1h"]
+    assert "symbol" not in stored
+    assert "timeframe" not in stored
+
 
 def test_prediction_enabled_for_timeframe_respects_disabled_set(monkeypatch):
     monkeypatch.setattr(

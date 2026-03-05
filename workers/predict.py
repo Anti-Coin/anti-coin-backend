@@ -103,8 +103,6 @@ def upsert_prediction_health(
 
     if prediction_ok:
         updated = {
-            "symbol": symbol,
-            "timeframe": timeframe,
             "degraded": False,
             "last_success_at": now_utc,
             "last_failure_at": previous.get("last_failure_at"),
@@ -119,8 +117,6 @@ def upsert_prediction_health(
         except (TypeError, ValueError):
             previous_failures_int = 0
         updated = {
-            "symbol": symbol,
-            "timeframe": timeframe,
             "degraded": True,
             "last_success_at": previous.get("last_success_at"),
             "last_failure_at": now_utc,
