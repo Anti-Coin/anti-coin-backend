@@ -147,8 +147,8 @@ def coerce_storage_guard_level(raw_level: str) -> StorageGuardLevel:
     try:
         return StorageGuardLevel(raw_level)
     except ValueError:
-        logger.warning(
-            "[Storage Guard] unknown level=%s, fallback to normal.",
+        logger.error(
+            "[Storage Guard] unknown level=%s, fallback to block.",
             raw_level,
         )
-        return StorageGuardLevel.NORMAL
+        return StorageGuardLevel.BLOCK

@@ -90,4 +90,5 @@ MIN_SAMPLE_BY_TIMEFRAME: dict[str, int] = {
 }
 
 # ── Scheduler ──
-WORKER_SCHEDULER_MODE = os.getenv("WORKER_SCHEDULER_MODE", "boundary").strip().lower()
+# D-047/TS-003: scheduler는 boundary 단일 모드로 잠근다.
+WORKER_SCHEDULER_MODE = "boundary"

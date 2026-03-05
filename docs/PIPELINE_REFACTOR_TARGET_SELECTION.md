@@ -21,13 +21,13 @@
 |---|---|---|---|---|---|---|
 | TS-001 | Model IO | `scripts/train_model.py` primary legacy model write(`model_{symbol}.json`) | DONE (2026-03-05) | UC-PRED-01은 canonical 누락 fail-closed를 요구한다. runtime read가 canonical-only면 sidecar legacy write는 계약 노이즈다. | `tests/test_train_model.py`, `tests/test_model_contract.py`, `pytest -q` 통과 | 커밋 단위 revert |
 | TS-002 | Model IO | `scripts/train_model.py` primary legacy metadata write(`model_{symbol}.meta.json`) | DONE (2026-03-05) | TS-001과 동일. metadata도 canonical 단일 계약으로 맞춰 drift를 줄인다. | `tests/test_train_model.py`, `pytest -q` 통과 | 커밋 단위 revert |
-| TS-003 | Scheduler Config | `WORKER_SCHEDULER_MODE` env 노출(`scripts/worker_config.py`) | REMOVE_NEXT | UC-OPS-01은 misconfig fail-fast를 요구한다. 현재 정책이 boundary 고정이면 env 자체를 제거해 오설정 표면을 줄인다. | `tests/test_pipeline_worker.py::test_run_worker_rejects_poll_loop_scheduler_mode` 대체 테스트 + local ingest smoke | 커밋 단위 revert |
+| TS-003 | Scheduler Config | `WORKER_SCHEDULER_MODE` env 노출(`scripts/worker_config.py`) | DONE (2026-03-05) | UC-OPS-01은 misconfig fail-fast를 요구한다. boundary 단일 정책에서 env 표면을 제거해 오설정 입력면을 축소한다. | `tests/test_pipeline_worker.py::test_worker_scheduler_mode_env_is_ignored`, `tests/test_pipeline_worker.py`(68 passed), `pytest -q`(169 passed) | 커밋 단위 revert |
 | TS-004 | State Store | `symbol_activation` persisted redundant field `symbol` | REDUCE_NEXT | key가 identity이므로 중복 필드는 drift 위험만 만든다. | `tests/test_pipeline_worker.py` activation 로드/저장 회귀 + admin 확인 | 커밋 단위 revert |
 | TS-005 | State Store | `symbol_activation` persisted `visibility/is_full_backfilled` | REDUCE_NEXT | `state` 단일 SoT 정책(D-044 2차)과 중복. persisted 파생 제거 후보다. | activation serialize/deserialize 회귀 + manifest.ops 확인 | 커밋 단위 revert |
 | TS-006 | State Store | `ingest_watermarks.json` 파일 자체 | KEEP | UC-ING-02/03, Stage 7 serve gate 인과 경계의 핵심이다. 대체 증거 전 제거 금지. | 기존 회귀 + restart/reconcile smoke | N/A |
 | TS-007 | State Store | `prediction_health` core fields(`degraded`, `last_*`, `consecutive_failures`, `last_error`) | KEEP | UC-PRED-03 last-good+degraded 정책의 owner다. | `/status` + monitor 회귀 | N/A |
 | TS-008 | Runtime Metrics | `runtime_metrics.recent_cycles` window upper bound | REDUCE_NEXT | 파일 보존 비용 최적화 후보. 운영자 관측성을 유지한 채 window 상한만 잠그는 축소다. | runtime metrics 회귀 + 7일 KPI 추출 가능성 확인 | 상한값 되돌림 |
-| TS-009 | Guard | `scripts/worker_guards.py::coerce_storage_guard_level` unknown level -> normal fallback | REDUCE_NEXT | unknown을 normal로 내리면 fail-open 성향이다. storage guard는 보수적으로 강등 차단이 안정적이다. | guard 단위 테스트 추가 + disk guard 로그 검증 | 커밋 단위 revert |
+| TS-009 | Guard | `scripts/worker_guards.py::coerce_storage_guard_level` unknown level -> normal fallback | DONE (2026-03-05) | unknown을 normal로 내리면 fail-open 성향이다. unknown은 `block`으로 강등해 보수 경계로 잠근다. | `tests/test_pipeline_worker.py::test_coerce_storage_guard_level_unknown_falls_back_to_block`, `tests/test_pipeline_worker.py`(68 passed), `pytest -q`(169 passed) | 커밋 단위 revert |
 | TS-010 | API/Ops Interface | `api/main.py` 내 prediction health read 로직 중복 | REDUCE_NEXT | `StateStore` 인터페이스 후보. UC-MON-01/UC-PRED-03 상태 일관성 유지 위해 공통 reader 필요. | `tests/test_api_status.py` + `tests/test_status_monitor.py` | 커밋 단위 revert |
 | TS-011 | Orchestrator | `_ctx()` 기반 monkeypatch 호환 래퍼 군 | REDUCE_NEXT | `D-017` 목표. 조합 책임만 남기기 위해 wrapper 축소 필요. 단, 테스트 계약 동시 이관이 선행 조건이다. | `tests/test_pipeline_worker.py` 전체 + import 경계 테스트 | 단계 커밋 revert |
 | TS-012 | Env Simplification | `PREDICTION_DISABLED_TIMEFRAMES` env | DEFER | 현재 1m 정책이지만 도메인 정책 변경 가능성(비용 대비 위험 낮음). 즉시 제거 우선순위는 낮다. | 정책 확정 후 테스트 재잠금 | N/A |
@@ -43,12 +43,12 @@
 
 ## 5. Proposed Wave Order
 1. Wave A (Low blast radius): TS-001, TS-002, TS-015 (**completed 2026-03-05**)
-2. Wave B (Config/Guard tightening): TS-003, TS-009
+2. Wave B (Config/Guard tightening): TS-003, TS-009 (**completed 2026-03-05**)
 3. Wave C (State schema tightening): TS-004, TS-005
 4. Wave D (Orchestrator surface reduction): TS-010, TS-011
 5. Deferred set: TS-012, TS-013 (정책/인프라 조건 충족 시 재개)
 
 ## 6. Open Questions (Need Owner Confirmation)
 1. TS-001/002 실행 시, primary legacy model/meta sidecar를 즉시 중단해도 운영 런북 호환성 문제가 없는가?
-2. TS-003에서 `WORKER_SCHEDULER_MODE` env를 완전 제거해도, 롤백 시 boundary 외 모드 재도입 계획이 없는가?
+2. TS-003 질문은 해소됐다. 현재 scheduler 경계는 env 비노출 `boundary` 단일값으로 잠금했다.
 3. TS-005에서 `visibility/is_full_backfilled` persisted 제거 시 admin UX가 `state` 기반 파생만으로 충분한가?

@@ -1,3 +1,4 @@
+import importlib
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -8,6 +9,7 @@ import pytest
 
 from scripts.pipeline_worker import (
     _detect_gaps_from_ms_timestamps,
+    _coerce_storage_guard_level,
     _evaluate_underfill_rebootstrap,
     _fetch_ohlcv_paginated,
     _lookback_days_for_timeframe,
@@ -42,6 +44,7 @@ from scripts.pipeline_worker import (
     upsert_prediction_health,
     write_runtime_manifest,
 )
+import scripts.worker_config as worker_config
 from utils.serve_policy import evaluate_serve_allowed
 from utils.ingest_state import IngestStateStore
 from utils.pipeline_contracts import (
@@ -852,6 +855,17 @@ def test_resolve_disk_watermark_level():
     assert resolve_disk_watermark_level(70.0) == "warn"
     assert resolve_disk_watermark_level(85.0) == "critical"
     assert resolve_disk_watermark_level(90.0) == "block"
+
+
+def test_worker_scheduler_mode_env_is_ignored(monkeypatch):
+    monkeypatch.setenv("WORKER_SCHEDULER_MODE", "poll_loop")
+    reloaded = importlib.reload(worker_config)
+    assert reloaded.WORKER_SCHEDULER_MODE == "boundary"
+    importlib.reload(worker_config)
+
+
+def test_coerce_storage_guard_level_unknown_falls_back_to_block():
+    assert _coerce_storage_guard_level("unexpected") == StorageGuardLevel.BLOCK
 
 
 def test_get_disk_usage_percent_uses_shutil_result(monkeypatch):
