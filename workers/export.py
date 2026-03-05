@@ -107,7 +107,8 @@ def build_runtime_manifest(
         path=resolved_prediction_health_path
     )
 
-    entries: list[dict] = []
+    ops_entries: list[dict] = []
+    public_entries: list[dict] = []
     status_counts: dict[str, int] = {}
     degraded_count = 0
     activation_entries = symbol_activation_entries or {}
@@ -163,9 +164,17 @@ def build_runtime_manifest(
             status_counts[snapshot.status] = (
                 status_counts.get(snapshot.status, 0) + 1
             )
-            entries.append(
+            serve_allowed = (
+                # serve_allowed는 fail-open 방지를 위해
+                # visibility + freshness 상태를 동시에 만족해야 한다.
+                visibility == "visible"
+                and snapshot.status in ctx.SERVE_ALLOWED_STATUSES
+            )
+            key = ctx._prediction_health_key(symbol, timeframe)
+
+            ops_entries.append(
                 {
-                    "key": ctx._prediction_health_key(symbol, timeframe),
+                    "key": key,
                     "symbol": symbol,
                     "timeframe": timeframe,
                     "history": {
@@ -194,27 +203,45 @@ def build_runtime_manifest(
                     "exchange_earliest_at": activation.get(
                         "exchange_earliest_at"
                     ),
-                    "serve_allowed": (
-                        # serve_allowed는 fail-open 방지를 위해
-                        # visibility + freshness 상태를 동시에 만족해야 한다.
-                        visibility == "visible"
-                        and snapshot.status in ctx.SERVE_ALLOWED_STATUSES
-                    ),
+                    "serve_allowed": serve_allowed,
+                }
+            )
+            # public 섹션은 사용자 플레인 최소 계약만 노출한다.
+            public_entries.append(
+                {
+                    "key": key,
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "prediction": {
+                        "status": snapshot.status,
+                        "updated_at": snapshot.updated_at,
+                    },
+                    "degraded": degraded,
+                    "visibility": visibility,
+                    "serve_allowed": serve_allowed,
                 }
             )
 
+    hidden_symbol_count = max(0, len(symbols) - len(visible_symbols))
+    common_summary = {
+        "entry_count": len(ops_entries),
+        "status_counts": status_counts,
+        "degraded_count": degraded_count,
+        "visible_symbol_count": len(visible_symbols),
+        "hidden_symbol_count": hidden_symbol_count,
+    }
+    ops_summary = {**common_summary, "symbol_state_counts": symbol_state_counts}
+
+    # Transitional compatibility:
+    # - 기존 consumer가 root entries/summary를 읽더라도 즉시 깨지지 않게 유지한다.
+    # - v2 consumer는 `public`/`ops` 섹션을 우선 사용한다.
     return {
-        "version": 1,
+        "version": 2,
         "generated_at": generated_at,
-        "entries": entries,
-        "summary": {
-            "entry_count": len(entries),
-            "status_counts": status_counts,
-            "degraded_count": degraded_count,
-            "visible_symbol_count": len(visible_symbols),
-            "hidden_symbol_count": max(0, len(symbols) - len(visible_symbols)),
-            "symbol_state_counts": symbol_state_counts,
-        },
+        "public": {"entries": public_entries, "summary": common_summary},
+        "ops": {"entries": ops_entries, "summary": ops_summary},
+        "entries": ops_entries,
+        "summary": ops_summary,
     }
 
 

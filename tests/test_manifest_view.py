@@ -61,6 +61,31 @@ def _sample_manifest_payload() -> dict:
     }
 
 
+def _sample_manifest_v2_payload() -> dict:
+    payload = _sample_manifest_payload()
+    ops_entries = payload["entries"]
+    public_entries = [
+        {
+            "key": item["key"],
+            "symbol": item["symbol"],
+            "timeframe": item["timeframe"],
+            "prediction": item["prediction"],
+            "degraded": item["degraded"],
+            "visibility": item["visibility"],
+            "serve_allowed": item["serve_allowed"],
+        }
+        for item in ops_entries
+    ]
+    return {
+        "version": 2,
+        "generated_at": payload["generated_at"],
+        "public": {"entries": public_entries, "summary": {"entry_count": 2}},
+        "ops": {"entries": ops_entries, "summary": payload["summary"]},
+        "entries": [],
+        "summary": payload["summary"],
+    }
+
+
 def test_flatten_manifest_entries_returns_expected_schema_and_delay():
     now = datetime(2026, 2, 19, 8, 0, tzinfo=timezone.utc)
     df = flatten_manifest_entries(_sample_manifest_payload(), now=now)
@@ -74,6 +99,18 @@ def test_flatten_manifest_entries_returns_expected_schema_and_delay():
     assert one_hour_row["prediction_delay_minutes"] == 60.0
     assert one_hour_row["threshold_soft_minutes"] == 65
     assert one_hour_row["threshold_hard_minutes"] == 130
+
+
+def test_flatten_manifest_entries_prefers_ops_entries_for_v2():
+    now = datetime(2026, 2, 19, 8, 0, tzinfo=timezone.utc)
+    df = flatten_manifest_entries(_sample_manifest_v2_payload(), now=now)
+
+    assert len(df) == 2
+    assert sorted(df["key"].tolist()) == ["BTC/USDT|1d", "BTC/USDT|1h"]
+    assert sorted(df["prediction_failure_count"].fillna(-1).astype(int).tolist()) == [
+        0,
+        2,
+    ]
 
 
 def test_build_status_matrix_marks_degraded_blocked_hidden():

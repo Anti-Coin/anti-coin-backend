@@ -78,7 +78,13 @@ def flatten_manifest_entries(
     else:
         resolved_now = resolved_now.astimezone(timezone.utc)
 
-    entries = manifest_payload.get("entries")
+    entries = None
+    if manifest_payload.get("version") == 2:
+        ops_payload = manifest_payload.get("ops")
+        if isinstance(ops_payload, dict):
+            entries = ops_payload.get("entries")
+    if entries is None:
+        entries = manifest_payload.get("entries")
     if not isinstance(entries, list):
         return pd.DataFrame(columns=MANIFEST_VIEW_COLUMNS)
 

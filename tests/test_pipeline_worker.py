@@ -375,10 +375,14 @@ def test_build_runtime_manifest_merges_freshness_and_health(tmp_path):
         prediction_health_path=health_path,
     )
 
-    assert manifest["version"] == 1
+    assert manifest["version"] == 2
     assert manifest["summary"]["entry_count"] == 1
     assert manifest["summary"]["status_counts"]["fresh"] == 1
     assert manifest["summary"]["degraded_count"] == 1
+    assert "public" in manifest
+    assert "ops" in manifest
+    assert manifest["public"]["entries"][0]["serve_allowed"] is True
+    assert manifest["ops"]["entries"][0]["serve_allowed"] is True
 
     entry = manifest["entries"][0]
     assert entry["key"] == "BTC/USDT|1h"
@@ -408,12 +412,15 @@ def test_write_runtime_manifest_writes_manifest_file(tmp_path):
     )
 
     payload = json.loads(manifest_path.read_text())
-    assert payload["version"] == 1
+    assert payload["version"] == 2
     assert payload["summary"]["entry_count"] == 1
     assert payload["summary"]["status_counts"]["missing"] == 1
     assert payload["summary"]["visible_symbol_count"] == 1
     assert payload["summary"]["hidden_symbol_count"] == 0
+    assert payload["public"]["summary"]["entry_count"] == 1
+    assert payload["ops"]["summary"]["entry_count"] == 1
     assert payload["entries"][0]["serve_allowed"] is False
+    assert payload["public"]["entries"][0]["serve_allowed"] is False
 
 
 def test_append_runtime_cycle_metrics_writes_summary(tmp_path):
