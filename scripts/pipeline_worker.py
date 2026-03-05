@@ -48,7 +48,7 @@ from utils.pipeline_contracts import (
     parse_prediction_execution_result,
     parse_utc_datetime,
 )
-from utils.pipeline_runtime_state import SymbolActivationStore
+from utils.pipeline_runtime_state import IngestWatermarkStore, SymbolActivationStore
 from utils.prediction_status import evaluate_prediction_status
 from utils.time_alignment import (
     detect_timeframe_gaps,
@@ -308,31 +308,8 @@ def _load_watermark_entries(path: Path) -> dict[str, WatermarkCursor]:
     """
     ingest watermark 파일을 로드하고 유효 엔트리만 정규화해 반환한다.
     """
-    if not path.exists():
-        return {}
-
-    try:
-        with open(path, "r") as f:
-            payload = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        logger.error(f"Failed to load watermark file {path.name}: {e}")
-        return {}
-
-    entries = payload.get("entries")
-    if not isinstance(entries, dict):
-        logger.error(
-            f"Invalid watermark format in {path.name}: entries is not a dict."
-        )
-        return {}
-
-    normalized: dict[str, WatermarkCursor] = {}
-    for key, value in entries.items():
-        if not isinstance(value, str):
-            continue
-        cursor = WatermarkCursor.from_key_value(key=key, value=value)
-        if cursor is not None:
-            normalized[key] = cursor
-    return normalized
+    store = IngestWatermarkStore(path, logger)
+    return store.load()
 
 
 def _save_watermark_entries(
@@ -341,24 +318,8 @@ def _save_watermark_entries(
     """
     ingest watermark 엔트리를 파일에 저장한다.
     """
-    payload_entries: dict[str, str] = {}
-    for key, value in entries.items():
-        if isinstance(value, WatermarkCursor):
-            cursor_key, cursor_value = value.to_entry()
-            payload_entries[cursor_key] = cursor_value
-            continue
-        if isinstance(value, str):
-            parsed = parse_utc_datetime(value)
-            if parsed is None:
-                continue
-            payload_entries[key] = format_utc_datetime(parsed) or ""
-
-    payload = {
-        "version": 1,
-        "updated_at": format_utc_datetime(datetime.now(timezone.utc)) or "",
-        "entries": payload_entries,
-    }
-    atomic_write_json(path, payload, indent=2)
+    store = IngestWatermarkStore(path, logger)
+    store.save(entries)
 
 
 def _parse_utc(text: str | None) -> datetime | None:

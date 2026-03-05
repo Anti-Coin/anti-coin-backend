@@ -18,7 +18,9 @@ from utils.pipeline_contracts import (
     SymbolActivationEntryPayload,
     SymbolActivationFilePayload,
     SymbolActivationSnapshot,
+    WatermarkCursor,
     format_utc_datetime,
+    parse_utc_datetime,
 )
 
 
@@ -103,6 +105,80 @@ class SymbolActivationStore:
             payload_entries[symbol] = snapshot.to_payload()
 
         payload: SymbolActivationFilePayload = {
+            "version": 1,
+            "updated_at": format_utc_datetime(resolved_now) or "",
+            "entries": payload_entries,
+        }
+        atomic_write_json(self._path, payload, indent=2)
+
+
+class IngestWatermarkStore:
+    """
+    ingest_watermarks.json 파일 접근 계층.
+    """
+
+    def __init__(self, path: Path, logger):
+        self._path = Path(path)
+        self._logger = logger
+
+    def load(self) -> dict[str, WatermarkCursor]:
+        """
+        파일에서 ingest watermark entries를 읽어 DTO dict로 반환한다.
+        """
+        if not self._path.exists():
+            return {}
+
+        try:
+            with open(self._path, "r") as f:
+                payload = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            self._logger.error(
+                "Failed to load watermark file %s: %s", self._path.name, e
+            )
+            return {}
+
+        entries = payload.get("entries")
+        if not isinstance(entries, dict):
+            self._logger.error(
+                "Invalid watermark format in %s: entries is not a dict.",
+                self._path.name,
+            )
+            return {}
+
+        normalized: dict[str, WatermarkCursor] = {}
+        for key, value in entries.items():
+            if not isinstance(value, str):
+                continue
+            cursor = WatermarkCursor.from_key_value(key=key, value=value)
+            if cursor is not None:
+                normalized[key] = cursor
+        return normalized
+
+    def save(
+        self,
+        entries: Mapping[str, WatermarkCursor | str],
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        """
+        DTO dict를 ingest_watermarks.json 포맷으로 저장한다.
+        """
+        resolved_now = now or datetime.now(timezone.utc)
+        payload_entries: dict[str, str] = {}
+
+        for key, value in entries.items():
+            if isinstance(value, WatermarkCursor):
+                cursor_key, cursor_value = value.to_entry()
+                payload_entries[cursor_key] = cursor_value
+                continue
+
+            if isinstance(value, str):
+                parsed = parse_utc_datetime(value)
+                if parsed is None:
+                    continue
+                payload_entries[key] = format_utc_datetime(parsed) or ""
+
+        payload = {
             "version": 1,
             "updated_at": format_utc_datetime(resolved_now) or "",
             "entries": payload_entries,

@@ -11,11 +11,13 @@ from scripts.pipeline_worker import (
     _evaluate_underfill_rebootstrap,
     _fetch_ohlcv_paginated,
     _lookback_days_for_timeframe,
+    _load_watermark_entries,
     _minimum_required_lookback_rows,
     _record_ingest_outcome_state,
     _refill_detected_gaps,
     _run_ingest_timeframe_step,
     _run_publish_timeframe_step,
+    _save_watermark_entries,
     WorkerPersistentState,
     append_runtime_cycle_metrics,
     build_runtime_manifest,
@@ -48,6 +50,7 @@ from utils.pipeline_contracts import (
     PredictionExecutionResult,
     StorageGuardLevel,
     SymbolActivationSnapshot,
+    WatermarkCursor,
 )
 
 
@@ -247,6 +250,32 @@ def test_evaluate_serve_allowed_requires_visible_and_allowed_status():
             allowed_statuses={"fresh", "stale"},
         )
         is False
+    )
+
+
+def test_watermark_store_round_trip_filters_invalid_entries(tmp_path):
+    watermark_path = tmp_path / "ingest_watermarks.json"
+    _save_watermark_entries(
+        {
+            "BTC/USDT|1h": WatermarkCursor(
+                symbol="BTC/USDT",
+                timeframe="1h",
+                closed_at=datetime(2026, 3, 5, 10, 0, tzinfo=timezone.utc),
+            ),
+            "ETH/USDT|1h": "2026-03-05T11:00:00Z",
+            "XRP/USDT|1h": "not-a-utc",
+        },
+        watermark_path,
+    )
+
+    loaded = _load_watermark_entries(watermark_path)
+
+    assert set(loaded.keys()) == {"BTC/USDT|1h", "ETH/USDT|1h"}
+    assert loaded["BTC/USDT|1h"].closed_at == datetime(
+        2026, 3, 5, 10, 0, tzinfo=timezone.utc
+    )
+    assert loaded["ETH/USDT|1h"].closed_at == datetime(
+        2026, 3, 5, 11, 0, tzinfo=timezone.utc
     )
 
 
