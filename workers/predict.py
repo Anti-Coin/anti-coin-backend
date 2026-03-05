@@ -8,7 +8,6 @@ Why this module is separate:
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,6 +15,10 @@ import pandas as pd
 from prophet.serialize import model_from_json
 
 from utils.model_store import resolve_canonical_model_path
+from utils.prediction_health_store import (
+    load_prediction_health_entries,
+    save_prediction_health_entries,
+)
 
 
 def load_prediction_health(ctx, path: Path) -> dict[str, dict]:
@@ -36,19 +39,8 @@ def load_prediction_health(ctx, path: Path) -> dict[str, dict]:
     Returns:
       - dict[str, dict]: Prediction health 정보
     """
-    if not path.exists():
-        return {}
-
-    try:
-        with open(path, "r") as f:
-            payload = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
-        ctx.logger.error(f"Failed to load prediction health file: {e}")
-        return {}
-
-    entries = payload.get("entries")
-    if not isinstance(entries, dict):
-        ctx.logger.error("Invalid prediction health format: entries is not a dict.")
+    entries, error_code = load_prediction_health_entries(path, logger=ctx.logger)
+    if error_code in {"read_error", "format_error"}:
         return {}
     return entries
 
@@ -69,12 +61,11 @@ def save_prediction_health(ctx, entries: dict[str, dict], path: Path) -> None:
       - entries: Prediction health 정보
       - path: Prediction health 파일 경로
     """
-    payload = {
-        "version": 1,
-        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "entries": entries,
-    }
-    ctx.atomic_write_json(path, payload, indent=2)
+    save_prediction_health_entries(
+        path,
+        entries,
+        atomic_write_json=ctx.atomic_write_json,
+    )
 
 
 def upsert_prediction_health(

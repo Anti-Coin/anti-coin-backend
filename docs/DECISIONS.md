@@ -88,6 +88,7 @@
 | D-2026-03-05-81 | Train Artifact Canonical-Only Lock | `worker-train` 산출물 저장 경로를 canonical-only로 잠근다(`model_{symbol}_{timeframe}.json`, `.meta.json`). primary legacy sidecar write(`model_{symbol}.json`, `.meta.json`)는 제거해 model contract와 운영 문서의 드리프트를 축소한다. | legacy consumer 재도입 요구, 또는 롤백 호환성 요구가 발생할 때 |
 | D-2026-03-05-82 | Storage Guard Unknown-Level Fail-Closed Lock | storage guard level 정규화에서 unknown 값은 `normal`로 완화하지 않고 `block`으로 강등한다(`coerce_storage_guard_level`). unknown 입력을 fail-open으로 처리하지 않도록 잠근다. | storage watermark taxonomy가 확장되거나, unknown 처리 정책을 명시적으로 변경할 때 |
 | D-2026-03-05-83 | Symbol Activation State-Only Persistence Lock | `symbol_activation.json` persisted payload는 key-identity 기반으로 `state/coverage*/ready_at/updated_at`만 저장한다. `symbol/visibility/is_full_backfilled`는 파일에서 제거하고, 로드/manifest 경로에서 state 기반 파생으로 복원한다. | admin/manifest가 state 외 필드의 persisted SoT를 요구하거나, activation 스키마 버전 업이 필요할 때 |
+| D-2026-03-05-84 | Prediction Health Store Shared-Reader Lock | `prediction_health.json` read/normalize/save 로직은 `utils/prediction_health_store.py` 단일 경로를 사용한다. API(`/status`)와 worker(upsert)가 같은 파일 계약/오류 의미론을 공유하도록 잠근다. | prediction health 스키마 버전 업, 또는 API/worker의 상태 의미론을 의도적으로 분기해야 할 때 |
 
 ## 3. Decision Operation Policy
 1. 활성 문서는 요약만 유지한다(상세 서술 금지).

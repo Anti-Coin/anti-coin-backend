@@ -28,7 +28,7 @@
 | TS-007 | State Store | `prediction_health` core fields(`degraded`, `last_*`, `consecutive_failures`, `last_error`) | KEEP | UC-PRED-03 last-good+degraded 정책의 owner다. | `/status` + monitor 회귀 | N/A |
 | TS-008 | Runtime Metrics | `runtime_metrics.recent_cycles` window upper bound | REDUCE_NEXT | 파일 보존 비용 최적화 후보. 운영자 관측성을 유지한 채 window 상한만 잠그는 축소다. | runtime metrics 회귀 + 7일 KPI 추출 가능성 확인 | 상한값 되돌림 |
 | TS-009 | Guard | `scripts/worker_guards.py::coerce_storage_guard_level` unknown level -> normal fallback | DONE (2026-03-05) | unknown을 normal로 내리면 fail-open 성향이다. unknown은 `block`으로 강등해 보수 경계로 잠근다. | `tests/test_pipeline_worker.py::test_coerce_storage_guard_level_unknown_falls_back_to_block`, `tests/test_pipeline_worker.py`(69 passed), `pytest -q`(170 passed) | 커밋 단위 revert |
-| TS-010 | API/Ops Interface | `api/main.py` 내 prediction health read 로직 중복 | REDUCE_NEXT | `StateStore` 인터페이스 후보. UC-MON-01/UC-PRED-03 상태 일관성 유지 위해 공통 reader 필요. | `tests/test_api_status.py` + `tests/test_status_monitor.py` | 커밋 단위 revert |
+| TS-010 | API/Ops Interface | `api/main.py` 내 prediction health read 로직 중복 | DONE (2026-03-05) | `StateStore` 인터페이스 후보. UC-MON-01/UC-PRED-03 상태 일관성 유지 위해 공통 reader 필요. | `tests/test_api_status.py`, `tests/test_pipeline_worker.py`(84 passed), `pytest -q`(170 passed) | 커밋 단위 revert |
 | TS-011 | Orchestrator | `_ctx()` 기반 monkeypatch 호환 래퍼 군 | REDUCE_NEXT | `D-017` 목표. 조합 책임만 남기기 위해 wrapper 축소 필요. 단, 테스트 계약 동시 이관이 선행 조건이다. | `tests/test_pipeline_worker.py` 전체 + import 경계 테스트 | 단계 커밋 revert |
 | TS-012 | Env Simplification | `PREDICTION_DISABLED_TIMEFRAMES` env | DEFER | 현재 1m 정책이지만 도메인 정책 변경 가능성(비용 대비 위험 낮음). 즉시 제거 우선순위는 낮다. | 정책 확정 후 테스트 재잠금 | N/A |
 | TS-013 | Runtime Metrics | `runtime_metrics.json` 파일 자체 | DEFER | D-028/운영 KPI 근거 파일. external metrics backend 없으면 제거 불가. | 대체 경로 설계 후 재평가 | N/A |
@@ -45,7 +45,7 @@
 1. Wave A (Low blast radius): TS-001, TS-002, TS-015 (**completed 2026-03-05**)
 2. Wave B (Config/Guard tightening): TS-003, TS-009 (**completed 2026-03-05**)
 3. Wave C (State schema tightening): TS-004, TS-005 (**completed 2026-03-05**)
-4. Wave D (Orchestrator surface reduction): TS-010, TS-011
+4. Wave D (Orchestrator surface reduction): TS-010 (**completed 2026-03-05**), TS-011 (pending)
 5. Deferred set: TS-012, TS-013 (정책/인프라 조건 충족 시 재개)
 
 ## 6. Open Questions (Need Owner Confirmation)
