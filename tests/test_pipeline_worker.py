@@ -194,6 +194,24 @@ def test_upsert_prediction_health_tracks_failure_and_recovery(tmp_path):
     assert "timeframe" not in stored
 
 
+def test_symbol_activation_snapshot_derives_flags_from_state_when_conflicted():
+    now = datetime(2026, 3, 5, 12, 0, tzinfo=timezone.utc)
+    snapshot = SymbolActivationSnapshot.from_payload(
+        symbol="BTC/USDT",
+        payload={
+            "state": "backfilling",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-03-05T11:59:00Z",
+        },
+        fallback_now=now,
+    )
+
+    assert snapshot.state.value == "backfilling"
+    assert snapshot.visibility.value == "hidden_backfilling"
+    assert snapshot.is_full_backfilled is False
+
+
 def test_prediction_enabled_for_timeframe_respects_disabled_set(monkeypatch):
     monkeypatch.setattr(
         "scripts.pipeline_worker.PREDICTION_DISABLED_TIMEFRAMES",

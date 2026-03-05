@@ -205,6 +205,17 @@ def _parse_symbol_activation_state(
     return SymbolActivationState.REGISTERED
 
 
+def _derive_symbol_activation_flags_from_state(
+    state: SymbolActivationState,
+) -> tuple[SymbolVisibility, bool]:
+    """
+    state 단일 SoT에서 visibility/is_full_backfilled를 파생한다.
+    """
+    if state == SymbolActivationState.READY_FOR_SERVING:
+        return SymbolVisibility.VISIBLE, True
+    return SymbolVisibility.HIDDEN_BACKFILLING, False
+
+
 @dataclass(frozen=True)
 class SymbolActivationSnapshot:
     """
@@ -250,6 +261,9 @@ class SymbolActivationSnapshot:
             visibility=visibility,
             is_full_backfilled=is_full_backfilled,
             has_coverage_start=coverage_start_at is not None,
+        )
+        visibility, is_full_backfilled = _derive_symbol_activation_flags_from_state(
+            state
         )
         updated_at = parse_utc_datetime(raw.get("updated_at")) or resolved_now
         ready_at = parse_utc_datetime(raw.get("ready_at"))
