@@ -118,6 +118,39 @@ class _BaseLoadUser(HttpUser):
                     return
             response.success()
 
+    def _request_manifest_v2(self) -> None:
+        with self.client.get(
+            "/static/manifest.json",
+            name="/static/manifest.json",
+            catch_response=True,
+        ) as response:
+            payload = self._json_or_fail(response, STATIC_ACCEPT_CODES)
+            if payload is None:
+                return
+            if not isinstance(payload, dict):
+                response.failure("Expected JSON object payload")
+                return
+            if payload.get("version") != 2:
+                response.failure("manifest version is not 2")
+                return
+
+            public = payload.get("public")
+            ops = payload.get("ops")
+            if not isinstance(public, dict) or not isinstance(ops, dict):
+                response.failure("manifest missing public/ops sections")
+                return
+            if not isinstance(public.get("entries"), list) or not isinstance(
+                ops.get("entries"), list
+            ):
+                response.failure("manifest public/ops entries must be arrays")
+                return
+            if not isinstance(public.get("summary"), dict) or not isinstance(
+                ops.get("summary"), dict
+            ):
+                response.failure("manifest public/ops summary must be objects")
+                return
+            response.success()
+
 
 class BaselineLoadUser(_BaseLoadUser):
     wait_time = between(1, 3)
@@ -131,11 +164,7 @@ class BaselineLoadUser(_BaseLoadUser):
     @tag("baseline")
     @task(3)
     def manifest_baseline(self):
-        self._request_static_json(
-            "/static/manifest.json",
-            name="/static/manifest.json",
-            required_keys=("entries", "summary"),
-        )
+        self._request_manifest_v2()
 
     @tag("baseline")
     @task(2)
@@ -170,11 +199,7 @@ class StressLoadUser(_BaseLoadUser):
     @tag("stress")
     @task(4)
     def manifest_stress(self):
-        self._request_static_json(
-            "/static/manifest.json",
-            name="/static/manifest.json",
-            required_keys=("entries", "summary"),
-        )
+        self._request_manifest_v2()
 
     @tag("stress")
     @task(3)

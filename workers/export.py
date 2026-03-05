@@ -232,16 +232,11 @@ def build_runtime_manifest(
     }
     ops_summary = {**common_summary, "symbol_state_counts": symbol_state_counts}
 
-    # Transitional compatibility:
-    # - 기존 consumer가 root entries/summary를 읽더라도 즉시 깨지지 않게 유지한다.
-    # - v2 consumer는 `public`/`ops` 섹션을 우선 사용한다.
     return {
         "version": 2,
         "generated_at": generated_at,
         "public": {"entries": public_entries, "summary": common_summary},
         "ops": {"entries": ops_entries, "summary": ops_summary},
-        "entries": ops_entries,
-        "summary": ops_summary,
     }
 
 

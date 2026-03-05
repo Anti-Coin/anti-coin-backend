@@ -81,8 +81,6 @@ def _sample_manifest_v2_payload() -> dict:
         "generated_at": payload["generated_at"],
         "public": {"entries": public_entries, "summary": {"entry_count": 2}},
         "ops": {"entries": ops_entries, "summary": payload["summary"]},
-        "entries": [],
-        "summary": payload["summary"],
     }
 
 
@@ -111,6 +109,19 @@ def test_flatten_manifest_entries_prefers_ops_entries_for_v2():
         0,
         2,
     ]
+
+
+def test_flatten_manifest_entries_returns_empty_when_v2_ops_entries_missing():
+    now = datetime(2026, 2, 19, 8, 0, tzinfo=timezone.utc)
+    payload = {
+        "version": 2,
+        "generated_at": "2026-02-19T08:00:00Z",
+        "public": {"entries": [], "summary": {"entry_count": 0}},
+        "ops": {"summary": {"entry_count": 0}},
+    }
+    df = flatten_manifest_entries(payload, now=now)
+    assert df.empty
+    assert list(df.columns) == MANIFEST_VIEW_COLUMNS
 
 
 def test_build_status_matrix_marks_degraded_blocked_hidden():

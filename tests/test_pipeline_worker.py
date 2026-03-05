@@ -378,15 +378,17 @@ def test_build_runtime_manifest_merges_freshness_and_health(tmp_path):
     )
 
     assert manifest["version"] == 2
-    assert manifest["summary"]["entry_count"] == 1
-    assert manifest["summary"]["status_counts"]["fresh"] == 1
-    assert manifest["summary"]["degraded_count"] == 1
+    assert manifest["ops"]["summary"]["entry_count"] == 1
+    assert manifest["ops"]["summary"]["status_counts"]["fresh"] == 1
+    assert manifest["ops"]["summary"]["degraded_count"] == 1
     assert "public" in manifest
     assert "ops" in manifest
+    assert "entries" not in manifest
+    assert "summary" not in manifest
     assert manifest["public"]["entries"][0]["serve_allowed"] is True
     assert manifest["ops"]["entries"][0]["serve_allowed"] is True
 
-    entry = manifest["entries"][0]
+    entry = manifest["ops"]["entries"][0]
     assert entry["key"] == "BTC/USDT|1h"
     assert entry["history"]["updated_at"] == "2026-02-13T11:15:00Z"
     assert entry["prediction"]["status"] == "fresh"
@@ -415,13 +417,15 @@ def test_write_runtime_manifest_writes_manifest_file(tmp_path):
 
     payload = json.loads(manifest_path.read_text())
     assert payload["version"] == 2
-    assert payload["summary"]["entry_count"] == 1
-    assert payload["summary"]["status_counts"]["missing"] == 1
-    assert payload["summary"]["visible_symbol_count"] == 1
-    assert payload["summary"]["hidden_symbol_count"] == 0
+    assert payload["ops"]["summary"]["entry_count"] == 1
+    assert payload["ops"]["summary"]["status_counts"]["missing"] == 1
+    assert payload["ops"]["summary"]["visible_symbol_count"] == 1
+    assert payload["ops"]["summary"]["hidden_symbol_count"] == 0
+    assert "entries" not in payload
+    assert "summary" not in payload
     assert payload["public"]["summary"]["entry_count"] == 1
     assert payload["ops"]["summary"]["entry_count"] == 1
-    assert payload["entries"][0]["serve_allowed"] is False
+    assert payload["ops"]["entries"][0]["serve_allowed"] is False
     assert payload["public"]["entries"][0]["serve_allowed"] is False
 
 
@@ -1185,9 +1189,9 @@ def test_build_runtime_manifest_marks_hidden_symbol_unservable(tmp_path):
         },
     )
 
-    assert manifest["summary"]["visible_symbol_count"] == 0
-    assert manifest["summary"]["hidden_symbol_count"] == 1
-    entry = manifest["entries"][0]
+    assert manifest["ops"]["summary"]["visible_symbol_count"] == 0
+    assert manifest["ops"]["summary"]["hidden_symbol_count"] == 1
+    entry = manifest["ops"]["entries"][0]
     assert entry["visibility"] == "hidden_backfilling"
     assert entry["symbol_state"] == "backfilling"
     assert entry["serve_allowed"] is False
