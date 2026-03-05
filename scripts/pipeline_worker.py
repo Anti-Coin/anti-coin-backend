@@ -787,39 +787,6 @@ def run_ingest_step_outcome(
     )
 
 
-def _static_export_candidates(
-    kind: str,
-    symbol: str,
-    timeframe: str,
-    static_dir: Path | None = None,
-) -> list[Path]:
-    """
-    정적 export 후보(canonical/legacy) 경로 반환 래퍼.
-
-    Called from:
-    - build_runtime_manifest wrapper 경유
-    """
-    return export_ops.static_export_candidates(
-        _ctx(),
-        kind=kind,
-        symbol=symbol,
-        timeframe=timeframe,
-        static_dir=static_dir,
-    )
-
-
-def _extract_updated_at_from_files(
-    candidates: list[Path],
-) -> tuple[str | None, str | None]:
-    """
-    후보 파일의 updated_at 추출 래퍼.
-
-    Called from:
-    - build_runtime_manifest wrapper 경유
-    """
-    return export_ops.extract_updated_at_from_files(_ctx(), candidates)
-
-
 def build_runtime_manifest(
     symbols: list[str],
     timeframes: list[str],
