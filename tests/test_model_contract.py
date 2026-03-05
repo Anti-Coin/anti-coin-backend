@@ -81,9 +81,8 @@ def test_predict_contract_uses_canonical_model_and_writes_json_and_influx(
     assert loaded_payloads == ["canonical-json"]
 
     canonical_path = static_dir / "prediction_BTC_USDT_1h.json"
-    legacy_path = static_dir / "prediction_BTC_USDT.json"
     assert canonical_path.exists()
-    assert legacy_path.exists()
+    assert not (static_dir / "prediction_BTC_USDT.json").exists()
 
     payload = json.loads(canonical_path.read_text())
     assert payload["symbol"] == "BTC/USDT"

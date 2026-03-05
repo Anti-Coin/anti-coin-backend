@@ -312,9 +312,8 @@ def test_save_history_to_json_writes_timeframe_aware_files(tmp_path, monkeypatch
     save_history_to_json(df, "BTC/USDT", "4h")
 
     canonical_path = tmp_path / "history_BTC_USDT_4h.json"
-    legacy_path = tmp_path / "history_BTC_USDT.json"
     assert canonical_path.exists()
-    assert legacy_path.exists()
+    assert not (tmp_path / "history_BTC_USDT.json").exists()
 
     payload = json.loads(canonical_path.read_text())
     assert payload["symbol"] == "BTC/USDT"

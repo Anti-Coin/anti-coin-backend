@@ -164,18 +164,14 @@ def _prediction_health_key(symbol: str, timeframe: str) -> str:
     return f"{symbol}|{timeframe}"
 
 
-def _static_export_paths(
+def _static_export_path(
     kind: str,
     symbol: str,
     timeframe: str,
     static_dir: Path | None = None,
-) -> tuple[Path, Path | None]:
+) -> Path:
     """
     정적 산출물 파일 경로를 반환한다.
-
-    Phase B 전환 기간에는 canonical(timeframe 포함) + legacy를 함께 유지한다.
-
-    TODO: Legacy 제거
 
     Args:
       - kind: 산출물 종류
@@ -183,15 +179,11 @@ def _static_export_paths(
       - timeframe: 타임프레임 (1m, 1h, 1d, 1w, 1M)
       - static_dir: 정적 산출물 디렉토리
     Returns:
-      - tuple[Path, Path | None]: (canonical, legacy)
+      - Path: canonical export path
     """
     safe_symbol = symbol.replace("/", "_")
     resolved_static_dir = static_dir or STATIC_DIR
-    canonical = resolved_static_dir / f"{kind}_{safe_symbol}_{timeframe}.json"
-    legacy = resolved_static_dir / f"{kind}_{safe_symbol}.json"
-    if canonical == legacy:
-        return canonical, None
-    return canonical, legacy
+    return resolved_static_dir / f"{kind}_{safe_symbol}_{timeframe}.json"
 
 
 def prediction_enabled_for_timeframe(timeframe: str) -> bool:
@@ -453,18 +445,15 @@ def _remove_static_exports_for_symbol(
     """
     for timeframe in timeframes:
         for kind in ("history", "prediction"):
-            canonical_path, legacy_path = _static_export_paths(
+            path = _static_export_path(
                 kind, symbol, timeframe, static_dir=static_dir
             )
-            for path in (canonical_path, legacy_path):
-                if path is None:
-                    continue
-                try:
-                    path.unlink(missing_ok=True)
-                except OSError as e:
-                    logger.warning(
-                        f"[{symbol} {timeframe}] failed to remove static file {path}: {e}"
-                    )
+            try:
+                path.unlink(missing_ok=True)
+            except OSError as e:
+                logger.warning(
+                    f"[{symbol} {timeframe}] failed to remove static file {path}: {e}"
+                )
 
 
 def _load_runtime_metrics(path: Path = RUNTIME_METRICS_FILE) -> list[dict]:

@@ -237,18 +237,12 @@ def run_prediction_and_save(
             "forecast": export_data.to_dict(orient="records"),
         }
 
-        canonical_path, legacy_path = ctx._static_export_paths(
-            "prediction", symbol, timeframe
-        )
-        # canonical + legacy dual-write는 이행기 호환 장치다.
-        # 하위 소비자가 canonical로 완전 전환되기 전까지 읽기 경로 단절을 막는다.
+        canonical_path = ctx._static_export_path("prediction", symbol, timeframe)
         ctx.atomic_write_json(canonical_path, json_output, indent=2)
-        if legacy_path is not None:
-            ctx.atomic_write_json(legacy_path, json_output, indent=2)
 
         ctx.logger.info(
             f"[{symbol} {timeframe}] SSG 파일 생성 완료: "
-            f"canonical={canonical_path}, legacy={legacy_path} "
+            f"canonical={canonical_path} "
             f"(start={prediction_start.strftime('%Y-%m-%dT%H:%M:%SZ')}, "
             f"freq={timeframe})"
         )

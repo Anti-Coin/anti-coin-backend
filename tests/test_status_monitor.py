@@ -16,7 +16,7 @@ from scripts.status_monitor import (
 
 
 def _write_prediction(
-    root: Path, symbol: str, updated_at: str, timeframe: str | None = None
+    root: Path, symbol: str, updated_at: str, timeframe: str | None = "1h"
 ) -> None:
     safe = symbol.replace("/", "_")
     if timeframe:
@@ -26,9 +26,11 @@ def _write_prediction(
     path.write_text(json.dumps({"symbol": symbol, "updated_at": updated_at}))
 
 
-def test_evaluate_symbol_timeframe_fresh_from_legacy_file(tmp_path):
+def test_evaluate_symbol_timeframe_fresh_from_timeframe_file(tmp_path):
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
-    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T11:55:00Z")
+    _write_prediction(
+        tmp_path, "BTC/USDT", "2026-02-10T11:55:00Z", timeframe="1h"
+    )
 
     snapshot = evaluate_symbol_timeframe(
         symbol="BTC/USDT",
@@ -43,19 +45,21 @@ def test_evaluate_symbol_timeframe_fresh_from_legacy_file(tmp_path):
     assert snapshot.updated_at == "2026-02-10T11:55:00Z"
 
 
-def test_evaluate_symbol_timeframe_non_primary_does_not_use_legacy_file(
+def test_evaluate_symbol_timeframe_missing_when_only_legacy_file_exists(
     tmp_path,
 ):
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
-    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T11:55:00Z")
+    _write_prediction(
+        tmp_path, "BTC/USDT", "2026-02-10T11:55:00Z", timeframe=None
+    )
 
     snapshot = evaluate_symbol_timeframe(
         symbol="BTC/USDT",
-        timeframe="1d",
+        timeframe="1h",
         now=now,
         static_dir=tmp_path,
-        soft_thresholds={"1d": timedelta(days=2)},
-        hard_thresholds={"1d": timedelta(days=4)},
+        soft_thresholds={"1h": timedelta(minutes=10)},
+        hard_thresholds={"1h": timedelta(minutes=20)},
     )
 
     assert snapshot.status == "missing"
@@ -64,7 +68,9 @@ def test_evaluate_symbol_timeframe_non_primary_does_not_use_legacy_file(
 
 def test_evaluate_symbol_timeframe_prefers_timeframe_file_over_legacy(tmp_path):
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
-    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T11:30:00Z")
+    _write_prediction(
+        tmp_path, "BTC/USDT", "2026-02-10T11:30:00Z", timeframe=None
+    )
     _write_prediction(
         tmp_path, "BTC/USDT", "2026-02-10T11:55:00Z", timeframe="1h"
     )
@@ -83,7 +89,7 @@ def test_evaluate_symbol_timeframe_prefers_timeframe_file_over_legacy(tmp_path):
 
 
 def test_evaluate_symbol_timeframe_corrupt_when_json_invalid(tmp_path):
-    (tmp_path / "prediction_BTC_USDT.json").write_text("{invalid-json")
+    (tmp_path / "prediction_BTC_USDT_1h.json").write_text("{invalid-json")
     snapshot = evaluate_symbol_timeframe("BTC/USDT", "1h", static_dir=tmp_path)
     assert snapshot.status == "corrupt"
 

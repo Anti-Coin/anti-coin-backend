@@ -21,22 +21,16 @@ def static_export_candidates(
     static_dir: Path | None = None,
 ) -> list[Path]:
     """
-    canonical/legacy 정적 파일 후보 경로를 우선순위 순으로 반환한다.
+    canonical 정적 파일 후보 경로를 반환한다.
 
     Called from:
     - `extract_updated_at_from_files`
     - `build_runtime_manifest`
 
     Why:
-    - 전환기 dual-write 환경에서 읽기 경로 단절 없이 최신 파일을 찾기 위함이다.
+    - 정적 산출물 계약을 timeframe canonical 단일 경로로 고정하기 위함이다.
     """
-    canonical, legacy = ctx._static_export_paths(
-        kind, symbol, timeframe, static_dir=static_dir
-    )
-    candidates = [canonical]
-    if legacy is not None:
-        candidates.append(legacy)
-    return candidates
+    return [ctx._static_export_path(kind, symbol, timeframe, static_dir=static_dir)]
 
 
 def extract_updated_at_from_files(
@@ -260,7 +254,7 @@ def write_runtime_manifest(
 
 def save_history_to_json(ctx, df, symbol, timeframe):
     """
-    history DataFrame을 정적 JSON으로 저장한다(canonical + legacy).
+    history DataFrame을 정적 JSON으로 저장한다(canonical-only).
 
     Called from:
     - `update_full_history_file`
@@ -284,16 +278,12 @@ def save_history_to_json(ctx, df, symbol, timeframe):
             "type": f"history_{timeframe}",
         }
 
-        canonical_path, legacy_path = ctx._static_export_paths(
-            "history", symbol, timeframe
-        )
+        canonical_path = ctx._static_export_path("history", symbol, timeframe)
         ctx.atomic_write_json(canonical_path, json_output)
-        if legacy_path is not None:
-            ctx.atomic_write_json(legacy_path, json_output)
 
         ctx.logger.info(
             f"[{symbol} {timeframe}] 정적 파일 생성 완료: "
-            f"canonical={canonical_path}, legacy={legacy_path}"
+            f"canonical={canonical_path}"
         )
     except Exception as e:
         ctx.logger.error(f"[{symbol} {timeframe}] 정적 파일 생성 실패: {e}")
