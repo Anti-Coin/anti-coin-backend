@@ -695,20 +695,6 @@ def resolve_ingest_since(
     )
 
 
-def get_lookback_close_count(
-    query_api, symbol: str, timeframe: str, lookback_days: int
-) -> int | None:
-    """
-    lookback close row count 조회 래퍼.
-
-    Called from:
-    - run_worker() underfill guard
-    """
-    return ingest_ops.get_lookback_close_count(
-        _ctx(), query_api, symbol, timeframe, lookback_days
-    )
-
-
 # enforce_1m_retention:
 # scripts.worker_guards로 이동. import를 통해 이 모듈 네임스페이스에 재노출.
 
@@ -1081,7 +1067,8 @@ def _evaluate_underfill_rebootstrap(
         lookback_days,
     )
     if min_required_rows is not None:
-        close_count = get_lookback_close_count(
+        close_count = ingest_ops.get_lookback_close_count(
+            _ctx(),
             query_api,
             symbol,
             timeframe,
