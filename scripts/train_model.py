@@ -22,6 +22,10 @@ from scripts.data_extractor import extract_ohlcv_to_parquet, _get_influx_client
 from prophet.serialize import model_to_json
 
 from utils.file_io import atomic_write_json
+from utils.model_store import (
+    resolve_model_metadata_paths,
+    resolve_model_paths,
+)
 from utils.config import PRIMARY_TIMEFRAME, TARGET_SYMBOLS
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -56,21 +60,23 @@ def _parse_env_int(name: str, *, default: int) -> int:
 
 
 def _resolve_model_paths(symbol: str, timeframe: str) -> tuple[Path, Path | None]:
-    safe_symbol = symbol.replace("/", "_")
-    canonical_path = MODELS_DIR / f"model_{safe_symbol}_{timeframe}.json"
-    legacy_path: Path | None = None
-    if timeframe == PRIMARY_TIMEFRAME:
-        legacy_path = MODELS_DIR / f"model_{safe_symbol}.json"
-    return canonical_path, legacy_path
+    paths = resolve_model_paths(
+        MODELS_DIR,
+        symbol,
+        timeframe,
+        primary_timeframe=PRIMARY_TIMEFRAME,
+    )
+    return paths.canonical, paths.legacy
 
 
 def _resolve_model_metadata_paths(symbol: str, timeframe: str) -> tuple[Path, Path | None]:
-    safe_symbol = symbol.replace("/", "_")
-    canonical_path = MODELS_DIR / f"model_{safe_symbol}_{timeframe}.meta.json"
-    legacy_path: Path | None = None
-    if timeframe == PRIMARY_TIMEFRAME:
-        legacy_path = MODELS_DIR / f"model_{safe_symbol}.meta.json"
-    return canonical_path, legacy_path
+    paths = resolve_model_metadata_paths(
+        MODELS_DIR,
+        symbol,
+        timeframe,
+        primary_timeframe=PRIMARY_TIMEFRAME,
+    )
+    return paths.canonical, paths.legacy
 
 
 def _resolve_mlflow_tracking_uri() -> str:

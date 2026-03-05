@@ -15,6 +15,8 @@ from pathlib import Path
 import pandas as pd
 from prophet.serialize import model_from_json
 
+from utils.model_store import resolve_canonical_model_path
+
 
 def load_prediction_health(ctx, path: Path) -> dict[str, dict]:
     """
@@ -176,8 +178,9 @@ def run_prediction_and_save(
             )
             return "skipped", "insufficient_data"
 
-    safe_symbol = symbol.replace("/", "_")
-    model_file = ctx.MODELS_DIR / f"model_{safe_symbol}_{timeframe}.json"
+    model_file = resolve_canonical_model_path(
+        ctx.MODELS_DIR, symbol, timeframe
+    )
     # D-040: legacy 단일 모델 fallback을 제거하고 canonical-only로 잠근다.
     # canonical 누락은 fail-closed(model_missing)로 처리한다.
     if not model_file.exists():
