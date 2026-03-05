@@ -1583,7 +1583,7 @@ def test_run_ingest_timeframe_step_long_tf_skip_syncs_watermark_and_allows_publi
         lambda *args, **kwargs: latest_saved_at,
     )
     monkeypatch.setattr(
-        "scripts.pipeline_worker.evaluate_detection_gate_decision",
+        "workers.ingest.evaluate_detection_gate",
         lambda *args, **kwargs: SimpleNamespace(
             should_run=False,
             reason=SimpleNamespace(value="no_new_closed_candle"),
@@ -1646,7 +1646,7 @@ def test_run_ingest_timeframe_step_non_materialized_skip_still_blocks_publish(
         lambda *args, **kwargs: datetime(2026, 2, 19, 11, 0, tzinfo=timezone.utc),
     )
     monkeypatch.setattr(
-        "scripts.pipeline_worker.evaluate_detection_gate_decision",
+        "workers.ingest.evaluate_detection_gate",
         lambda *args, **kwargs: SimpleNamespace(
             should_run=False,
             reason=SimpleNamespace(value="no_new_closed_candle"),

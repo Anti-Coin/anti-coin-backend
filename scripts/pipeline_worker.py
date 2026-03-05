@@ -29,7 +29,6 @@ from utils.file_io import atomic_write_json
 from utils.ingest_state import IngestStateStore
 from utils.pipeline_contracts import (
     DetectionGateReason,
-    DetectionGateDecision,
     IngestExecutionOutcome,
     IngestExecutionResult,
     IngestSinceSource,
@@ -880,75 +879,6 @@ def get_last_timestamp(query_api, symbol, timeframe, *, full_range: bool = False
     )
 
 
-def get_exchange_earliest_closed_timestamp(
-    exchange,
-    symbol: str,
-    timeframe: str,
-    *,
-    now: datetime | None = None,
-) -> datetime | None:
-    """
-    거래소 earliest closed 조회 래퍼.
-
-    Called from:
-    - run_worker() symbol activation 계산
-    """
-    return ingest_ops.get_exchange_earliest_closed_timestamp(
-        _ctx(),
-        exchange,
-        symbol,
-        timeframe,
-        now=now,
-    )
-
-
-def evaluate_detection_gate_decision(
-    query_api,
-    detection_exchange,
-    *,
-    symbol: str,
-    timeframe: str,
-    now: datetime,
-    last_saved: datetime | None = None,
-) -> DetectionGateDecision:
-    """
-    detection gate 결과를 DTO로 반환한다.
-    """
-    return ingest_ops.evaluate_detection_gate(
-        _ctx(),
-        query_api,
-        detection_exchange,
-        symbol=symbol,
-        timeframe=timeframe,
-        now=now,
-        last_saved=last_saved,
-    )
-
-
-def build_symbol_activation_entry(
-    *,
-    query_api,
-    symbol: str,
-    now: datetime,
-    exchange_earliest: datetime | None,
-    existing_entry: SymbolActivationSnapshot | dict | None = None,
-) -> SymbolActivationSnapshot:
-    """
-    symbol activation 상태 계산 래퍼.
-
-    Called from:
-    - run_worker() per symbol
-    """
-    return ingest_ops.build_symbol_activation_entry(
-        _ctx(),
-        query_api=query_api,
-        symbol=symbol,
-        now=now,
-        exchange_earliest=exchange_earliest,
-        existing_entry=existing_entry,
-    )
-
-
 def count_ohlcv_rows(query_api, *, symbol: str, timeframe: str) -> int:
     """
     OHLCV 총 행 수 조회 래퍼.
@@ -1136,13 +1066,15 @@ def _prepare_symbol_activation_for_cycle(
     activation_loaded = False
 
     if run_ingest_stage:
-        exchange_earliest = get_exchange_earliest_closed_timestamp(
+        exchange_earliest = ingest_ops.get_exchange_earliest_closed_timestamp(
+            _ctx(),
             activation_exchange,
             symbol,
             SYMBOL_ACTIVATION_SOURCE_TIMEFRAME,
             now=cycle_now,
         )
-        activation = build_symbol_activation_entry(
+        activation = ingest_ops.build_symbol_activation_entry(
+            _ctx(),
             query_api=query_api,
             symbol=symbol,
             now=cycle_now,
@@ -1193,7 +1125,8 @@ def _evaluate_boundary_detection_gate(
         1) ingest 실행 여부
         2) publish 단계 진행 여부
     """
-    gate_decision = evaluate_detection_gate_decision(
+    gate_decision = ingest_ops.evaluate_detection_gate(
+        _ctx(),
         query_api,
         activation_exchange,
         symbol=symbol,
@@ -1483,7 +1416,8 @@ def _run_ingest_timeframe_step(
         timeframe == SYMBOL_ACTIVATION_SOURCE_TIMEFRAME
         and symbol_activation.visibility == SymbolVisibility.HIDDEN_BACKFILLING
     ):
-        refreshed_activation = build_symbol_activation_entry(
+        refreshed_activation = ingest_ops.build_symbol_activation_entry(
+            _ctx(),
             query_api=query_api,
             symbol=symbol,
             now=cycle_now,
