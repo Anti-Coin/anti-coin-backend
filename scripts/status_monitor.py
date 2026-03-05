@@ -7,7 +7,7 @@ from pathlib import Path
 import requests
 from influxdb_client import InfluxDBClient
 
-from utils.config import INGEST_TIMEFRAMES, PRIMARY_TIMEFRAME, TARGET_SYMBOLS
+from utils.config import INGEST_TIMEFRAMES, TARGET_SYMBOLS
 from utils.logger import get_logger
 from utils.prediction_status import (
     PredictionStatusSnapshot,
@@ -179,17 +179,12 @@ def get_latest_ohlcv_timestamp(
 ) -> datetime | None:
     """
     Return the latest OHLCV timestamp for a given symbol+timeframe.
-
-    NOTE:
-    Compatibility:
-    - PRIMARY_TIMEFRAME는 legacy(no-timeframe-tag) row fallback을 허용한다.
     """
     return _get_latest_ohlcv_timestamp(
         query_api,
         symbol,
         timeframe,
         INFLUXDB_BUCKET,
-        PRIMARY_TIMEFRAME,
     )
 
 

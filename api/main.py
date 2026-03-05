@@ -12,7 +12,6 @@ from utils.logger import get_logger
 from utils.config import (
     FRESHNESS_THRESHOLDS,
     FRESHNESS_HARD_THRESHOLDS,
-    PRIMARY_TIMEFRAME,
 )
 from utils.prediction_status import evaluate_prediction_status
 from utils.status_consistency import (
@@ -234,7 +233,6 @@ def check_status(symbol: str, timeframe: str = "1h"):
             symbol,
             timeframe,
             INFLUXDB_BUCKET,
-            PRIMARY_TIMEFRAME,
         )
         snapshot = apply_influx_json_consistency(base_snapshot, latest_ohlcv_ts)
         if snapshot.status != base_snapshot.status:

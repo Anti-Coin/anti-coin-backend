@@ -510,7 +510,7 @@ def get_first_timestamp(
     timeframe: str,
 ) -> datetime | None:
     """
-    DB earliest candle open을 조회한다(legacy fallback 포함).
+    DB earliest candle open을 조회한다.
 
     Called from:
     - `build_symbol_activation_entry`
@@ -526,20 +526,9 @@ def get_first_timestamp(
       |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
       |> first(column: "_time")
     """
-    legacy_query = f"""
-    from(bucket: "{ctx.INFLUXDB_BUCKET}")
-      |> range(start: 0)
-      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
-      |> filter(fn: (r) => r["symbol"] == "{symbol}")
-      |> filter(fn: (r) => not exists r["timeframe"])
-      |> first(column: "_time")
-    """
 
     try:
-        first_time = ctx._query_first_timestamp(query_api, query)
-        if first_time is None and timeframe == ctx.PRIMARY_TIMEFRAME:
-            first_time = ctx._query_first_timestamp(query_api, legacy_query)
-        return first_time
+        return ctx._query_first_timestamp(query_api, query)
     except Exception as e:
         ctx.logger.error(f"[{symbol} {timeframe}] DB earliest 조회 중 에러: {e}")
         return None
@@ -554,7 +543,7 @@ def get_last_timestamp(
     full_range: bool = False,
 ) -> datetime | None:
     """
-    DB latest candle open을 조회한다(legacy fallback 포함).
+    DB latest candle open을 조회한다.
 
     Called from:
     - `resolve_ingest_since`
@@ -574,19 +563,9 @@ def get_last_timestamp(
       |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
       |> last(column: "_time")
     """
-    legacy_query = f"""
-    from(bucket: "{ctx.INFLUXDB_BUCKET}")
-      |> range(start: {range_start})
-      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
-      |> filter(fn: (r) => r["symbol"] == "{symbol}")
-      |> filter(fn: (r) => not exists r["timeframe"])
-      |> last(column: "_time")
-    """
 
     try:
         last_time = ctx._query_last_timestamp(query_api, query)
-        if last_time is None and timeframe == ctx.PRIMARY_TIMEFRAME:
-            last_time = ctx._query_last_timestamp(query_api, legacy_query)
         if last_time is not None:
             return last_time
     except Exception as e:

@@ -50,13 +50,9 @@ def get_latest_ohlcv_timestamp(
     symbol: str,
     timeframe: str,
     influx_bucket: str | None,
-    primary_timeframe: str,
 ) -> datetime | None:
     """
     symbol+timeframe의 latest OHLCV timestamp를 조회한다.
-
-    Compatibility:
-    - primary timeframe에 한해 legacy(no-timeframe-tag) fallback을 허용한다.
     """
     if query_api is None or not influx_bucket:
         return None
@@ -69,22 +65,7 @@ def get_latest_ohlcv_timestamp(
       |> filter(fn: (r) => r["timeframe"] == "{timeframe}")
       |> last(column: "_time")
     """
-    latest_ts = _query_latest_ohlcv_timestamp(query_api, scoped_query)
-    if latest_ts is not None:
-        return latest_ts
-
-    if timeframe != primary_timeframe:
-        return None
-
-    legacy_query = f"""
-    from(bucket: "{influx_bucket}")
-      |> range(start: -30d)
-      |> filter(fn: (r) => r["_measurement"] == "ohlcv")
-      |> filter(fn: (r) => r["symbol"] == "{symbol}")
-      |> filter(fn: (r) => not exists r["timeframe"])
-      |> last(column: "_time")
-    """
-    return _query_latest_ohlcv_timestamp(query_api, legacy_query)
+    return _query_latest_ohlcv_timestamp(query_api, scoped_query)
 
 
 def apply_influx_json_consistency(
