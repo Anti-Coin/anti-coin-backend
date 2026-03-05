@@ -31,7 +31,6 @@ from scripts.pipeline_worker import (
     resolve_boundary_due_timeframes,
     resolve_ingest_since,
     resolve_disk_watermark_level,
-    run_ingest_step,
     run_worker,
     should_block_initial_backfill,
     should_enforce_1m_retention,
@@ -43,6 +42,7 @@ from workers.export import (
     save_history_to_json as export_save_history_to_json,
     update_full_history_file as export_update_full_history_file,
 )
+from workers import ingest as ingest_ops_module
 from workers.ingest import (
     evaluate_detection_gate as ingest_evaluate_detection_gate,
     detect_gaps_from_ms_timestamps,
@@ -1702,12 +1702,12 @@ def test_run_ingest_step_routes_long_timeframes_to_exchange_fetch(monkeypatch):
     monkeypatch.setattr("workers.ingest.fetch_and_save", fake_fetch)
 
     for timeframe in ("1d", "1w", "1M"):
-        latest, result = run_ingest_step(
-            write_api=object(),
-            query_api=object(),
-            symbol="BTC/USDT",
-            timeframe=timeframe,
-            since=expected_since,
+        latest, result = ingest_ops_module.fetch_and_save(
+            pipeline_worker_module,
+            object(),
+            "BTC/USDT",
+            expected_since,
+            timeframe,
         )
         assert latest == expected_latest
         assert result == "saved"
@@ -1761,12 +1761,12 @@ def test_run_ingest_step_routes_base_to_exchange_fetch(monkeypatch):
 
     monkeypatch.setattr("workers.ingest.fetch_and_save", fake_fetch)
 
-    latest, result = run_ingest_step(
-        write_api=object(),
-        query_api=object(),
-        symbol="BTC/USDT",
-        timeframe="1h",
-        since=expected_since,
+    latest, result = ingest_ops_module.fetch_and_save(
+        pipeline_worker_module,
+        object(),
+        "BTC/USDT",
+        expected_since,
+        "1h",
     )
 
     assert latest == expected_latest

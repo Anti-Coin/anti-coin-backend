@@ -723,20 +723,6 @@ def get_lookback_close_count(
 # scripts.worker_guards로 이동. import를 통해 이 모듈 네임스페이스에 재노출.
 
 
-def run_ingest_step(
-    write_api,
-    query_api,
-    *,
-    symbol: str,
-    timeframe: str,
-    since: datetime | None,
-) -> tuple[datetime | None, str]:
-    """
-    모든 timeframe ingest를 direct exchange fetch 경로로 실행한다.
-    """
-    return ingest_ops.fetch_and_save(_ctx(), write_api, symbol, since, timeframe)
-
-
 def run_ingest_step_outcome(
     write_api,
     query_api,
@@ -748,12 +734,12 @@ def run_ingest_step_outcome(
     """
     ingest 단계 문자열 결과를 Enum 상태로 정규화한다.
     """
-    latest_saved_at, raw_result = run_ingest_step(
+    latest_saved_at, raw_result = ingest_ops.fetch_and_save(
+        _ctx(),
         write_api,
-        query_api,
-        symbol=symbol,
-        timeframe=timeframe,
-        since=since,
+        symbol,
+        since,
+        timeframe,
     )
     return IngestExecutionOutcome(
         latest_saved_at=latest_saved_at,
