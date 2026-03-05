@@ -13,6 +13,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from utils.pipeline_contracts import SymbolActivationSnapshot, format_utc_datetime
+from utils.prediction_health_store import (
+    load_prediction_health_entries,
+    prediction_health_key,
+)
 from utils.serve_policy import evaluate_serve_allowed
 
 
@@ -108,9 +112,12 @@ def build_runtime_manifest(
     resolved_prediction_health_path = (
         prediction_health_path or ctx.PREDICTION_HEALTH_FILE
     )
-    health_entries = ctx._load_prediction_health(
-        path=resolved_prediction_health_path
+    health_entries, health_error = load_prediction_health_entries(
+        resolved_prediction_health_path,
+        logger=ctx.logger,
     )
+    if health_error in {"read_error", "format_error"}:
+        health_entries = {}
 
     ops_entries: list[dict] = []
     public_entries: list[dict] = []
@@ -163,9 +170,7 @@ def build_runtime_manifest(
                 now=resolved_now,
                 static_dir=resolved_static_dir,
             )
-            health = health_entries.get(
-                ctx._prediction_health_key(symbol, timeframe), {}
-            )
+            health = health_entries.get(prediction_health_key(symbol, timeframe), {})
             degraded = bool(health.get("degraded", False))
             raw_failures = health.get("consecutive_failures", 0)
             try:
@@ -185,7 +190,7 @@ def build_runtime_manifest(
                 prediction_status=snapshot.status,
                 allowed_statuses=ctx.SERVE_ALLOWED_STATUSES,
             )
-            key = ctx._prediction_health_key(symbol, timeframe)
+            key = prediction_health_key(symbol, timeframe)
 
             ops_entries.append(
                 {

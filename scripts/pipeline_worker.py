@@ -199,51 +199,6 @@ def prediction_enabled_for_timeframe(timeframe: str) -> bool:
     return timeframe not in PREDICTION_DISABLED_TIMEFRAMES
 
 
-def _load_prediction_health(
-    path: Path = PREDICTION_HEALTH_FILE,
-) -> dict[str, dict] | dict[None]:
-    """
-    Prediction health 파일 로드.
-    Error 발생 시 빈 dict 반환.
-
-    Args:
-      - path: Prediction health 파일 경로
-    Returns:
-      - dict[str, dict] | dict[None]: Prediction health 정보
-    Prediction_health.json 파일 구조:
-      {
-        "version": 1,
-        "updated_at": "2022-01-01T00:00:00Z",
-        "entries": {
-          "BTC/USDT_1h": {
-            "symbol": "BTC/USDT",
-            "timeframe": "1h",
-            "degraded": false,
-            "last_success_at": "2022-01-01T00:00:00Z",
-            "last_failure_at": "2022-01-01T00:00:00Z",
-            "consecutive_failures": 0,
-            "last_error": null,
-            "updated_at": "2022-01-01T00:00:00Z"
-          }
-        }, ...
-      }
-    """
-    return predict_ops.load_prediction_health(_ctx(), path=path)
-
-
-def _save_prediction_health(
-    entries: dict[str, dict], path: Path = PREDICTION_HEALTH_FILE
-) -> None:
-    """
-    Prediction health 파일 저장.
-
-    Args:
-      - entries: Prediction health 정보
-      - path: Prediction health 파일 경로
-    """
-    predict_ops.save_prediction_health(_ctx(), entries, path=path)
-
-
 def _format_utc(dt: datetime | None) -> str | None:
     """
     UTC datetime을 ISO 8601 형식의 문자열로 변환한다.

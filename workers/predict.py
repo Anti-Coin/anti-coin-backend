@@ -26,7 +26,6 @@ def load_prediction_health(ctx, path: Path) -> dict[str, dict]:
     prediction health 파일 로드.
 
     Called from:
-      - `scripts.pipeline_worker._load_prediction_health`
       - `upsert_prediction_health`
 
     Why:
@@ -50,7 +49,6 @@ def save_prediction_health(ctx, entries: dict[str, dict], path: Path) -> None:
     Prediction health 파일 저장.
 
     Called from:
-      - `scripts.pipeline_worker._save_prediction_health`
       - `upsert_prediction_health`
 
     Why:

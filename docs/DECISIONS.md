@@ -89,6 +89,7 @@
 | D-2026-03-05-82 | Storage Guard Unknown-Level Fail-Closed Lock | storage guard level 정규화에서 unknown 값은 `normal`로 완화하지 않고 `block`으로 강등한다(`coerce_storage_guard_level`). unknown 입력을 fail-open으로 처리하지 않도록 잠근다. | storage watermark taxonomy가 확장되거나, unknown 처리 정책을 명시적으로 변경할 때 |
 | D-2026-03-05-83 | Symbol Activation State-Only Persistence Lock | `symbol_activation.json` persisted payload는 key-identity 기반으로 `state/coverage*/ready_at/updated_at`만 저장한다. `symbol/visibility/is_full_backfilled`는 파일에서 제거하고, 로드/manifest 경로에서 state 기반 파생으로 복원한다. | admin/manifest가 state 외 필드의 persisted SoT를 요구하거나, activation 스키마 버전 업이 필요할 때 |
 | D-2026-03-05-84 | Prediction Health Store Shared-Reader Lock | `prediction_health.json` read/normalize/save 로직은 `utils/prediction_health_store.py` 단일 경로를 사용한다. API(`/status`)와 worker(upsert)가 같은 파일 계약/오류 의미론을 공유하도록 잠근다. | prediction health 스키마 버전 업, 또는 API/worker의 상태 의미론을 의도적으로 분기해야 할 때 |
+| D-2026-03-05-85 | Wrapper Reduction Incremental Lock | `_ctx()` wrapper 축소는 big-bang 제거가 아니라 dead wrapper 우선 제거 + 공통 모듈 직접호출 전환으로 단계적으로 수행한다(`TS-011`). 테스트 monkeypatch 계약을 깨는 변경은 별도 단계/검증으로 분리한다. | 테스트 계약을 workers 직접 참조로 전환할 준비가 완료되거나, `_ctx` 제거 범위를 확대해야 할 때 |
 
 ## 3. Decision Operation Policy
 1. 활성 문서는 요약만 유지한다(상세 서술 금지).
