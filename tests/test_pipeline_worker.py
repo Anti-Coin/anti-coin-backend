@@ -40,6 +40,7 @@ from scripts.pipeline_worker import (
     upsert_prediction_health,
     write_runtime_manifest,
 )
+from utils.serve_policy import evaluate_serve_allowed
 from utils.ingest_state import IngestStateStore
 from utils.pipeline_contracts import (
     IngestExecutionOutcome,
@@ -220,6 +221,33 @@ def test_prediction_enabled_for_timeframe_respects_disabled_set(monkeypatch):
 
     assert prediction_enabled_for_timeframe("1m") is False
     assert prediction_enabled_for_timeframe("1h") is True
+
+
+def test_evaluate_serve_allowed_requires_visible_and_allowed_status():
+    assert (
+        evaluate_serve_allowed(
+            visibility="visible",
+            prediction_status="fresh",
+            allowed_statuses={"fresh", "stale"},
+        )
+        is True
+    )
+    assert (
+        evaluate_serve_allowed(
+            visibility="hidden_backfilling",
+            prediction_status="fresh",
+            allowed_statuses={"fresh", "stale"},
+        )
+        is False
+    )
+    assert (
+        evaluate_serve_allowed(
+            visibility="visible",
+            prediction_status="hard_stale",
+            allowed_statuses={"fresh", "stale"},
+        )
+        is False
+    )
 
 
 def test_run_prediction_and_save_skips_disabled_timeframe(monkeypatch):

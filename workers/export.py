@@ -12,6 +12,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from utils.serve_policy import evaluate_serve_allowed
+
 
 def static_export_candidates(
     ctx,
@@ -164,11 +166,12 @@ def build_runtime_manifest(
             status_counts[snapshot.status] = (
                 status_counts.get(snapshot.status, 0) + 1
             )
-            serve_allowed = (
-                # serve_allowed는 fail-open 방지를 위해
-                # visibility + freshness 상태를 동시에 만족해야 한다.
-                visibility == "visible"
-                and snapshot.status in ctx.SERVE_ALLOWED_STATUSES
+            # serve_allowed는 fail-open 방지를 위해
+            # visibility + freshness 상태를 동시에 만족해야 한다.
+            serve_allowed = evaluate_serve_allowed(
+                visibility=visibility,
+                prediction_status=snapshot.status,
+                allowed_statuses=ctx.SERVE_ALLOWED_STATUSES,
             )
             key = ctx._prediction_health_key(symbol, timeframe)
 
