@@ -22,11 +22,9 @@ from scripts.pipeline_worker import (
     WorkerPersistentState,
     append_runtime_cycle_metrics,
     build_runtime_manifest,
-    evaluate_detection_gate,
     enforce_1m_retention,
     get_first_timestamp,
     get_disk_usage_percent,
-    get_exchange_latest_closed_timestamp,
     get_last_timestamp,
     initialize_boundary_schedule,
     prediction_enabled_for_timeframe,
@@ -46,8 +44,10 @@ import scripts.pipeline_worker as pipeline_worker_module
 import scripts.worker_config as worker_config
 from workers.export import save_history_to_json as export_save_history_to_json
 from workers.ingest import (
+    evaluate_detection_gate as ingest_evaluate_detection_gate,
     detect_gaps_from_ms_timestamps,
     fetch_ohlcv_paginated,
+    get_exchange_latest_closed_timestamp as ingest_get_exchange_latest_closed_timestamp,
     refill_detected_gaps,
 )
 from utils.serve_policy import evaluate_serve_allowed
@@ -802,7 +802,8 @@ def test_get_exchange_latest_closed_timestamp_ignores_open_candle():
     ]
     exchange = FakeExchange(candles)
 
-    latest = get_exchange_latest_closed_timestamp(
+    latest = ingest_get_exchange_latest_closed_timestamp(
+        pipeline_worker_module,
         exchange,
         "BTC/USDT",
         "1h",
@@ -835,7 +836,8 @@ def test_evaluate_detection_gate_skips_when_no_new_closed_candle():
     ]
     exchange = FakeExchange(candles)
 
-    should_run, reason = evaluate_detection_gate(
+    decision = ingest_evaluate_detection_gate(
+        pipeline_worker_module,
         query_api=object(),
         detection_exchange=exchange,
         symbol="BTC/USDT",
@@ -844,8 +846,8 @@ def test_evaluate_detection_gate_skips_when_no_new_closed_candle():
         last_saved=last_saved,
     )
 
-    assert should_run is False
-    assert reason == "no_new_closed_candle"
+    assert decision.should_run is False
+    assert decision.reason.value == "no_new_closed_candle"
 
 
 def test_evaluate_detection_gate_runs_when_detection_unavailable(monkeypatch):
@@ -854,7 +856,8 @@ def test_evaluate_detection_gate_runs_when_detection_unavailable(monkeypatch):
         lambda *args, **kwargs: None,
     )
 
-    should_run, reason = evaluate_detection_gate(
+    decision = ingest_evaluate_detection_gate(
+        pipeline_worker_module,
         query_api=object(),
         detection_exchange=object(),
         symbol="BTC/USDT",
@@ -863,8 +866,8 @@ def test_evaluate_detection_gate_runs_when_detection_unavailable(monkeypatch):
         last_saved=None,
     )
 
-    assert should_run is True
-    assert reason == "detection_unavailable_fallback_run"
+    assert decision.should_run is True
+    assert decision.reason.value == "detection_unavailable_fallback_run"
 
 
 def test_evaluate_detection_gate_1d_skips_when_no_new_closed_candle():
@@ -876,7 +879,8 @@ def test_evaluate_detection_gate_1d_skips_when_no_new_closed_candle():
     ]
     exchange = SimpleNamespace(fetch_ohlcv=lambda *args, **kwargs: candles)
 
-    should_run, reason = evaluate_detection_gate(
+    decision = ingest_evaluate_detection_gate(
+        pipeline_worker_module,
         query_api=object(),
         detection_exchange=exchange,
         symbol="BTC/USDT",
@@ -885,8 +889,8 @@ def test_evaluate_detection_gate_1d_skips_when_no_new_closed_candle():
         last_saved=last_saved,
     )
 
-    assert should_run is False
-    assert reason == "no_new_closed_candle"
+    assert decision.should_run is False
+    assert decision.reason.value == "no_new_closed_candle"
 
 
 def test_lookback_days_for_timeframe_uses_1m_policy():

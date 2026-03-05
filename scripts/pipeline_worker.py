@@ -902,55 +902,6 @@ def get_exchange_earliest_closed_timestamp(
     )
 
 
-def get_exchange_latest_closed_timestamp(
-    exchange,
-    symbol: str,
-    timeframe: str,
-    *,
-    now: datetime | None = None,
-) -> datetime | None:
-    """
-    거래소 latest closed 조회 래퍼.
-
-    Called from:
-    - evaluate_detection_gate
-    """
-    return ingest_ops.get_exchange_latest_closed_timestamp(
-        _ctx(),
-        exchange,
-        symbol,
-        timeframe,
-        now=now,
-    )
-
-
-def evaluate_detection_gate(
-    query_api,
-    detection_exchange,
-    *,
-    symbol: str,
-    timeframe: str,
-    now: datetime,
-    last_saved: datetime | None = None,
-) -> tuple[bool, str]:
-    """
-    boundary+detection gate 판단 래퍼.
-
-    Called from:
-    - run_worker() scheduler_mode=boundary
-    """
-    decision = ingest_ops.evaluate_detection_gate(
-        _ctx(),
-        query_api,
-        detection_exchange,
-        symbol=symbol,
-        timeframe=timeframe,
-        now=now,
-        last_saved=last_saved,
-    )
-    return decision.should_run, decision.reason.value
-
-
 def evaluate_detection_gate_decision(
     query_api,
     detection_exchange,
