@@ -528,7 +528,7 @@ def get_first_timestamp(
     """
 
     try:
-        return ctx._query_first_timestamp(query_api, query)
+        return query_first_timestamp(query_api, query)
     except Exception as e:
         ctx.logger.error(f"[{symbol} {timeframe}] DB earliest 조회 중 에러: {e}")
         return None
@@ -565,7 +565,7 @@ def get_last_timestamp(
     """
 
     try:
-        last_time = ctx._query_last_timestamp(query_api, query)
+        last_time = query_last_timestamp(query_api, query)
         if last_time is not None:
             return last_time
     except Exception as e:

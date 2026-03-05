@@ -859,26 +859,6 @@ def write_runtime_manifest(
     )
 
 
-def _query_last_timestamp(query_api, query: str) -> datetime | None:
-    """
-    last timestamp 쿼리 래퍼.
-
-    Called from:
-    - get_last_timestamp wrapper
-    """
-    return ingest_ops.query_last_timestamp(query_api, query)
-
-
-def _query_first_timestamp(query_api, query: str) -> datetime | None:
-    """
-    first timestamp 쿼리 래퍼.
-
-    Called from:
-    - get_first_timestamp wrapper
-    """
-    return ingest_ops.query_first_timestamp(query_api, query)
-
-
 def get_first_timestamp(query_api, symbol: str, timeframe: str) -> datetime | None:
     """
     DB earliest 조회 래퍼.

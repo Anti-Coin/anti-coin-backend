@@ -1229,7 +1229,7 @@ def test_get_last_timestamp_queries_only_timeframe_rows(
         return expected
 
     monkeypatch.setattr(
-        "scripts.pipeline_worker._query_last_timestamp",
+        "workers.ingest.query_last_timestamp",
         fake_query_last_timestamp,
     )
 
@@ -1256,7 +1256,7 @@ def test_get_first_timestamp_queries_only_timeframe_rows(
         return expected
 
     monkeypatch.setattr(
-        "scripts.pipeline_worker._query_first_timestamp",
+        "workers.ingest.query_first_timestamp",
         fake_query_first_timestamp,
     )
 
