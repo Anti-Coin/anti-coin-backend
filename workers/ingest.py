@@ -679,7 +679,8 @@ def evaluate_detection_gate(
     - boundary + detection 하이브리드 정책에서 불필요 cycle을 줄이면서
       경계 정합성을 유지하기 위한 핵심 게이트다.
     """
-    latest_closed = ctx.get_exchange_latest_closed_timestamp(
+    latest_closed = get_exchange_latest_closed_timestamp(
+        ctx,
         detection_exchange,
         symbol,
         timeframe,
@@ -694,7 +695,7 @@ def evaluate_detection_gate(
     reference_last = (
         last_saved
         if last_saved is not None
-        else ctx.get_last_timestamp(query_api, symbol, timeframe)
+        else get_last_timestamp(ctx, query_api, symbol, timeframe)
     )
     if reference_last is not None and reference_last >= latest_closed:
         return DetectionGateDecision(
@@ -726,8 +727,10 @@ def build_symbol_activation_entry(
     - full-backfill 완료 전 심볼 비노출 정책을 코드 레벨에서 강제하기 위함이다.
     """
     canonical_tf = ctx.SYMBOL_ACTIVATION_SOURCE_TIMEFRAME
-    db_first = ctx.get_first_timestamp(query_api, symbol, canonical_tf)
-    db_last = ctx.get_last_timestamp(query_api, symbol, canonical_tf, full_range=True)
+    db_first = get_first_timestamp(ctx, query_api, symbol, canonical_tf)
+    db_last = get_last_timestamp(
+        ctx, query_api, symbol, canonical_tf, full_range=True
+    )
 
     if isinstance(existing_entry, SymbolActivationSnapshot):
         prev_entry = existing_entry

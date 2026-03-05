@@ -850,7 +850,7 @@ def test_evaluate_detection_gate_skips_when_no_new_closed_candle():
 
 def test_evaluate_detection_gate_runs_when_detection_unavailable(monkeypatch):
     monkeypatch.setattr(
-        "scripts.pipeline_worker.get_exchange_latest_closed_timestamp",
+        "workers.ingest.get_exchange_latest_closed_timestamp",
         lambda *args, **kwargs: None,
     )
 
