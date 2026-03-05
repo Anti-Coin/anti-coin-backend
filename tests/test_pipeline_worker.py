@@ -13,7 +13,6 @@ from scripts.pipeline_worker import (
     _lookback_days_for_timeframe,
     _load_symbol_activation,
     _load_watermark_entries,
-    _minimum_required_lookback_rows,
     _record_ingest_outcome_state,
     _run_ingest_timeframe_step,
     _run_publish_timeframe_step,
@@ -1182,7 +1181,7 @@ def test_evaluate_underfill_rebootstrap_detects_backward_gap(monkeypatch):
     db_first = datetime(2026, 1, 23, 0, 0, tzinfo=timezone.utc)
 
     monkeypatch.setattr(
-        "scripts.pipeline_worker._minimum_required_lookback_rows",
+        "workers.ingest.minimum_required_lookback_rows",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
@@ -1206,7 +1205,7 @@ def test_evaluate_underfill_rebootstrap_skips_when_filled(monkeypatch):
     db_first = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
 
     monkeypatch.setattr(
-        "scripts.pipeline_worker._minimum_required_lookback_rows",
+        "workers.ingest.minimum_required_lookback_rows",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
@@ -1227,7 +1226,7 @@ def test_evaluate_underfill_rebootstrap_skips_when_filled(monkeypatch):
 def test_evaluate_underfill_rebootstrap_skips_backward_for_non_fullfill_tf(monkeypatch):
     """D-020: 비full-fill TF (1m)에서는 backward check를 수행하지 않는다."""
     monkeypatch.setattr(
-        "scripts.pipeline_worker._minimum_required_lookback_rows",
+        "workers.ingest.minimum_required_lookback_rows",
         lambda *args, **kwargs: None,
     )
 
@@ -1349,8 +1348,22 @@ def test_build_runtime_manifest_marks_hidden_symbol_unservable(tmp_path):
 
 
 def test_minimum_required_lookback_rows_for_1h_only():
-    assert _minimum_required_lookback_rows("1h", 30) == 576
-    assert _minimum_required_lookback_rows("1d", 30) is None
+    assert (
+        ingest_ops_module.minimum_required_lookback_rows(
+            pipeline_worker_module,
+            "1h",
+            30,
+        )
+        == 576
+    )
+    assert (
+        ingest_ops_module.minimum_required_lookback_rows(
+            pipeline_worker_module,
+            "1d",
+            30,
+        )
+        is None
+    )
 
 
 def test_enforce_1m_retention_calls_delete_api(monkeypatch):

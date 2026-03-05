@@ -695,16 +695,6 @@ def resolve_ingest_since(
     )
 
 
-def _minimum_required_lookback_rows(timeframe: str, lookback_days: int) -> int | None:
-    """
-    coverage underfill 최소 row 기준 계산 래퍼.
-
-    Called from:
-    - run_worker() underfill guard
-    """
-    return ingest_ops.minimum_required_lookback_rows(_ctx(), timeframe, lookback_days)
-
-
 def get_lookback_close_count(
     query_api, symbol: str, timeframe: str, lookback_days: int
 ) -> int | None:
@@ -1085,7 +1075,8 @@ def _evaluate_underfill_rebootstrap(
     lookback_days = _lookback_days_for_timeframe(timeframe)
 
     # 1) forward coverage: lookback window 내 row 수 검사 (1h 전용)
-    min_required_rows = _minimum_required_lookback_rows(
+    min_required_rows = ingest_ops.minimum_required_lookback_rows(
+        _ctx(),
         timeframe,
         lookback_days,
     )
