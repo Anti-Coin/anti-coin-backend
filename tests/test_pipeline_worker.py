@@ -25,7 +25,6 @@ from scripts.pipeline_worker import (
     initialize_boundary_schedule,
     prediction_enabled_for_timeframe,
     resolve_boundary_due_timeframes,
-    resolve_ingest_since,
     resolve_disk_watermark_level,
     run_worker,
     should_block_initial_backfill,
@@ -973,7 +972,8 @@ def test_resolve_ingest_since_prefers_db_last_over_state_cursor():
     state_since = datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
     db_last = datetime(2026, 2, 13, 9, 0, tzinfo=timezone.utc)
 
-    since, source = resolve_ingest_since(
+    since, source = ingest_ops_module.resolve_ingest_since(
+        pipeline_worker_module,
         symbol="BTC/USDT",
         timeframe="1h",
         state_since=state_since,
@@ -990,7 +990,8 @@ def test_resolve_ingest_since_rebootstraps_when_db_is_empty():
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
     state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
 
-    since, source = resolve_ingest_since(
+    since, source = ingest_ops_module.resolve_ingest_since(
+        pipeline_worker_module,
         symbol="BTC/USDT",
         timeframe="1h",
         state_since=state_since,
@@ -1007,7 +1008,8 @@ def test_resolve_ingest_since_blocks_1m_drift_backfill_on_block_level():
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
     state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
 
-    since, source = resolve_ingest_since(
+    since, source = ingest_ops_module.resolve_ingest_since(
+        pipeline_worker_module,
         symbol="BTC/USDT",
         timeframe="1m",
         state_since=state_since,
@@ -1025,7 +1027,8 @@ def test_resolve_ingest_since_rebootstraps_when_underfilled_even_with_db_last():
     state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
     db_last = datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
 
-    since, source = resolve_ingest_since(
+    since, source = ingest_ops_module.resolve_ingest_since(
+        pipeline_worker_module,
         symbol="BTC/USDT",
         timeframe="1h",
         state_since=state_since,
@@ -1043,7 +1046,8 @@ def test_resolve_ingest_since_uses_exchange_earliest_for_1h_bootstrap():
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
     earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
 
-    since, source = resolve_ingest_since(
+    since, source = ingest_ops_module.resolve_ingest_since(
+        pipeline_worker_module,
         symbol="BTC/USDT",
         timeframe="1h",
         state_since=None,
@@ -1062,7 +1066,8 @@ def test_resolve_ingest_since_uses_exchange_earliest_for_1h_state_drift():
     earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
     state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
 
-    since, source = resolve_ingest_since(
+    since, source = ingest_ops_module.resolve_ingest_since(
+        pipeline_worker_module,
         symbol="BTC/USDT",
         timeframe="1h",
         state_since=state_since,
@@ -1080,7 +1085,8 @@ def test_resolve_ingest_since_uses_exchange_earliest_for_1d_bootstrap():
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
     earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
 
-    since, source = resolve_ingest_since(
+    since, source = ingest_ops_module.resolve_ingest_since(
+        pipeline_worker_module,
         symbol="BTC/USDT",
         timeframe="1d",
         state_since=None,
@@ -1099,7 +1105,8 @@ def test_resolve_ingest_since_uses_exchange_earliest_for_1w_state_drift():
     earliest = datetime(2020, 1, 6, 0, 0, tzinfo=timezone.utc)
     state_since = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
 
-    since, source = resolve_ingest_since(
+    since, source = ingest_ops_module.resolve_ingest_since(
+        pipeline_worker_module,
         symbol="BTC/USDT",
         timeframe="1w",
         state_since=state_since,
@@ -1118,7 +1125,8 @@ def test_resolve_ingest_since_enforces_full_backfill_for_hidden_1h():
     earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
     db_last = datetime(2026, 2, 13, 11, 0, tzinfo=timezone.utc)
 
-    since, source = resolve_ingest_since(
+    since, source = ingest_ops_module.resolve_ingest_since(
+        pipeline_worker_module,
         symbol="BTC/USDT",
         timeframe="1h",
         state_since=db_last,
@@ -1139,7 +1147,8 @@ def test_resolve_ingest_since_force_rebootstrap_uses_exchange_earliest_for_fullf
     earliest = datetime(2020, 1, 1, 0, 0, tzinfo=timezone.utc)
     db_last = datetime(2026, 2, 13, 10, 0, tzinfo=timezone.utc)
 
-    since, source = resolve_ingest_since(
+    since, source = ingest_ops_module.resolve_ingest_since(
+        pipeline_worker_module,
         symbol="BTC/USDT",
         timeframe="1d",
         state_since=db_last,
@@ -1158,7 +1167,8 @@ def test_resolve_ingest_since_force_rebootstrap_uses_lookback_for_non_fullfill_t
     """D-020: 비full-fill TF의 force_rebootstrap은 기존 lookback 방식을 유지한다."""
     now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
 
-    since, source = resolve_ingest_since(
+    since, source = ingest_ops_module.resolve_ingest_since(
+        pipeline_worker_module,
         symbol="BTC/USDT",
         timeframe="1m",
         state_since=None,
@@ -1480,8 +1490,8 @@ def test_run_ingest_timeframe_step_blocked_storage_guard_stops_without_watermark
     )
 
     monkeypatch.setattr(
-        "scripts.pipeline_worker.resolve_ingest_since",
-        lambda **kwargs: (None, "blocked_storage_guard"),
+        "workers.ingest.resolve_ingest_since",
+        lambda *args, **kwargs: (None, "blocked_storage_guard"),
     )
     monkeypatch.setattr(
         "workers.ingest.get_last_timestamp",
@@ -1549,8 +1559,8 @@ def test_run_ingest_timeframe_step_reads_db_last_with_full_range_for_1d(
         fake_get_last_timestamp,
     )
     monkeypatch.setattr(
-        "scripts.pipeline_worker.resolve_ingest_since",
-        lambda **kwargs: (None, "blocked_storage_guard"),
+        "workers.ingest.resolve_ingest_since",
+        lambda *args, **kwargs: (None, "blocked_storage_guard"),
     )
 
     should_continue_publish, next_activation = _run_ingest_timeframe_step(

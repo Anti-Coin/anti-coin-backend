@@ -663,38 +663,6 @@ def _lookback_days_for_timeframe(timeframe: str) -> int:
 # scripts.worker_guards로 이동. import를 통해 이 모듈 네임스페이스에 재노출.
 
 
-def resolve_ingest_since(
-    *,
-    symbol: str,
-    timeframe: str,
-    state_since: datetime | None,
-    last_time: datetime | None,
-    disk_level: str,
-    force_rebootstrap: bool = False,
-    bootstrap_since: datetime | None = None,
-    enforce_full_backfill: bool = False,
-    now: datetime | None = None,
-) -> tuple[datetime | None, str]:
-    """
-    ingest since 판정 래퍼.
-
-    Called from:
-    - run_worker() 각 symbol/timeframe ingest 직전
-    """
-    return ingest_ops.resolve_ingest_since(
-        _ctx(),
-        symbol=symbol,
-        timeframe=timeframe,
-        state_since=state_since,
-        last_time=last_time,
-        disk_level=disk_level,
-        force_rebootstrap=force_rebootstrap,
-        bootstrap_since=bootstrap_since,
-        enforce_full_backfill=enforce_full_backfill,
-        now=now,
-    )
-
-
 # enforce_1m_retention:
 # scripts.worker_guards로 이동. import를 통해 이 모듈 네임스페이스에 재노출.
 
@@ -1171,7 +1139,8 @@ def _run_ingest_timeframe_step(
         exchange_earliest=exchange_earliest,
     )
 
-    since, since_source_text = resolve_ingest_since(
+    since, since_source_text = ingest_ops.resolve_ingest_since(
+        _ctx(),
         symbol=symbol,
         timeframe=timeframe,
         state_since=state_since,
