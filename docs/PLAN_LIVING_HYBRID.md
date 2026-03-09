@@ -44,7 +44,7 @@
 
 ## 4.2 Phase D Model Coverage Baseline (Current Runtime Artifact Boundary)
 1. 현재 런타임 모델 아티팩트 단위는 `symbol+timeframe canonical`이다(`models/model_{SYMBOL}_{TIMEFRAME}.json`).
-2. primary timeframe에는 legacy fallback(`models/model_{SYMBOL}.json`)을 유지한다.
+2. runtime predict load는 `models/model_{SYMBOL}_{TIMEFRAME}.json` canonical-only다.
 3. 현재 코드 경로에는 cross-symbol shared 단일 파일 모델이 없다.
 4. shared/dedicated coverage resolver와 자동 승격 정책은 `D-011`(hold) 및 `D-003~D-005`에서 후속으로 고정한다.
 5. 관련 정책 상세는 `D-2026-03-03-71`, 후속 구현 단위는 `D-011`에서 관리한다.

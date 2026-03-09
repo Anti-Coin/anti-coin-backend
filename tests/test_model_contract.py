@@ -112,3 +112,25 @@ def test_predict_contract_uses_canonical_model_and_writes_json_and_influx(
     assert getattr(record.index, "tz", None) is not None
     assert set(record["symbol"].unique().tolist()) == {"BTC/USDT"}
     assert set(record["timeframe"].unique().tolist()) == {"1h"}
+
+
+def test_predict_contract_does_not_fallback_to_primary_legacy_model(
+    tmp_path, monkeypatch
+):
+    models_dir = tmp_path / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    (models_dir / "model_BTC_USDT.json").write_text("legacy-json")
+
+    monkeypatch.setattr(pipeline_worker, "MODELS_DIR", models_dir)
+    monkeypatch.setattr(pipeline_worker, "PREDICTION_DISABLED_TIMEFRAMES", set())
+    monkeypatch.setattr(pipeline_worker, "MIN_SAMPLE_BY_TIMEFRAME", {})
+
+    result, error = pipeline_worker.run_prediction_and_save(
+        write_api=None,
+        query_api=None,
+        symbol="BTC/USDT",
+        timeframe="1h",
+    )
+
+    assert result == "failed"
+    assert error == "model_missing"

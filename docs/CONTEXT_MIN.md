@@ -17,7 +17,7 @@
 
 ## 3. Phase D Active Baseline
 1. 현재 런타임 모델 아티팩트 단위는 `symbol+timeframe canonical`이다(`D-2026-03-03-71`).
-2. primary timeframe에는 legacy fallback(`model_{symbol}.json`)을 유지한다.
+2. runtime predict load는 `model_{symbol}_{timeframe}.json` canonical-only다.
 3. shared/dedicated coverage resolver는 `D-011` hold로 남아 있다.
 4. 모델 부재/샘플 부족(`model_missing`/`insufficient_data`)은 상태/사유를 숨기지 않고 노출한다.
 

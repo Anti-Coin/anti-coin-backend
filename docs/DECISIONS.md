@@ -1,6 +1,6 @@
 # Coin Predict Decision Register (Active)
 
-- Last Updated: 2026-03-05
+- Last Updated: 2026-03-09
 - Scope: 활성 결정 요약 + archive 원문 링크
 - Full Phase A History: `docs/archive/phase_a/DECISIONS_PHASE_A_FULL_2026-02-12.md`
 - Full Phase B History: `docs/archive/phase_b/DECISIONS_PHASE_B_FULL_2026-02-19.md`
@@ -75,7 +75,7 @@
 | D-2026-02-26-68 | Phase D Automation Scope Lock (Auto Promotion Included) | Phase D 최종 목표를 `자동 재학습 + 자동 승격`까지 포함하는 완전 자동화로 잠근다. 단, 실행 순서는 안정성 우선으로 고정한다: 1차는 시간 기반 재학습(`1h` 일 1회) + lock/관측성, 2차는 shadow 평가/승격 게이트를 통과한 경우에만 자동 승격(`fail-closed`)을 허용한다. 이벤트 기반 트리거는 1차 범위에서 제외하고 후속 최적화로 보류한다. | 트래픽/운영자 수 증가로 학습 빈도와 승격 정책의 정밀도가 필요해지거나, 이벤트 트리거 도입의 비용 대비 효과가 확인될 때 |
 | D-2026-03-03-69 | D-013 Retraining Time Policy Lock (Phase 1) | 재학습 시간 정책을 1차로 잠근다. 실행 기준은 `00:35 UTC` daily scheduler이며 TF due matrix는 `1h/1d=매일`, `1w=매주 월요일`, `1M=매월 1일`이다. 실패 재시도는 `N=2`(backoff `10m -> 30m`)로 고정하고, no-overlap lock이 선행되지 않으면 재시도를 포함한 자동 실행을 허용하지 않는다. | 런타임 overrun/락 경합 증가, 또는 학습 완료 시각이 ingest/publish 안정 구간과 충돌할 때 |
 | D-2026-03-03-70 | D-013 Event Catalog Lock (Deferred Execution) | 이벤트 기반 재학습은 Phase 1에서 실행하지 않되, 카탈로그/임계치를 선잠금한다. 이벤트는 `EVT_PRICE_SHOCK_1H(abs_r_1h >= 4%)`, `EVT_VOL_SPIKE_24H(realized_vol_24h >= 2x rolling_median_30d)`, `EVT_MODEL_DRIFT(shadow_mae_3d > champion_mae_3d * 1.2)`로 고정한다. 공통 가드는 `2회 연속 관측 + cooldown 24h + min_model_age 12h`다. | 이벤트 오탐/미탐 비율이 허용치를 넘거나, drift 지표 정의가 변경될 때 |
-| D-2026-03-03-71 | Model Artifact Granularity Clarification | 현재 런타임 모델 아티팩트 단위는 `symbol+timeframe` canonical(`model_{symbol}_{timeframe}.json`)이다. primary timeframe에만 legacy fallback(`model_{symbol}.json`)을 유지하며, cross-symbol shared 단일 파일 모델은 현재 코드 경로에 없다. shared/dedicated 분리 승격 정책은 후속(`D-011`)에서 다룬다. | runtime load 경로가 shared 단일 파일 또는 registry resolver로 바뀔 때 |
+| D-2026-03-03-71 | Model Artifact Granularity Clarification | 현재 런타임 predict load 경로는 `symbol+timeframe` canonical(`model_{symbol}_{timeframe}.json`) only다. primary legacy model file(`model_{symbol}.json`)은 남아 있을 수 있지만 runtime fallback은 제거됐다. cross-symbol shared 단일 파일 모델은 현재 코드 경로에 없다. shared/dedicated 분리 승격 정책은 후속(`D-011`)에서 다룬다. | runtime load 경로가 shared 단일 파일 또는 registry resolver로 바뀔 때 |
 | D-2026-03-03-72 | High-Risk Refactor Execution Gate Lock | 고위험 구조개편은 `legacy kill -> contract split -> modularization` 순서로 고정한다. 실행 게이트는 `로컬 테스트 + 로컬 스모크` 선행이며, 검증 전 `dev` push(자동 배포 유발)를 금지한다. 단계별 롤백 경계는 stage 커밋 단위로 유지한다. | 브랜치/배포 정책이 변경되거나, 로컬 스모크와 서버 런타임의 괴리가 반복될 때 |
 | D-2026-03-04-73 | Status-Monitor Parity Lock | `/status` 판정은 monitor 기준으로 잠근다. `utils.prediction_status` 공통 evaluator와 Influx-JSON consistency override 규칙을 API/monitor에 동일 적용한다. Influx 조회 실패 시 JSON 판정을 유지한다. | false positive/negative 비율이 허용치를 넘거나 Influx query 비용이 임계치를 초과할 때 |
 | D-2026-03-04-74 | Manifest Contract Consolidation Lock | `public_manifest`/`ops_manifest` 파일 분리 대신 단일 `manifest.v2` 내 `public`/`ops` 섹션 분리로 고정한다(1회 atomic write). | payload 크기/캐시 정책 충돌로 별도 파일 분리가 필요해질 때 |

@@ -23,7 +23,7 @@
 3. publish trigger: ingest stage in-cycle 후 publish reconcile 실행
 4. monitor consistency current baseline: `symbol+timeframe` 기준 + `PRIMARY_TIMEFRAME` legacy fallback
 5. ingest routing: `1d/1w/1M` 포함 전 timeframe direct fetch(derived downsample 경로 제거)
-6. model artifact boundary: `symbol+timeframe canonical` + primary legacy fallback(`D-2026-03-03-71`)
+6. model artifact boundary: runtime predict load는 `symbol+timeframe canonical` only다. primary legacy model file은 남아 있을 수 있지만 fallback read path는 제거됐다.
 7. `/status` 판정 parity(`D-046`)는 적용 완료됐고, next refactor lock은 scheduler `boundary` 단일 모드(`D-047`)와 legacy 제거(`D-040~D-042`)다.
 
 ## 3. Next Priority Tasks
