@@ -109,12 +109,12 @@
 | D-049 | P1 | CI/CD 브랜치 게이트 분리(`dev` CI-only, `main` deploy-only) | done (2026-03-04) | `.github/workflows/ci.yml`을 추가해 `main/dev` CI(test)를 분리했고, `deploy.yml`은 `main push + workflow_dispatch`로 제한했다. 로컬 스모크 경로는 `docker-compose.local.yml` override로 고정했다. |
 | D-040 | **P0** | Legacy Kill Stage 1: 모델 fallback 제거 | done (2026-03-09) | `workers/predict.py`의 runtime load를 `model_{symbol}_{timeframe}.json` canonical-only로 고정했고, legacy model fallback을 제거했다. canonical 누락 시 `model_missing` fail-closed regression과 local smoke를 확인했다. |
 | D-041 | **P0** | Legacy Kill Stage 2: static dual-write 제거 | done (2026-03-09) | prediction/history는 canonical-only write로 고정했고, status/monitor read도 canonical-only 경로로 전환했다. admin/ops/status 회귀와 local smoke에서 canonical-only 산출물 기준 동작을 확인했다. |
-| D-042 | P1 | Legacy Kill Stage 3: Influx legacy query fallback 제거 | in_progress (2026-03-09) | ingest/monitor 경로에서 no-timeframe legacy query fallback을 제거하고 timeframe-tag row만 신뢰하도록 전환했다. full-fill/rebootstrap/activation regression과 local smoke가 통과하면 done 전환한다. |
+| D-042 | P1 | Legacy Kill Stage 3: Influx legacy query fallback 제거 | done (2026-03-09) | ingest/monitor 경로에서 no-timeframe legacy query fallback을 제거하고 timeframe-tag row만 신뢰하도록 고정했다. full-fill/rebootstrap/activation regression과 local smoke를 확인했다. |
 | D-043 | P1 | Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`) | open | 단일 `manifest.v2` payload에 `public`/`ops` 섹션 계약을 고정하고 writer/consumer를 분리한다. FE는 `public`만, admin/ops는 `ops`만 사용해야 한다. |
 | D-044 | P1 | 상태 스키마 정규화(`symbol_activation`/`prediction_health`) | open | 중복 identity/파생 필드를 정규화한다(예: `symbol_activation` 단일 SoT 상태 기준). 상태 파일 read/write 계약 테스트를 고정한다. |
 | D-045 | P2 | Orchestrator 모듈화 인터페이스 잠금 | open | `state_store`/`model_io`/`policy_eval` 인터페이스를 문서+코드로 고정하고, `pipeline_worker`는 조합 책임으로 축소한다. 회귀 테스트 통과. |
 | D-046 | **P0** | Status-Monitor 판정 경로 단일화(모니터 기준) | done (2026-03-04) | `/status`가 monitor와 동일한 Influx-JSON consistency override(`apply_influx_json_consistency`)를 사용하도록 정렬했다. Influx 조회 실패/결과 없음(`latest_ohlcv_ts is None`)은 JSON 판정을 그대로 유지한다. 회귀: `PYENV_VERSION=coin pytest -q tests/test_api_status.py tests/test_status_monitor.py` (`37 passed`). |
-| D-047 | P1 | Scheduler mode boundary 단일화(`poll_loop` 제거) | in_progress (2026-03-09) | `WORKER_SCHEDULER_MODE=boundary` 단일 계약으로 고정하고 `poll_loop`/invalid fallback을 제거하는 코드를 적용했다. fail-fast regression과 local smoke가 확인되면 done 전환한다. |
+| D-047 | P1 | Scheduler mode boundary 단일화(`poll_loop` 제거) | done (2026-03-09) | `WORKER_SCHEDULER_MODE=boundary` 단일 계약으로 고정했고 `poll_loop`/invalid fallback을 제거했다. fail-fast regression과 local smoke를 확인했다. |
 | D-048 | P2 (Hold) | 상태 파일 축소/통합 검증(`prediction_health`/`ingest_watermarks`) | open | 축소 우선순위는 `prediction_health redundant identity -> symbol_activation redundant/derived -> 나머지`로 잠근다. `ingest_watermarks` 제거 가능성은 `ingest_state` 대체 설계+회귀 테스트로 검증하고, 인과/재시작 경계가 깨지면 파일 유지 결정을 문서로 잠근다. |
 | D-050 | P1 | Operator Usecase Baseline 문서 잠금 | done (2026-03-05) | 운영자 기준 stage 계약(ingest/predict/export/serve/monitor), 실패 전파 스키마(`stage/cause/impact`), 상태 파일 축소 우선순위를 `docs/PIPELINE_OPERATOR_USECASES.md`로 고정했다. |
 | D-051 | P1 | D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리 | in_progress (2026-03-05) | API가 monitor 엔트리포인트 모듈을 직접 import하지 않고 공통 판정 로직을 `utils/*` 공유 모듈로 분리한다. compose는 Influx healthcheck + `service_healthy` 의존성 경계로 보강하고, local smoke 경로는 base+local override로 고정한다. `worker-ingest` local smoke와 경고 정리는 반영 완료됐고, monitor/worker-train 최소 smoke 증거 확보 시 done 전환한다. |
@@ -123,13 +123,11 @@
 
 ## 3. Immediate Bundle (Revised 2026-03-09)
 1. `D-051` — D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리
-2. `D-042` — Legacy Kill Stage 3: Influx legacy query fallback 제거
-3. `D-047` — Scheduler mode boundary 단일화(`poll_loop` 제거)
-4. `D-043` — Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
-5. `D-044` — 상태 스키마 정규화
-6. `D-045` — Orchestrator 모듈화 인터페이스 잠금
-7. `D-013` — 재학습 트리거 정책 정의(1차 시간 기반)
-8. `D-014` — 학습 실행 no-overlap/락 가드
+2. `D-043` — Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
+3. `D-044` — 상태 스키마 정규화
+4. `D-045` — Orchestrator 모듈화 인터페이스 잠금
+5. `D-013` — 재학습 트리거 정책 정의(1차 시간 기반)
+6. `D-014` — 학습 실행 no-overlap/락 가드
 9. `D-015` — 학습 실행 관측성/알림 baseline
 10. `D-003` — Shadow 추론 파이프라인 도입
 11. `D-004` — Champion vs Shadow 평가 리포트

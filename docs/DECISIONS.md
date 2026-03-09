@@ -48,7 +48,7 @@
 | D-2026-02-17-37 | `C-008` RCA Result | legacy fallback을 no-timeframe row로 제한해 cross-timeframe 오염 차단 | guard 재트리거가 운영 허용치 초과 |
 | D-2026-02-17-38 | Worker Split + Publish Gate | 당시 baseline은 `worker-ingest`/`worker-publish` 2-service + ingest watermark gate였다. 현재 실행 방향은 `D-2026-02-24-56` 직렬 전환으로 대체됨(legacy decision trace). | 직렬 전환 실패, 또는 자원 경합/장애 격리 요구로 split 재도입 필요 시 |
 | D-2026-02-19-39 | Freshness Thresholds | `1w/1M` threshold 고정, `4h`는 legacy compatibility 유지 | `1w/1M` 경보 과소/과다, `4h` 비사용 근거 확정 |
-| D-2026-02-19-40 | Monitor Consistency Scope | monitor consistency는 `symbol+timeframe`, legacy fallback은 `PRIMARY_TIMEFRAME`만 허용 | query 비용 임계 초과, 오탐/누락 재발 |
+| D-2026-02-19-40 | Monitor Consistency Scope | monitor consistency는 `symbol+timeframe` 기준으로 유지하되, 현재 active runtime은 legacy query fallback 없이 timeframe-tag row만 신뢰한다(`D-042` 완료, legacy trace 포함) | query 비용 임계 초과, 오탐/누락 재발 |
 | D-2026-02-19-41 | SLA-lite Baseline | availability/alert-miss/MTTR-stale 공식 + 일간 rollup/주간 review 고정 | monitor 이벤트 영속화 도입, 사고 빈도 증가 |
 | D-2026-02-20-46 | Long-Stale Escalation | `*_escalated` 이벤트 + `MONITOR_ESCALATION_CYCLES` 기준, monitor는 alert-only 유지 | escalation 알림 과다/과소, poll cadence 변경 |
 | D-2026-02-20-47 | Standalone Training Boundary | 학습은 `worker-train` one-shot 경계로 분리, 자동 재학습/승격은 D 후속 태스크로 분리 | 수동 학습 빈도 급증, 학습-운영 자원 경합 재발 |

@@ -21,20 +21,18 @@
 1. cadence: `UTC boundary + detection gate`
 2. worker topology: `worker-ingest` 단일 실행 경로(ingest -> publish in-cycle causal chain)
 3. publish trigger: ingest stage in-cycle 후 publish reconcile 실행
-4. monitor consistency current baseline: `symbol+timeframe` 기준 + Influx query legacy fallback(`PRIMARY_TIMEFRAME` 한정)
+4. monitor consistency current baseline: `symbol+timeframe` 기준 + timeframe-tag row only query
 5. ingest routing: `1d/1w/1M` 포함 전 timeframe direct fetch(derived downsample 경로 제거)
 6. model artifact boundary: runtime predict load는 `symbol+timeframe canonical` only다. primary legacy model file은 남아 있을 수 있지만 fallback read path는 제거됐다(`D-040` done).
 7. static artifact boundary: prediction/history write와 status/monitor read는 canonical-only 경로로 고정됐다(`D-041` done).
-8. `/status` 판정 parity(`D-046`)는 적용 완료됐고, next refactor lock은 query fallback 제거(`D-042`)와 scheduler `boundary` fail-fast 잠금(`D-047`)이다.
+8. `/status` 판정 parity(`D-046`)와 legacy query/scheduler fallback 제거(`D-042`, `D-047`)는 적용 완료됐다. next refactor lock은 `D-051` 이후 contract/state/orchestrator 정리다.
 
 ## 3. Next Priority Tasks
-1. `D-042`: Legacy Kill Stage 3 — Influx legacy query fallback 제거(ingest+monitor)
-2. `D-047`: Scheduler mode boundary 단일화(`poll_loop` 제거, fail-fast 적용)
-3. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(near-done, explicit smoke evidence lock)
-4. `D-043`: Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
-5. `D-044`: 상태 스키마 정규화
-6. `D-045`: Orchestrator 모듈화 인터페이스 잠금
-7. `D-013`: 재학습 트리거 정책 정의 — in_progress(2026-03-03), `00:35 UTC` + retry `N=2` + event catalog lock(실행 보류)
+1. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(near-done, explicit smoke evidence lock)
+2. `D-043`: Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
+3. `D-044`: 상태 스키마 정규화
+4. `D-045`: Orchestrator 모듈화 인터페이스 잠금
+5. `D-013`: 재학습 트리거 정책 정의 — in_progress(2026-03-03), `00:35 UTC` + retry `N=2` + event catalog lock(실행 보류)
 
 ## 4. Current Risks
 1. `TD-012`: 자동 재학습/승격 게이트 미구현

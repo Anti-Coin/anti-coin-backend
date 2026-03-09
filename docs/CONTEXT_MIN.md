@@ -19,16 +19,16 @@
 1. 현재 런타임 모델 아티팩트 단위는 `symbol+timeframe canonical`이다(`D-2026-03-03-71`).
 2. runtime predict load는 `model_{symbol}_{timeframe}.json` canonical-only다.
 3. runtime static artifact write/read는 canonical-only 경로로 고정됐다(`D-041`).
-4. Influx latest/earliest 조회도 timeframe-tag row only 방향으로 정리 중이다(`D-042`, smoke pending).
-5. scheduler mode도 `boundary` 단일 계약으로 수렴 중이다(`D-047`, smoke pending).
+4. Influx latest/earliest 조회도 timeframe-tag row only로 고정됐다(`D-042`).
+5. scheduler mode도 `boundary` 단일 계약 + invalid fail-fast로 고정됐다(`D-047`).
 6. shared/dedicated coverage resolver는 `D-011` hold로 남아 있다.
 7. 모델 부재/샘플 부족(`model_missing`/`insufficient_data`)은 상태/사유를 숨기지 않고 노출한다.
 
 ## 4. Current Priority Tasks
-1. `D-042`: Legacy Kill Stage 3(legacy query fallback 제거, ingest+monitor)
-2. `D-047`: Scheduler mode boundary 단일화(`poll_loop` 제거, fail-fast 적용)
-3. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(near-done, remaining smoke scope clarification)
-4. `D-043`: Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public/ops`)
+1. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(near-done, remaining smoke scope clarification)
+2. `D-043`: Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public/ops`)
+3. `D-044`: 상태 스키마 정규화
+4. `D-045`: Orchestrator 모듈화 인터페이스 잠금
 5. `D-013`: 재학습 트리거 정책 정의(1차 시간 기반, 이벤트는 도입 조건만 고정)
 
 ## 5. Recent Completion (2026-03-09)
@@ -42,7 +42,9 @@
 8. `D-049`: CI/CD 브랜치 게이트 분리 + 로컬 스모크 override 고정
 9. `D-040`: runtime model load를 canonical-only로 고정하고 legacy fallback 제거
 10. `D-041`: prediction/history write와 status/monitor read를 canonical-only로 고정
-11. 기준선 회귀: `PYENV_VERSION=coin pytest -q tests/test_api_status.py tests/test_status_monitor.py` 통과(`37 passed`)
+11. `D-042`: Influx latest/earliest query의 no-timeframe legacy fallback 제거
+12. `D-047`: scheduler mode를 `boundary` 단일 계약 + invalid fail-fast로 고정
+13. 기준선 회귀: `PYENV_VERSION=coin pytest -q tests/test_api_status.py tests/test_status_monitor.py` 통과(`37 passed`)
 
 ## 6. Non-Negotiables
 1. 우선순위: Stability > Cost > Performance.

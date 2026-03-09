@@ -37,7 +37,7 @@
 ## 4.1 Phase C Completion Baseline
 1. Phase C 시점 baseline은 `worker-ingest`/`worker-publish` 2-service였다. 현재 운영 기본은 `worker-ingest` 단일 실행 경로(ingest->publish in-cycle causal chain)로 고정됐고(`D-034`), split rollback profile은 제거됐다.
 2. cadence는 `UTC boundary + detection gate` 기준으로 고정됐다.
-3. monitor consistency 현재 baseline은 `symbol+timeframe` 기준이며, static prediction read는 canonical-only로 전환됐다. Influx query legacy fallback 정리는 `D-042/D-051`에서 계속 진행한다.
+3. monitor consistency 현재 baseline은 `symbol+timeframe` 기준이며, static prediction read와 Influx latest query 모두 canonical/timeframe-tag row only로 전환됐다.
 4. stale 장기 지속 승격(`*_escalated`)과 runbook이 운영 기본 절차로 반영됐다.
 5. 상세 증거/변경 이력은 `docs/archive/phase_c/*`를 단일 출처로 사용한다.
 6. Phase D 전환 경로는 직렬 pipeline(`ingest -> publish` in-cycle causal chain)으로 재잠근다(`D-027`~`D-031`). `D-022`~`D-026`은 hold reference로 유지한다.
