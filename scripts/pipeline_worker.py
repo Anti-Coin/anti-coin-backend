@@ -134,6 +134,19 @@ def _ctx():
     return sys.modules[__name__]
 
 
+def resolve_scheduler_mode_or_raise(mode: str) -> str:
+    """
+    Resolve scheduler mode under the boundary-only runtime contract.
+    """
+    normalized = mode.strip().lower()
+    if normalized in VALID_WORKER_SCHEDULER_MODES:
+        return normalized
+    raise ValueError(
+        "Unsupported WORKER_SCHEDULER_MODE="
+        f"{mode!r}. Only 'boundary' is allowed."
+    )
+
+
 def send_alert(message):
     """
     디스코드/슬랙 등으로 알림 전송
@@ -2129,13 +2142,7 @@ def run_worker():
     3) publish stage(export/predict + watermark gate)
     4) runtime metrics 기록 및 sleep/overrun 처리
     """
-    scheduler_mode = WORKER_SCHEDULER_MODE
-    if scheduler_mode not in VALID_WORKER_SCHEDULER_MODES:
-        logger.warning(
-            "[Scheduler] unsupported WORKER_SCHEDULER_MODE=%s, fallback to poll_loop.",
-            scheduler_mode,
-        )
-        scheduler_mode = "poll_loop"
+    scheduler_mode = resolve_scheduler_mode_or_raise(WORKER_SCHEDULER_MODE)
 
     # D-033: role/mode 실행 매트릭스를 제거하고 단일 실행 경로를 고정한다.
     run_ingest_stage = True

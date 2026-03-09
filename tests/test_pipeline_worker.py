@@ -26,6 +26,7 @@ from scripts.pipeline_worker import (
     get_last_timestamp,
     initialize_boundary_schedule,
     prediction_enabled_for_timeframe,
+    resolve_scheduler_mode_or_raise,
     resolve_boundary_due_timeframes,
     resolve_ingest_since,
     resolve_disk_watermark_level,
@@ -1375,7 +1376,7 @@ def test_run_ingest_timeframe_step_blocked_storage_guard_stops_without_watermark
         symbol=symbol,
         timeframe=timeframe,
         cycle_now=now,
-        scheduler_mode="poll_loop",
+        scheduler_mode="boundary",
         symbol_activation=activation,
         exchange_earliest=None,
         disk_level=StorageGuardLevel.BLOCK,
@@ -1440,7 +1441,7 @@ def test_run_ingest_timeframe_step_reads_db_last_with_full_range_for_1d(
         symbol=symbol,
         timeframe=timeframe,
         cycle_now=now,
-        scheduler_mode="poll_loop",
+        scheduler_mode="boundary",
         symbol_activation=activation,
         exchange_earliest=datetime(2020, 1, 1, tzinfo=timezone.utc),
         disk_level=StorageGuardLevel.BLOCK,
@@ -1454,6 +1455,21 @@ def test_run_ingest_timeframe_step_reads_db_last_with_full_range_for_1d(
     assert should_continue_publish is False
     assert next_activation == activation
     assert last_timestamp_calls == [True]
+
+
+def test_resolve_scheduler_mode_or_raise_accepts_boundary():
+    assert resolve_scheduler_mode_or_raise("boundary") == "boundary"
+    assert resolve_scheduler_mode_or_raise(" BOUNDARY ") == "boundary"
+
+
+def test_resolve_scheduler_mode_or_raise_rejects_invalid_or_legacy_modes():
+    for invalid_mode in ("poll_loop", "invalid", ""):
+        try:
+            resolve_scheduler_mode_or_raise(invalid_mode)
+        except ValueError as exc:
+            assert "Only 'boundary' is allowed." in str(exc)
+        else:
+            raise AssertionError(f"{invalid_mode!r} should have raised ValueError")
 
 
 def test_run_ingest_timeframe_step_long_tf_skip_syncs_watermark_and_allows_publish(

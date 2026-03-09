@@ -91,4 +91,4 @@ MIN_SAMPLE_BY_TIMEFRAME: dict[str, int] = {
 
 # ── Scheduler ──
 WORKER_SCHEDULER_MODE = os.getenv("WORKER_SCHEDULER_MODE", "boundary").strip().lower()
-VALID_WORKER_SCHEDULER_MODES = {"poll_loop", "boundary"}
+VALID_WORKER_SCHEDULER_MODES = {"boundary"}

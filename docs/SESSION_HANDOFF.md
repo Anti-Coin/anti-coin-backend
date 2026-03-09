@@ -25,12 +25,12 @@
 5. ingest routing: `1d/1w/1M` 포함 전 timeframe direct fetch(derived downsample 경로 제거)
 6. model artifact boundary: runtime predict load는 `symbol+timeframe canonical` only다. primary legacy model file은 남아 있을 수 있지만 fallback read path는 제거됐다(`D-040` done).
 7. static artifact boundary: prediction/history write와 status/monitor read는 canonical-only 경로로 고정됐다(`D-041` done).
-8. `/status` 판정 parity(`D-046`)는 적용 완료됐고, next refactor lock은 query fallback 제거(`D-042`)와 scheduler `boundary` 단일 모드(`D-047`)다.
+8. `/status` 판정 parity(`D-046`)는 적용 완료됐고, next refactor lock은 query fallback 제거(`D-042`)와 scheduler `boundary` fail-fast 잠금(`D-047`)이다.
 
 ## 3. Next Priority Tasks
 1. `D-042`: Legacy Kill Stage 3 — Influx legacy query fallback 제거(ingest+monitor)
-2. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(near-done, explicit smoke evidence lock)
-3. `D-047`: Scheduler mode boundary 단일화(`poll_loop` 제거)
+2. `D-047`: Scheduler mode boundary 단일화(`poll_loop` 제거, fail-fast 적용)
+3. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(near-done, explicit smoke evidence lock)
 4. `D-043`: Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
 5. `D-044`: 상태 스키마 정규화
 6. `D-045`: Orchestrator 모듈화 인터페이스 잠금
