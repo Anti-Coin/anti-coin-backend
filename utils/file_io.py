@@ -23,8 +23,11 @@ def atomic_write_json(
             json.dump(payload, temp_file, indent=indent)
             temp_file.flush()
             os.fsync(temp_file.fileno())
+            # Apply the final mode to the temp file before rename.
+            # This avoids bind-mounted target path chmod races during os.replace().
+            if os.name == "posix" and hasattr(os, "fchmod"):
+                os.fchmod(temp_file.fileno(), 0o644)
         os.replace(temp_path, file_path)
-        os.chmod(file_path, 0o644)
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)

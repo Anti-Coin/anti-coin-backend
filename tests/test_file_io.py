@@ -29,6 +29,21 @@ def test_atomic_write_json_applies_world_readable_mode_on_posix(tmp_path):
     assert file_mode == 0o644
 
 
+def test_atomic_write_json_does_not_require_post_replace_target_chmod(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "manifest.json"
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("atomic_write_json should not chmod target path")
+
+    monkeypatch.setattr(os, "chmod", _fail_if_called)
+
+    atomic_write_json(target, {"ok": True}, indent=2)
+
+    assert json.loads(target.read_text()) == {"ok": True}
+
+
 def test_atomic_write_json_cleans_temp_file_and_keeps_previous_content_on_failure(
     tmp_path,
 ):

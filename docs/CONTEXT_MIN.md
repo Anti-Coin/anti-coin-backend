@@ -1,6 +1,6 @@
 # Coin Predict Context (Minimum)
 
-- Last Updated: 2026-03-04
+- Last Updated: 2026-03-09
 - Purpose: 새 세션에서 최소 토큰으로 현재 상태를 정렬하기 위한 요약
 
 ## 1. Snapshot
@@ -23,21 +23,23 @@
 
 ## 4. Current Priority Tasks
 1. `D-013`: 재학습 트리거 정책 정의(1차 시간 기반, 이벤트는 도입 조건만 고정)
-2. `D-046`: Status-Monitor 판정 경로 단일화(모니터 기준)
+2. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(로컬 스모크 증거 대기)
 3. `D-040`: Legacy Kill Stage 1(모델 fallback 제거)
 4. `D-041`: Legacy Kill Stage 2(static dual-write 제거)
 5. `D-042`: Legacy Kill Stage 3(legacy query fallback 제거, ingest+monitor)
 6. `D-043`: Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public/ops`)
 7. `D-047`: Scheduler mode boundary 단일화(`poll_loop` 제거)
 
-## 5. Recent Completion (2026-02-20)
+## 5. Recent Completion (2026-03-05)
 1. `C-013`: `pipeline_worker` timeboxed micro-refactor(동작 불변)
 2. `C-014`: derived TF publish starvation 완화
 3. `C-015`: non-primary prediction fallback 오염 차단
 4. `C-016`: monitor escalation(`*_escalated`) + runbook 고정
 5. `C-004`: 학습 one-shot 경계(`worker-train`) 및 runbook 고정
 6. `D-018`: `1d/1w/1M` direct fetch 전환 + downsample/lineage 코드 비참조화
-7. 기준선 회귀: `PYENV_VERSION=coin pytest -q` 통과(`140 passed`)
+7. `D-046`: `/status`가 monitor와 동일한 Influx-JSON consistency override를 사용하도록 정렬
+8. `D-049`: CI/CD 브랜치 게이트 분리 + 로컬 스모크 override 고정
+9. 기준선 회귀: `PYENV_VERSION=coin pytest -q tests/test_api_status.py tests/test_status_monitor.py` 통과(`37 passed`)
 
 ## 6. Non-Negotiables
 1. 우선순위: Stability > Cost > Performance.

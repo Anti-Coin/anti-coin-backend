@@ -1,6 +1,6 @@
 # Coin Predict Living Plan (Hybrid)
 
-- Last Updated: 2026-03-04
+- Last Updated: 2026-03-09
 - Owner: Backend/Platform
 - Status: Active
 - Full Phase A History: `docs/archive/phase_a/PLAN_LIVING_HYBRID_PHASE_A_FULL_2026-02-12.md`
@@ -37,7 +37,7 @@
 ## 4.1 Phase C Completion Baseline
 1. Phase C 시점 baseline은 `worker-ingest`/`worker-publish` 2-service였다. 현재 운영 기본은 `worker-ingest` 단일 실행 경로(ingest->publish in-cycle causal chain)로 고정됐고(`D-034`), split rollback profile은 제거됐다.
 2. cadence는 `UTC boundary + detection gate` 기준으로 고정됐다.
-3. monitor consistency 현재 baseline은 `symbol+timeframe` 기준 + `PRIMARY_TIMEFRAME` legacy fallback 경계다. `D-046/D-042`에서 `/status` parity + legacy 제거로 전환한다.
+3. monitor consistency 현재 baseline은 `symbol+timeframe` 기준 + `PRIMARY_TIMEFRAME` legacy fallback 경계다. `D-046`으로 `/status` parity는 적용 완료됐고, 남은 경계 정리는 `D-042/D-051`에서 계속 진행한다.
 4. stale 장기 지속 승격(`*_escalated`)과 runbook이 운영 기본 절차로 반영됐다.
 5. 상세 증거/변경 이력은 `docs/archive/phase_c/*`를 단일 출처로 사용한다.
 6. Phase D 전환 경로는 직렬 pipeline(`ingest -> publish` in-cycle causal chain)으로 재잠근다(`D-027`~`D-031`). `D-022`~`D-026`은 hold reference로 유지한다.
@@ -84,6 +84,7 @@
 5. Track C (Modularization): state/model/orchestrator 인터페이스 경계 기반 분리(`D-044~D-045`).
 6. 상세 단계/검증/롤백 기준은 `docs/PHASE_D_REFACTOR_EXECUTION_PLAN.md`를 단일 실행 기준으로 사용한다.
 7. scheduler는 `boundary` 단일 모드로 잠그고(`D-047`), invalid mode fallback은 fail-fast로 전환한다.
+8. 로컬 스모크는 `docker-compose.local.yml` 단독 실행이 아니라 base compose와 병합한 override 경로만 허용한다. 단독 실행 시 `worker-ingest`의 volume/env/depends_on 계약이 빠진다.
 
 ## 5.7 Phase D Delivery Forecast (Best-Effort, 2026-02-26)
 1. Wave 1 (`D-013~D-015`): 4~6 영업일

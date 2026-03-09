@@ -1,5 +1,3 @@
-version: "3.8"
-
 # Local smoke override.
 # NOTE:
 #   - 이 파일은 base compose를 대체하지 않는다.

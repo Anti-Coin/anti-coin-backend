@@ -221,18 +221,19 @@ def run_prediction_and_save(
             ctx.logger.warning(f"[{symbol} {timeframe}] 예측 범위 생성 실패.")
             return "failed", "empty_forecast"
 
-        export_data = next_forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]]
+        export_data = next_forecast[
+            ["ds", "yhat", "yhat_lower", "yhat_upper"]
+        ].copy()
         export_data["ds"] = pd.to_datetime(export_data["ds"]).dt.strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
-        export_data.rename(
+        export_data = export_data.rename(
             columns={
                 "ds": "timestamp",
                 "yhat": "price",
                 "yhat_lower": "lower_bound",
                 "yhat_upper": "upper_bound",
             },
-            inplace=True,
         )
 
         json_output = {
