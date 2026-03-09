@@ -117,21 +117,20 @@
 | D-047 | P1 | Scheduler mode boundary 단일화(`poll_loop` 제거) | done (2026-03-09) | `WORKER_SCHEDULER_MODE=boundary` 단일 계약으로 고정했고 `poll_loop`/invalid fallback을 제거했다. fail-fast regression과 local smoke를 확인했다. |
 | D-048 | P2 (Hold) | 상태 파일 축소/통합 검증(`prediction_health`/`ingest_watermarks`) | open | 축소 우선순위는 `prediction_health redundant identity -> symbol_activation redundant/derived -> 나머지`로 잠근다. `ingest_watermarks` 제거 가능성은 `ingest_state` 대체 설계+회귀 테스트로 검증하고, 인과/재시작 경계가 깨지면 파일 유지 결정을 문서로 잠근다. |
 | D-050 | P1 | Operator Usecase Baseline 문서 잠금 | done (2026-03-05) | 운영자 기준 stage 계약(ingest/predict/export/serve/monitor), 실패 전파 스키마(`stage/cause/impact`), 상태 파일 축소 우선순위를 `docs/PIPELINE_OPERATOR_USECASES.md`로 고정했다. |
-| D-051 | P1 | D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리 | in_progress (2026-03-09) | API가 monitor 엔트리포인트 모듈을 직접 import하지 않고 공통 판정 로직을 `utils/*` 공유 모듈로 분리했다. compose는 Influx healthcheck + `service_healthy` 의존성 경계를 fastapi/worker-ingest/worker-train/monitor에 반영했고, local smoke 경로는 base+local override로 고정했다. 남은 것은 monitor/worker-train explicit smoke evidence lock뿐이다. |
+| D-051 | P1 | D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리 | done (2026-03-09) | API가 monitor 엔트리포인트 모듈을 직접 import하지 않고 공통 판정 로직을 `utils/*` 공유 모듈로 분리했다. compose는 Influx healthcheck + `service_healthy` 의존성 경계를 fastapi/worker-ingest/worker-train/monitor에 반영했고, local smoke 경로를 base+local override로 고정했다. local smoke 완료를 확인했다. |
 
 > **Discussion Reference**: `docs/DISCUSSION_PHASE_D_AUDIT_2026-02-21.md`
 
 ## 3. Immediate Bundle (Revised 2026-03-09)
-1. `D-051` — D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리
-2. `D-043` — Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
-3. `D-044` — 상태 스키마 정규화
-4. `D-045` — Orchestrator 모듈화 인터페이스 잠금
-5. `D-013` — 재학습 트리거 정책 정의(1차 시간 기반)
-6. `D-014` — 학습 실행 no-overlap/락 가드
-9. `D-015` — 학습 실행 관측성/알림 baseline
-10. `D-003` — Shadow 추론 파이프라인 도입
-11. `D-004` — Champion vs Shadow 평가 리포트
-12. `D-005` — 승격 게이트 정책 구현(`fail-closed`)
+1. `D-043` — Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
+2. `D-044` — 상태 스키마 정규화
+3. `D-045` — Orchestrator 모듈화 인터페이스 잠금
+4. `D-013` — 재학습 트리거 정책 정의(1차 시간 기반)
+5. `D-014` — 학습 실행 no-overlap/락 가드
+6. `D-015` — 학습 실행 관측성/알림 baseline
+7. `D-003` — Shadow 추론 파이프라인 도입
+8. `D-004` — Champion vs Shadow 평가 리포트
+9. `D-005` — 승격 게이트 정책 구현(`fail-closed`)
 
 ## 3.1 Previous Cycle KPI (Locked 2026-02-21)
 1. `D-018` 완료

@@ -30,11 +30,10 @@
 1. Phase C 범위를 재개하거나 과거 토론 원문 근거가 필요한 경우.
 
 ## 4. Active Follow-up Candidates (Phase D)
-1. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리 마감
-2. `D-040`: 모델 legacy fallback 제거
-3. `D-041`: static dual-write 제거
-4. `D-042`: Influx legacy query fallback 제거
-5. `D-047`: scheduler fallback 제거(`boundary` 단일화)
+1. `D-043`: Manifest 계약 분리
+2. `D-044`: 상태 스키마 정규화
+3. `D-045`: orchestrator 인터페이스 잠금
+4. `D-013`: 재학습 트리거 정책 정의
 
 ## 5. Entry 2026-02-23 — 방어 로직 구조 평가
 1. Topic: `pipeline_worker.py` 방어/복구 로직의 밀도와 구조
@@ -179,12 +178,12 @@
 ## 13. Entry 2026-03-09 — 우선순위 재정렬(자동화 전 fallback 정리 우선)
 1. Topic: "더 많은 자동화"보다 "덜 거짓말하는 pipeline"을 먼저 만든다.
 2. Observed Facts:
-   1. `D-046`은 완료됐고, `D-051`은 code/doc 기준으로 near-done 상태다.
+   1. `D-046`과 `D-051`은 완료됐고, 다음 축은 contract/state/orchestrator 정리다.
    2. 현재 복잡도의 핵심은 자동 재학습 부재보다 legacy fallback/model/static/query/scheduler 경계가 동시에 살아 있는 점이다.
    3. `D-047`은 문서 드리프트가 아니라 실제 open이다. `poll_loop` 허용값과 invalid mode fallback이 코드/테스트에 남아 있다.
 3. Conclusion:
    1. 현재 immediate bundle은 training automation보다 fallback 제거와 경계 정리를 앞에 두는 편이 맞다.
-   2. 순서는 `D-051 -> D-040 -> D-041 -> D-042 -> D-047 -> D-043 -> D-044 -> D-045 -> D-013` 쪽이 운영 통증과 코드 현실에 더 가깝다.
+   2. 현재 순서는 `D-043 -> D-044 -> D-045 -> D-013` 쪽이 운영 통증과 코드 현실에 더 가깝다.
 4. Revisit Trigger:
    1. legacy 제거 단계에서 canonical 누락/오탐이 반복되거나,
    2. 자동 재학습 도입 압력이 운영 pain을 추월할 때

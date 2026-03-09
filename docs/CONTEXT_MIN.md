@@ -25,11 +25,11 @@
 7. 모델 부재/샘플 부족(`model_missing`/`insufficient_data`)은 상태/사유를 숨기지 않고 노출한다.
 
 ## 4. Current Priority Tasks
-1. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(near-done, remaining smoke scope clarification)
-2. `D-043`: Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public/ops`)
-3. `D-044`: 상태 스키마 정규화
-4. `D-045`: Orchestrator 모듈화 인터페이스 잠금
-5. `D-013`: 재학습 트리거 정책 정의(1차 시간 기반, 이벤트는 도입 조건만 고정)
+1. `D-043`: Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public/ops`)
+2. `D-044`: 상태 스키마 정규화
+3. `D-045`: Orchestrator 모듈화 인터페이스 잠금
+4. `D-013`: 재학습 트리거 정책 정의(1차 시간 기반, 이벤트는 도입 조건만 고정)
+5. `D-014`: 학습 실행 no-overlap/락 가드
 
 ## 5. Recent Completion (2026-03-09)
 1. `C-013`: `pipeline_worker` timeboxed micro-refactor(동작 불변)
@@ -44,7 +44,8 @@
 10. `D-041`: prediction/history write와 status/monitor read를 canonical-only로 고정
 11. `D-042`: Influx latest/earliest query의 no-timeframe legacy fallback 제거
 12. `D-047`: scheduler mode를 `boundary` 단일 계약 + invalid fail-fast로 고정
-13. 기준선 회귀: `PYENV_VERSION=coin pytest -q tests/test_api_status.py tests/test_status_monitor.py` 통과(`37 passed`)
+13. `D-051`: status consistency 공통 모듈화 + Docker-Ops 의존성 경계 정리 완료
+14. 기준선 회귀: `PYENV_VERSION=coin pytest -q tests/test_api_status.py tests/test_status_monitor.py` 통과(`37 passed`)
 
 ## 6. Non-Negotiables
 1. 우선순위: Stability > Cost > Performance.
