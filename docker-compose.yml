@@ -128,7 +128,10 @@ services:
       MONITOR_RE_ALERT_CYCLES: ${MONITOR_RE_ALERT_CYCLES}
       MONITOR_ESCALATION_CYCLES: ${MONITOR_ESCALATION_CYCLES}
     depends_on:
-      - worker-ingest
+      influxdb:
+        condition: service_healthy
+      worker-ingest:
+        condition: service_started
     restart: always
     volumes:
       - ./static_data:/app/static_data

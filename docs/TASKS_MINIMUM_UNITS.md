@@ -117,7 +117,7 @@
 | D-047 | P1 | Scheduler mode boundary 단일화(`poll_loop` 제거) | done (2026-03-09) | `WORKER_SCHEDULER_MODE=boundary` 단일 계약으로 고정했고 `poll_loop`/invalid fallback을 제거했다. fail-fast regression과 local smoke를 확인했다. |
 | D-048 | P2 (Hold) | 상태 파일 축소/통합 검증(`prediction_health`/`ingest_watermarks`) | open | 축소 우선순위는 `prediction_health redundant identity -> symbol_activation redundant/derived -> 나머지`로 잠근다. `ingest_watermarks` 제거 가능성은 `ingest_state` 대체 설계+회귀 테스트로 검증하고, 인과/재시작 경계가 깨지면 파일 유지 결정을 문서로 잠근다. |
 | D-050 | P1 | Operator Usecase Baseline 문서 잠금 | done (2026-03-05) | 운영자 기준 stage 계약(ingest/predict/export/serve/monitor), 실패 전파 스키마(`stage/cause/impact`), 상태 파일 축소 우선순위를 `docs/PIPELINE_OPERATOR_USECASES.md`로 고정했다. |
-| D-051 | P1 | D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리 | in_progress (2026-03-05) | API가 monitor 엔트리포인트 모듈을 직접 import하지 않고 공통 판정 로직을 `utils/*` 공유 모듈로 분리한다. compose는 Influx healthcheck + `service_healthy` 의존성 경계로 보강하고, local smoke 경로는 base+local override로 고정한다. `worker-ingest` local smoke와 경고 정리는 반영 완료됐고, monitor/worker-train 최소 smoke 증거 확보 시 done 전환한다. |
+| D-051 | P1 | D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리 | in_progress (2026-03-09) | API가 monitor 엔트리포인트 모듈을 직접 import하지 않고 공통 판정 로직을 `utils/*` 공유 모듈로 분리했다. compose는 Influx healthcheck + `service_healthy` 의존성 경계를 fastapi/worker-ingest/worker-train/monitor에 반영했고, local smoke 경로는 base+local override로 고정했다. 남은 것은 monitor/worker-train explicit smoke evidence lock뿐이다. |
 
 > **Discussion Reference**: `docs/DISCUSSION_PHASE_D_AUDIT_2026-02-21.md`
 

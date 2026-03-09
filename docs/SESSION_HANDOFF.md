@@ -13,7 +13,7 @@
 7. `D-001` 완료: Prophet 경로 `fit/predict/save/load` 계약 문서/회귀 테스트 잠금(2026-02-26).
 8. `D-002` 완료: 모델 metadata/version 스키마(v1) 문서화 + sidecar 저장 경로 고정(2026-02-26).
 9. `D-046` 완료: `/status`가 monitor와 동일한 Influx-JSON consistency override를 사용하도록 정렬했다(2026-03-04).
-10. `D-051` in_progress: status consistency 공통 모듈 분리와 Docker-Ops 경계 정리는 문서/코드 반영이 끝났고, 로컬 스모크는 문제 없다는 운영 확인이 들어왔다. 다만 monitor/worker-train explicit evidence는 별도 로그로 잠그지 않았다(2026-03-09).
+10. `D-051` in_progress: status consistency 공통 모듈 분리와 Docker-Ops 경계 정리는 문서/코드 반영이 끝났고, monitor도 Influx `service_healthy`를 직접 기다리도록 compose를 보강했다. 남은 것은 monitor/worker-train explicit smoke evidence를 별도 로그로 잠그는 일뿐이다(2026-03-09).
 11. 완료 증거: `PYENV_VERSION=coin pytest -q tests/test_api_status.py tests/test_status_monitor.py` 통과(`37 passed`, 2026-03-04).
 12. Phase C 상세 원문은 `docs/archive/phase_c/*`로 이동했다.
 
