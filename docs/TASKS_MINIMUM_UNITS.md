@@ -67,7 +67,7 @@
 ### Phase D (Model Evolution) - Active
 | ID | Priority | Task | Status | Done Condition |
 |---|---|---|---|---|
-| D-001 | P1 | 모델 계약 명시화(`fit/predict/save/load` 입출력 계약 문서화) | done (2026-02-26) | Prophet 경로 기준 계약을 `docs/MODEL_CONTRACT.md`로 고정하고, 회귀 테스트 `tests/test_model_contract.py`로 `fit` 입력 정규화(`ds` timezone-naive), `load` 우선순위(canonical > legacy), `predict` 산출물(JSON/Influx schema)을 잠금했다. |
+| D-001 | P1 | 모델 계약 명시화(`fit/predict/save/load` 입출력 계약 문서화) | done (2026-02-26) | Prophet 경로 기준 계약을 `docs/MODEL_CONTRACT.md`로 고정하고, 회귀 테스트 `tests/test_model_contract.py`로 `fit` 입력 정규화(`ds` timezone-naive), runtime `load` canonical-only, `predict` 산출물(JSON/Influx schema)을 잠금했다. |
 | D-002 | P1 | 모델 메타데이터/버전 스키마 정의 | done (2026-02-26) | 모델 sidecar metadata 경로(`model_{symbol}_{timeframe}.meta.json`)와 스키마(v1)를 `docs/MODEL_METADATA_SCHEMA.md`로 고정하고, `train_model` 저장 경로에서 `schema_version/run_id/trained_at/row_count/data_range/model_version/snapshot_path/status` 기록을 강제했다. 회귀 테스트 `tests/test_train_model.py::test_train_and_save_persists_model_metadata_schema` 통과. |
 | D-003 | P1 | Shadow 추론 파이프라인 도입 | open | shadow 결과 생성, 사용자 서빙 미반영. **분해 예정**(D-003a: Shadow 실행 경로, D-003b: Shadow 결과 저장, D-003c: 격리 보장) |
 | D-004 | P1 | Champion vs Shadow 평가 리포트 | open | 최소 1개 지표 일별 산출 |
@@ -107,8 +107,8 @@
 | D-038 | P2 | Training Snapshot Pre-Materialize (optional) | hold (2026-02-26) | 기본 경로는 on-demand extractor를 유지한다. 재개는 학습 시간/SLA 압력이 반복될 때만 허용하며, 전환 전후 비교 지표(`train_total_seconds`, `influx_query_seconds`, `failure_rate`, `peak_memory_mb`)를 고정 수집하고 SoT 정합성/원자적 스냅샷 쓰기/모델-스냅샷 버전 링크 검증을 통과해야 한다. |
 | D-039 | P1 | 상태 파일 필드 인벤토리 감사(legacy/중복/파생 정리) | done (2026-03-03) | `manifest/runtime_metrics/prediction_health/symbol_activation/ingest_watermarks`에 대해 필드 단위 인벤토리(`SoT/Derived/Diagnostic/Legacy-Compat`)와 제거 후보 우선순위를 `docs/STATE_FIELD_INVENTORY.md`로 고정했다. `Keep-By-Design` 필드와 destructive cleanup 전 open question을 함께 잠금했다. |
 | D-049 | P1 | CI/CD 브랜치 게이트 분리(`dev` CI-only, `main` deploy-only) | done (2026-03-04) | `.github/workflows/ci.yml`을 추가해 `main/dev` CI(test)를 분리했고, `deploy.yml`은 `main push + workflow_dispatch`로 제한했다. 로컬 스모크 경로는 `docker-compose.local.yml` override로 고정했다. |
-| D-040 | **P0** | Legacy Kill Stage 1: 모델 fallback 제거 | open | `workers/predict.py`에서 `model_{symbol}_{timeframe}.json`만 로드하고 legacy model fallback을 제거한다. canonical 누락 시 `model_missing` fail-closed가 테스트/스모크에서 확인되어야 한다. |
-| D-041 | **P0** | Legacy Kill Stage 2: static dual-write 제거 | open | prediction/history canonical-only write로 전환하고 legacy 파일 쓰기를 제거한다. canonical-only 경로로 admin/ops/status 회귀와 스모크가 통과해야 한다. |
+| D-040 | **P0** | Legacy Kill Stage 1: 모델 fallback 제거 | in_progress (2026-03-09) | `workers/predict.py`에서 `model_{symbol}_{timeframe}.json`만 로드하도록 전환했고 regression은 통과했다. canonical 누락 시 `model_missing` fail-closed가 local smoke까지 확인되면 done 전환한다. |
+| D-041 | **P0** | Legacy Kill Stage 2: static dual-write 제거 | in_progress (2026-03-09) | prediction/history canonical-only write와 status/monitor canonical-only read 경로를 적용했다. admin/ops/status 회귀와 local smoke가 canonical-only 산출물 기준으로 확인되면 done 전환한다. |
 | D-042 | P1 | Legacy Kill Stage 3: Influx legacy query fallback 제거 | open | ingest/monitor 경로에서 no-timeframe legacy query fallback을 제거하고 timeframe-tag row만 신뢰한다. full-fill/rebootstrap/activation 회귀 테스트와 스모크가 통과해야 한다. |
 | D-043 | P1 | Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`) | open | 단일 `manifest.v2` payload에 `public`/`ops` 섹션 계약을 고정하고 writer/consumer를 분리한다. FE는 `public`만, admin/ops는 `ops`만 사용해야 한다. |
 | D-044 | P1 | 상태 스키마 정규화(`symbol_activation`/`prediction_health`) | open | 중복 identity/파생 필드를 정규화한다(예: `symbol_activation` 단일 SoT 상태 기준). 상태 파일 read/write 계약 테스트를 고정한다. |

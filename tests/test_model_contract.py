@@ -31,9 +31,7 @@ def test_predict_contract_uses_canonical_model_and_writes_json_and_influx(
     models_dir.mkdir(parents=True, exist_ok=True)
 
     canonical_model = models_dir / "model_BTC_USDT_1h.json"
-    legacy_model = models_dir / "model_BTC_USDT.json"
     canonical_model.write_text("canonical-json")
-    legacy_model.write_text("legacy-json")
 
     loaded_payloads: list[str] = []
 
@@ -81,9 +79,7 @@ def test_predict_contract_uses_canonical_model_and_writes_json_and_influx(
     assert loaded_payloads == ["canonical-json"]
 
     canonical_path = static_dir / "prediction_BTC_USDT_1h.json"
-    legacy_path = static_dir / "prediction_BTC_USDT.json"
     assert canonical_path.exists()
-    assert legacy_path.exists()
 
     payload = json.loads(canonical_path.read_text())
     assert payload["symbol"] == "BTC/USDT"

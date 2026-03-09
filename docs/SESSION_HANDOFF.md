@@ -21,10 +21,11 @@
 1. cadence: `UTC boundary + detection gate`
 2. worker topology: `worker-ingest` 단일 실행 경로(ingest -> publish in-cycle causal chain)
 3. publish trigger: ingest stage in-cycle 후 publish reconcile 실행
-4. monitor consistency current baseline: `symbol+timeframe` 기준 + `PRIMARY_TIMEFRAME` legacy fallback
+4. monitor consistency current baseline: `symbol+timeframe` 기준 + Influx query legacy fallback(`PRIMARY_TIMEFRAME` 한정)
 5. ingest routing: `1d/1w/1M` 포함 전 timeframe direct fetch(derived downsample 경로 제거)
 6. model artifact boundary: runtime predict load는 `symbol+timeframe canonical` only다. primary legacy model file은 남아 있을 수 있지만 fallback read path는 제거됐다.
-7. `/status` 판정 parity(`D-046`)는 적용 완료됐고, next refactor lock은 scheduler `boundary` 단일 모드(`D-047`)와 legacy 제거(`D-040~D-042`)다.
+7. static artifact boundary: prediction/history write와 status/monitor read는 canonical-only 경로로 전환됐다. local smoke evidence는 아직 남아 있다(`D-041`).
+8. `/status` 판정 parity(`D-046`)는 적용 완료됐고, next refactor lock은 scheduler `boundary` 단일 모드(`D-047`)와 legacy 제거(`D-040~D-042`)다.
 
 ## 3. Next Priority Tasks
 1. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(near-done, monitor/worker-train smoke 증거 확보)

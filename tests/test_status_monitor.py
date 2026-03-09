@@ -19,16 +19,17 @@ def _write_prediction(
     root: Path, symbol: str, updated_at: str, timeframe: str | None = None
 ) -> None:
     safe = symbol.replace("/", "_")
-    if timeframe:
-        path = root / f"prediction_{safe}_{timeframe}.json"
-    else:
-        path = root / f"prediction_{safe}.json"
+    if timeframe is None:
+        raise ValueError("timeframe is required")
+    path = root / f"prediction_{safe}_{timeframe}.json"
     path.write_text(json.dumps({"symbol": symbol, "updated_at": updated_at}))
 
 
-def test_evaluate_symbol_timeframe_fresh_from_legacy_file(tmp_path):
+def test_evaluate_symbol_timeframe_fresh_from_canonical_file(tmp_path):
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
-    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T11:55:00Z")
+    _write_prediction(
+        tmp_path, "BTC/USDT", "2026-02-10T11:55:00Z", timeframe="1h"
+    )
 
     snapshot = evaluate_symbol_timeframe(
         symbol="BTC/USDT",
@@ -47,7 +48,9 @@ def test_evaluate_symbol_timeframe_non_primary_does_not_use_legacy_file(
     tmp_path,
 ):
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
-    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T11:55:00Z")
+    (tmp_path / "prediction_BTC_USDT.json").write_text(
+        json.dumps({"symbol": "BTC/USDT", "updated_at": "2026-02-10T11:55:00Z"})
+    )
 
     snapshot = evaluate_symbol_timeframe(
         symbol="BTC/USDT",
@@ -62,9 +65,8 @@ def test_evaluate_symbol_timeframe_non_primary_does_not_use_legacy_file(
     assert snapshot.error_code == "missing_file"
 
 
-def test_evaluate_symbol_timeframe_prefers_timeframe_file_over_legacy(tmp_path):
+def test_evaluate_symbol_timeframe_uses_timeframe_file(tmp_path):
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
-    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T11:30:00Z")
     _write_prediction(
         tmp_path, "BTC/USDT", "2026-02-10T11:55:00Z", timeframe="1h"
     )
@@ -83,14 +85,16 @@ def test_evaluate_symbol_timeframe_prefers_timeframe_file_over_legacy(tmp_path):
 
 
 def test_evaluate_symbol_timeframe_corrupt_when_json_invalid(tmp_path):
-    (tmp_path / "prediction_BTC_USDT.json").write_text("{invalid-json")
+    (tmp_path / "prediction_BTC_USDT_1h.json").write_text("{invalid-json")
     snapshot = evaluate_symbol_timeframe("BTC/USDT", "1h", static_dir=tmp_path)
     assert snapshot.status == "corrupt"
 
 
 def test_evaluate_symbol_timeframe_hard_stale(tmp_path):
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
-    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T11:30:00Z")
+    _write_prediction(
+        tmp_path, "BTC/USDT", "2026-02-10T11:30:00Z", timeframe="1h"
+    )
 
     snapshot = evaluate_symbol_timeframe(
         symbol="BTC/USDT",
@@ -159,7 +163,7 @@ def test_run_monitor_cycle_deduplicates_and_emits_recovery(tmp_path):
     symbol = "BTC/USDT"
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
 
-    _write_prediction(tmp_path, symbol, "2026-02-10T11:30:00Z")
+    _write_prediction(tmp_path, symbol, "2026-02-10T11:30:00Z", timeframe="1h")
     events = run_monitor_cycle(
         state=state,
         status_counters=status_counters,
@@ -184,7 +188,7 @@ def test_run_monitor_cycle_deduplicates_and_emits_recovery(tmp_path):
     )
     assert events == []
 
-    _write_prediction(tmp_path, symbol, "2026-02-10T11:58:00Z")
+    _write_prediction(tmp_path, symbol, "2026-02-10T11:58:00Z", timeframe="1h")
     events = run_monitor_cycle(
         state=state,
         status_counters=status_counters,
@@ -207,7 +211,7 @@ def test_run_monitor_cycle_realerts_on_repeated_hard_stale(
     symbol = "BTC/USDT"
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
 
-    _write_prediction(tmp_path, symbol, "2026-02-10T11:30:00Z")
+    _write_prediction(tmp_path, symbol, "2026-02-10T11:30:00Z", timeframe="1h")
 
     events = run_monitor_cycle(
         state=state,
@@ -256,7 +260,7 @@ def test_run_monitor_cycle_realerts_on_repeated_soft_stale(
     symbol = "BTC/USDT"
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
 
-    _write_prediction(tmp_path, symbol, "2026-02-10T11:50:00Z")
+    _write_prediction(tmp_path, symbol, "2026-02-10T11:50:00Z", timeframe="1h")
 
     events = run_monitor_cycle(
         state=state,
@@ -306,7 +310,7 @@ def test_run_monitor_cycle_prefers_escalation_over_repeat(
     symbol = "BTC/USDT"
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
 
-    _write_prediction(tmp_path, symbol, "2026-02-10T11:30:00Z")
+    _write_prediction(tmp_path, symbol, "2026-02-10T11:30:00Z", timeframe="1h")
 
     events = []
     for _ in range(6):
@@ -434,7 +438,7 @@ def test_run_monitor_cycle_marks_hard_stale_when_influx_json_gap_exceeds_limit(
 ):
     monkeypatch.setattr("scripts.status_monitor.INFLUXDB_BUCKET", "market_data")
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
-    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T12:00:00Z")
+    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T12:00:00Z", timeframe="1h")
     query_api = _FakeQueryApi(
         {
             ("BTC/USDT", "1h"): datetime(
@@ -512,7 +516,7 @@ def test_apply_influx_json_consistency_keeps_status_when_gap_within_limit(
     tmp_path,
 ):
     now = datetime(2026, 2, 10, 12, 0, tzinfo=timezone.utc)
-    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T12:00:00Z")
+    _write_prediction(tmp_path, "BTC/USDT", "2026-02-10T12:00:00Z", timeframe="1h")
     snapshot = evaluate_symbol_timeframe(
         symbol="BTC/USDT",
         timeframe="1h",

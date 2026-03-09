@@ -18,8 +18,9 @@
 ## 3. Phase D Active Baseline
 1. 현재 런타임 모델 아티팩트 단위는 `symbol+timeframe canonical`이다(`D-2026-03-03-71`).
 2. runtime predict load는 `model_{symbol}_{timeframe}.json` canonical-only다.
-3. shared/dedicated coverage resolver는 `D-011` hold로 남아 있다.
-4. 모델 부재/샘플 부족(`model_missing`/`insufficient_data`)은 상태/사유를 숨기지 않고 노출한다.
+3. runtime static artifact write/read도 canonical-only 경로로 전환 중이다(`D-041`, smoke pending).
+4. shared/dedicated coverage resolver는 `D-011` hold로 남아 있다.
+5. 모델 부재/샘플 부족(`model_missing`/`insufficient_data`)은 상태/사유를 숨기지 않고 노출한다.
 
 ## 4. Current Priority Tasks
 1. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(near-done, smoke evidence 정리)
