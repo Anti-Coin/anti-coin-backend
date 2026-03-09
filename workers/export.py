@@ -12,6 +12,114 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+EXPORT_BLOCK_FILE_NAME = "export_blocks.json"
+MANIFEST_EXPORT_BLOCK_KEY = "__manifest__"
+
+
+def export_block_store_path(
+    ctx,
+    *,
+    path: Path | None = None,
+    static_dir: Path | None = None,
+) -> Path:
+    resolved_static_dir = static_dir or ctx.STATIC_DIR
+    return Path(path) if path is not None else resolved_static_dir / EXPORT_BLOCK_FILE_NAME
+
+
+def load_export_block_entries(
+    path: Path,
+    *,
+    logger=None,
+) -> tuple[dict[str, dict], str | None]:
+    if not path.exists():
+        return {}, "missing"
+
+    try:
+        with open(path, "r") as f:
+            payload = json.load(f)
+    except (OSError, json.JSONDecodeError) as e:
+        if logger is not None:
+            logger.error(f"Export block read failed: {e}")
+        return {}, "read_error"
+
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        if logger is not None:
+            logger.error("Export block format invalid: entries is not a dict.")
+        return {}, "format_error"
+
+    normalized: dict[str, dict] = {}
+    for key, value in entries.items():
+        if isinstance(key, str) and key and isinstance(value, dict):
+            normalized[key] = value
+    return normalized, None
+
+
+def save_export_block_entries(
+    path: Path,
+    entries: dict[str, dict],
+    *,
+    atomic_write_json,
+    now: datetime | None = None,
+) -> None:
+    resolved_now = now or datetime.now(timezone.utc)
+    payload = {
+        "version": 1,
+        "updated_at": resolved_now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "entries": entries,
+    }
+    atomic_write_json(path, payload, indent=2)
+
+
+def upsert_export_block(
+    ctx,
+    *,
+    blocked: bool,
+    error: str | None = None,
+    symbol: str | None = None,
+    timeframe: str | None = None,
+    path: Path | None = None,
+    static_dir: Path | None = None,
+    now: datetime | None = None,
+) -> tuple[bool, bool]:
+    if (symbol is None) != (timeframe is None):
+        raise ValueError("symbol and timeframe must be provided together.")
+
+    key = (
+        MANIFEST_EXPORT_BLOCK_KEY
+        if symbol is None
+        else ctx._prediction_health_key(symbol, timeframe)
+    )
+    resolved_path = export_block_store_path(
+        ctx,
+        path=path,
+        static_dir=static_dir,
+    )
+    entries, load_error = load_export_block_entries(
+        resolved_path,
+        logger=ctx.logger,
+    )
+    if load_error in {"read_error", "format_error"}:
+        raise ValueError(f"Export block store is corrupted: {load_error}")
+
+    was_blocked = key in entries
+    if blocked:
+        resolved_now = now or datetime.now(timezone.utc)
+        entries[key] = {
+            "last_error": error or "export_blocked",
+            "blocked_at": resolved_now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+    else:
+        entries.pop(key, None)
+
+    save_export_block_entries(
+        resolved_path,
+        entries,
+        atomic_write_json=ctx.atomic_write_json,
+        now=now,
+    )
+    return was_blocked, blocked
+
 
 def static_export_candidates(
     ctx,
@@ -85,6 +193,7 @@ def build_runtime_manifest(
     now: datetime | None = None,
     static_dir: Path | None = None,
     prediction_health_path: Path | None = None,
+    export_block_path: Path | None = None,
     symbol_activation_entries: dict[str, dict] | None = None,
 ) -> dict:
     """
@@ -109,9 +218,23 @@ def build_runtime_manifest(
     resolved_prediction_health_path = (
         prediction_health_path or ctx.PREDICTION_HEALTH_FILE
     )
+    resolved_export_block_path = export_block_store_path(
+        ctx,
+        path=export_block_path,
+        static_dir=resolved_static_dir,
+    )
     health_entries = ctx._load_prediction_health(
         path=resolved_prediction_health_path
     )
+    export_block_entries, export_block_error = load_export_block_entries(
+        resolved_export_block_path,
+        logger=ctx.logger,
+    )
+    export_block_fail_closed = export_block_error in {"read_error", "format_error"}
+    if export_block_fail_closed:
+        ctx.logger.error(
+            "Manifest build entering fail-closed mode: export block store unreadable."
+        )
 
     entries: list[dict] = []
     status_counts: dict[str, int] = {}
@@ -169,6 +292,13 @@ def build_runtime_manifest(
             status_counts[snapshot.status] = (
                 status_counts.get(snapshot.status, 0) + 1
             )
+            export_blocked = export_block_fail_closed
+            if not export_blocked:
+                key = ctx._prediction_health_key(symbol, timeframe)
+                export_blocked = (
+                    key in export_block_entries
+                    or MANIFEST_EXPORT_BLOCK_KEY in export_block_entries
+                )
             entries.append(
                 {
                     "key": ctx._prediction_health_key(symbol, timeframe),
@@ -205,6 +335,7 @@ def build_runtime_manifest(
                         # visibility + freshness 상태를 동시에 만족해야 한다.
                         visibility == "visible"
                         and snapshot.status in ctx.SERVE_ALLOWED_STATUSES
+                        and not export_blocked
                     ),
                 }
             )
@@ -232,6 +363,7 @@ def write_runtime_manifest(
     now: datetime | None = None,
     static_dir: Path | None = None,
     prediction_health_path: Path | None = None,
+    export_block_path: Path | None = None,
     symbol_activation_entries: dict[str, dict] | None = None,
     path: Path | None = None,
 ) -> None:
@@ -252,6 +384,7 @@ def write_runtime_manifest(
         now=now,
         static_dir=static_dir,
         prediction_health_path=prediction_health_path,
+        export_block_path=export_block_path,
         symbol_activation_entries=symbol_activation_entries,
     )
     ctx.atomic_write_json(resolved_path, payload, indent=2)
@@ -295,8 +428,10 @@ def save_history_to_json(ctx, df, symbol, timeframe):
             f"[{symbol} {timeframe}] 정적 파일 생성 완료: "
             f"canonical={canonical_path}, legacy={legacy_path}"
         )
+        return True
     except Exception as e:
         ctx.logger.error(f"[{symbol} {timeframe}] 정적 파일 생성 실패: {e}")
+        return False
 
 
 def update_full_history_file(ctx, query_api, symbol, timeframe) -> bool:
@@ -333,7 +468,9 @@ def update_full_history_file(ctx, query_api, symbol, timeframe) -> bool:
             return False
         df.rename(columns={"_time": "timestamp"}, inplace=True)
         df.set_index("timestamp", inplace=True)
-        save_history_to_json(ctx, df, symbol, timeframe)
+        saved = save_history_to_json(ctx, df, symbol, timeframe)
+        if saved is False:
+            return False
         return True
     except Exception as e:
         ctx.logger.error(f"[{symbol} {timeframe}] History 갱신 중 에러: {e}")

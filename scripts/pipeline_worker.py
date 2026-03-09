@@ -1161,7 +1161,7 @@ def save_history_to_json(df, symbol, timeframe):
     Called from:
     - update_full_history_file wrapper 경유
     """
-    export_ops.save_history_to_json(_ctx(), df, symbol, timeframe)
+    return export_ops.save_history_to_json(_ctx(), df, symbol, timeframe)
 
 
 def fetch_and_save(
@@ -1827,6 +1827,15 @@ def _run_publish_timeframe_step(
         else:
             export_ok = update_full_history_file(query_api, symbol, timeframe)
             if not export_ok:
+                was_blocked, _ = export_ops.upsert_export_block(
+                    _ctx(),
+                    blocked=True,
+                    error="history_export_failed",
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    static_dir=STATIC_DIR,
+                    now=cycle_now,
+                )
                 _log_stage_failure_context(
                     "export",
                     symbol=symbol,
@@ -1840,6 +1849,28 @@ def _run_publish_timeframe_step(
                     f"[{symbol} {timeframe}] export failed. "
                     "watermark cursor is not advanced."
                 )
+                if not was_blocked:
+                    send_alert(
+                        "[Export Block] "
+                        f"{symbol} {timeframe}\n"
+                        "reason=history_export_failed"
+                    )
+            else:
+                was_blocked, _ = export_ops.upsert_export_block(
+                    _ctx(),
+                    blocked=False,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    static_dir=STATIC_DIR,
+                    now=cycle_now,
+                )
+                if was_blocked:
+                    logger.info(f"[{symbol} {timeframe}] export recovered.")
+                    send_alert(
+                        "[Export Recovery] "
+                        f"{symbol} {timeframe}\n"
+                        "reason=same_key_history_export_success"
+                    )
 
     if run_predict_stage:
         if ingest_closed_at is None:
@@ -1938,8 +1969,19 @@ def _persist_cycle_runtime_state(
                 TIMEFRAMES,
                 symbol_activation_entries=state.symbol_activation_entries,
             )
+            export_ops.upsert_export_block(
+                _ctx(),
+                blocked=False,
+                static_dir=STATIC_DIR,
+            )
         except Exception as e:
             logger.error(f"Runtime manifest update failed: {e}")
+            export_ops.upsert_export_block(
+                _ctx(),
+                blocked=True,
+                error="manifest_write_failed",
+                static_dir=STATIC_DIR,
+            )
             send_alert(f"[Manifest Error] {e}")
 
 

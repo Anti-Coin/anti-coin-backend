@@ -394,6 +394,68 @@ def test_build_runtime_manifest_merges_freshness_and_health(tmp_path):
     assert entry["is_full_backfilled"] is True
 
 
+def test_build_runtime_manifest_export_block_fails_closed(tmp_path):
+    symbol = "BTC/USDT"
+    timeframe = "1h"
+    safe_symbol = symbol.replace("/", "_")
+    now = datetime(2026, 2, 13, 12, 0, tzinfo=timezone.utc)
+    (tmp_path / f"history_{safe_symbol}_{timeframe}.json").write_text(
+        json.dumps(
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "updated_at": "2026-02-13T11:15:00Z",
+                "data": [],
+            }
+        )
+    )
+    (tmp_path / f"prediction_{safe_symbol}_{timeframe}.json").write_text(
+        json.dumps(
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "updated_at": "2026-02-13T11:30:00Z",
+                "forecast": [],
+            }
+        )
+    )
+    (tmp_path / "export_blocks.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "updated_at": "2026-02-13T11:31:00Z",
+                "entries": {
+                    f"{symbol}|{timeframe}": {
+                        "last_error": "history_export_failed",
+                        "blocked_at": "2026-02-13T11:31:00Z",
+                    }
+                },
+            }
+        )
+    )
+
+    manifest = build_runtime_manifest(
+        [symbol],
+        [timeframe],
+        now=now,
+        static_dir=tmp_path,
+        prediction_health_path=tmp_path / "prediction_health.json",
+        symbol_activation_entries={
+            symbol: {
+                "state": "ready_for_serving",
+                "visibility": "visible",
+                "is_full_backfilled": True,
+                "coverage_start_at": "2026-01-01T00:00:00Z",
+                "coverage_end_at": "2026-02-13T11:55:00Z",
+            }
+        },
+    )
+
+    entry = manifest["entries"][0]
+    assert entry["prediction"]["status"] == "fresh"
+    assert entry["serve_allowed"] is False
+
+
 def test_write_runtime_manifest_writes_manifest_file(tmp_path):
     symbol = "BTC/USDT"
     timeframe = "1h"
@@ -1703,6 +1765,80 @@ def test_run_publish_timeframe_step_runs_prediction_with_ingest_watermark(
     assert cycle_predict_gate_skip_counts == {}
 
 
+def test_run_publish_timeframe_step_failed_export_persists_and_success_clears_block(
+    monkeypatch,
+    tmp_path,
+):
+    symbol = "BTC/USDT"
+    timeframe = "1h"
+    now = datetime(2026, 2, 24, 1, 0, tzinfo=timezone.utc)
+    key = f"{symbol}|{timeframe}"
+    watermark_text = "2026-02-24T01:00:00Z"
+    export_block_path = tmp_path / "export_blocks.json"
+
+    state = WorkerPersistentState(
+        symbol_activation_entries={},
+        ingest_watermarks={key: watermark_text},
+    )
+    activation = SymbolActivationSnapshot.from_payload(
+        symbol=symbol,
+        payload={
+            "symbol": symbol,
+            "state": "ready_for_serving",
+            "visibility": "visible",
+            "is_full_backfilled": True,
+            "updated_at": "2026-02-24T01:00:00Z",
+        },
+        fallback_now=now,
+    )
+    alerts: list[str] = []
+    outcomes = iter([False, True])
+
+    monkeypatch.setattr("scripts.pipeline_worker.STATIC_DIR", tmp_path)
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.update_full_history_file",
+        lambda *args, **kwargs: next(outcomes),
+    )
+    monkeypatch.setattr("scripts.pipeline_worker.send_alert", alerts.append)
+
+    _run_publish_timeframe_step(
+        write_api=object(),
+        query_api=object(),
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        symbol_activation=activation,
+        run_export_stage=True,
+        run_predict_stage=False,
+        state=state,
+        cycle_export_gate_skip_counts={},
+        cycle_predict_gate_skip_counts={},
+    )
+
+    payload = json.loads(export_block_path.read_text())
+    assert key in payload["entries"]
+    assert payload["entries"][key]["last_error"] == "history_export_failed"
+
+    _run_publish_timeframe_step(
+        write_api=object(),
+        query_api=object(),
+        symbol=symbol,
+        timeframe=timeframe,
+        cycle_now=now,
+        symbol_activation=activation,
+        run_export_stage=True,
+        run_predict_stage=False,
+        state=state,
+        cycle_export_gate_skip_counts={},
+        cycle_predict_gate_skip_counts={},
+    )
+
+    payload = json.loads(export_block_path.read_text())
+    assert key not in payload["entries"]
+    assert any(msg.startswith("[Export Block] BTC/USDT 1h") for msg in alerts)
+    assert any(msg.startswith("[Export Recovery] BTC/USDT 1h") for msg in alerts)
+
+
 def test_run_publish_timeframe_step_skips_predict_without_ingest_watermark(
     monkeypatch,
 ):
@@ -1814,3 +1950,30 @@ def test_update_full_history_file_keeps_lookback_range_for_1h(monkeypatch):
     query_api = FakeQueryAPI()
     assert update_full_history_file(query_api, "BTC/USDT", "1h") is True
     assert "|> range(start: -30d)" in captured_queries[0]
+
+
+def test_update_full_history_file_returns_false_when_save_fails(monkeypatch):
+    sample_df = pd.DataFrame(
+        [
+            {
+                "_time": datetime(2026, 2, 1, 0, 0, tzinfo=timezone.utc),
+                "open": 1.0,
+                "high": 2.0,
+                "low": 0.5,
+                "close": 1.5,
+                "volume": 10.0,
+            }
+        ]
+    )
+
+    class FakeQueryAPI:
+        def query_data_frame(self, query: str):
+            return sample_df.copy()
+
+    monkeypatch.setattr(
+        "scripts.pipeline_worker.export_ops.save_history_to_json",
+        lambda ctx, df, symbol, timeframe: False,
+    )
+
+    query_api = FakeQueryAPI()
+    assert update_full_history_file(query_api, "BTC/USDT", "1h") is False
