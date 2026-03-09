@@ -107,8 +107,8 @@
 | D-038 | P2 | Training Snapshot Pre-Materialize (optional) | hold (2026-02-26) | 기본 경로는 on-demand extractor를 유지한다. 재개는 학습 시간/SLA 압력이 반복될 때만 허용하며, 전환 전후 비교 지표(`train_total_seconds`, `influx_query_seconds`, `failure_rate`, `peak_memory_mb`)를 고정 수집하고 SoT 정합성/원자적 스냅샷 쓰기/모델-스냅샷 버전 링크 검증을 통과해야 한다. |
 | D-039 | P1 | 상태 파일 필드 인벤토리 감사(legacy/중복/파생 정리) | done (2026-03-03) | `manifest/runtime_metrics/prediction_health/symbol_activation/ingest_watermarks`에 대해 필드 단위 인벤토리(`SoT/Derived/Diagnostic/Legacy-Compat`)와 제거 후보 우선순위를 `docs/STATE_FIELD_INVENTORY.md`로 고정했다. `Keep-By-Design` 필드와 destructive cleanup 전 open question을 함께 잠금했다. |
 | D-049 | P1 | CI/CD 브랜치 게이트 분리(`dev` CI-only, `main` deploy-only) | done (2026-03-04) | `.github/workflows/ci.yml`을 추가해 `main/dev` CI(test)를 분리했고, `deploy.yml`은 `main push + workflow_dispatch`로 제한했다. 로컬 스모크 경로는 `docker-compose.local.yml` override로 고정했다. |
-| D-040 | **P0** | Legacy Kill Stage 1: 모델 fallback 제거 | in_progress (2026-03-09) | `workers/predict.py`에서 `model_{symbol}_{timeframe}.json`만 로드하도록 전환했고 regression은 통과했다. canonical 누락 시 `model_missing` fail-closed가 local smoke까지 확인되면 done 전환한다. |
-| D-041 | **P0** | Legacy Kill Stage 2: static dual-write 제거 | in_progress (2026-03-09) | prediction/history canonical-only write와 status/monitor canonical-only read 경로를 적용했다. admin/ops/status 회귀와 local smoke가 canonical-only 산출물 기준으로 확인되면 done 전환한다. |
+| D-040 | **P0** | Legacy Kill Stage 1: 모델 fallback 제거 | done (2026-03-09) | `workers/predict.py`의 runtime load를 `model_{symbol}_{timeframe}.json` canonical-only로 고정했고, legacy model fallback을 제거했다. canonical 누락 시 `model_missing` fail-closed regression과 local smoke를 확인했다. |
+| D-041 | **P0** | Legacy Kill Stage 2: static dual-write 제거 | done (2026-03-09) | prediction/history는 canonical-only write로 고정했고, status/monitor read도 canonical-only 경로로 전환했다. admin/ops/status 회귀와 local smoke에서 canonical-only 산출물 기준 동작을 확인했다. |
 | D-042 | P1 | Legacy Kill Stage 3: Influx legacy query fallback 제거 | open | ingest/monitor 경로에서 no-timeframe legacy query fallback을 제거하고 timeframe-tag row만 신뢰한다. full-fill/rebootstrap/activation 회귀 테스트와 스모크가 통과해야 한다. |
 | D-043 | P1 | Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`) | open | 단일 `manifest.v2` payload에 `public`/`ops` 섹션 계약을 고정하고 writer/consumer를 분리한다. FE는 `public`만, admin/ops는 `ops`만 사용해야 한다. |
 | D-044 | P1 | 상태 스키마 정규화(`symbol_activation`/`prediction_health`) | open | 중복 identity/파생 필드를 정규화한다(예: `symbol_activation` 단일 SoT 상태 기준). 상태 파일 read/write 계약 테스트를 고정한다. |
@@ -123,19 +123,17 @@
 
 ## 3. Immediate Bundle (Revised 2026-03-09)
 1. `D-051` — D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리
-2. `D-040` — Legacy Kill Stage 1: 모델 fallback 제거
-3. `D-041` — Legacy Kill Stage 2: static dual-write 제거
-4. `D-042` — Legacy Kill Stage 3: Influx legacy query fallback 제거
-5. `D-047` — Scheduler mode boundary 단일화(`poll_loop` 제거)
-6. `D-043` — Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
-7. `D-044` — 상태 스키마 정규화
-8. `D-045` — Orchestrator 모듈화 인터페이스 잠금
-9. `D-013` — 재학습 트리거 정책 정의(1차 시간 기반)
-10. `D-014` — 학습 실행 no-overlap/락 가드
-11. `D-015` — 학습 실행 관측성/알림 baseline
-12. `D-003` — Shadow 추론 파이프라인 도입
-13. `D-004` — Champion vs Shadow 평가 리포트
-14. `D-005` — 승격 게이트 정책 구현(`fail-closed`)
+2. `D-042` — Legacy Kill Stage 3: Influx legacy query fallback 제거
+3. `D-047` — Scheduler mode boundary 단일화(`poll_loop` 제거)
+4. `D-043` — Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
+5. `D-044` — 상태 스키마 정규화
+6. `D-045` — Orchestrator 모듈화 인터페이스 잠금
+7. `D-013` — 재학습 트리거 정책 정의(1차 시간 기반)
+8. `D-014` — 학습 실행 no-overlap/락 가드
+9. `D-015` — 학습 실행 관측성/알림 baseline
+10. `D-003` — Shadow 추론 파이프라인 도입
+11. `D-004` — Champion vs Shadow 평가 리포트
+12. `D-005` — 승격 게이트 정책 구현(`fail-closed`)
 
 ## 3.1 Previous Cycle KPI (Locked 2026-02-21)
 1. `D-018` 완료

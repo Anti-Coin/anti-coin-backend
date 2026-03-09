@@ -13,7 +13,7 @@
 7. `D-001` 완료: Prophet 경로 `fit/predict/save/load` 계약 문서/회귀 테스트 잠금(2026-02-26).
 8. `D-002` 완료: 모델 metadata/version 스키마(v1) 문서화 + sidecar 저장 경로 고정(2026-02-26).
 9. `D-046` 완료: `/status`가 monitor와 동일한 Influx-JSON consistency override를 사용하도록 정렬했다(2026-03-04).
-10. `D-051` in_progress: status consistency 공통 모듈 분리와 Docker-Ops 경계 정리는 문서/코드 반영이 끝났고, 로컬 스모크 증거만 남아 있다(2026-03-05).
+10. `D-051` in_progress: status consistency 공통 모듈 분리와 Docker-Ops 경계 정리는 문서/코드 반영이 끝났고, 로컬 스모크는 문제 없다는 운영 확인이 들어왔다. 다만 monitor/worker-train explicit evidence는 별도 로그로 잠그지 않았다(2026-03-09).
 11. 완료 증거: `PYENV_VERSION=coin pytest -q tests/test_api_status.py tests/test_status_monitor.py` 통과(`37 passed`, 2026-03-04).
 12. Phase C 상세 원문은 `docs/archive/phase_c/*`로 이동했다.
 
@@ -23,20 +23,18 @@
 3. publish trigger: ingest stage in-cycle 후 publish reconcile 실행
 4. monitor consistency current baseline: `symbol+timeframe` 기준 + Influx query legacy fallback(`PRIMARY_TIMEFRAME` 한정)
 5. ingest routing: `1d/1w/1M` 포함 전 timeframe direct fetch(derived downsample 경로 제거)
-6. model artifact boundary: runtime predict load는 `symbol+timeframe canonical` only다. primary legacy model file은 남아 있을 수 있지만 fallback read path는 제거됐다.
-7. static artifact boundary: prediction/history write와 status/monitor read는 canonical-only 경로로 전환됐다. local smoke evidence는 아직 남아 있다(`D-041`).
-8. `/status` 판정 parity(`D-046`)는 적용 완료됐고, next refactor lock은 scheduler `boundary` 단일 모드(`D-047`)와 legacy 제거(`D-040~D-042`)다.
+6. model artifact boundary: runtime predict load는 `symbol+timeframe canonical` only다. primary legacy model file은 남아 있을 수 있지만 fallback read path는 제거됐다(`D-040` done).
+7. static artifact boundary: prediction/history write와 status/monitor read는 canonical-only 경로로 고정됐다(`D-041` done).
+8. `/status` 판정 parity(`D-046`)는 적용 완료됐고, next refactor lock은 scheduler `boundary` 단일 모드(`D-047`)와 query fallback 제거(`D-042`)다.
 
 ## 3. Next Priority Tasks
-1. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(near-done, monitor/worker-train smoke 증거 확보)
-2. `D-040`: Legacy Kill Stage 1 — 모델 fallback 제거
-3. `D-041`: Legacy Kill Stage 2 — static dual-write 제거
-4. `D-042`: Legacy Kill Stage 3 — Influx legacy query fallback 제거(ingest+monitor)
-5. `D-047`: Scheduler mode boundary 단일화(`poll_loop` 제거)
-6. `D-043`: Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
-7. `D-044`: 상태 스키마 정규화
-8. `D-045`: Orchestrator 모듈화 인터페이스 잠금
-9. `D-013`: 재학습 트리거 정책 정의 — in_progress(2026-03-03), `00:35 UTC` + retry `N=2` + event catalog lock(실행 보류)
+1. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(near-done, explicit smoke evidence lock)
+2. `D-042`: Legacy Kill Stage 3 — Influx legacy query fallback 제거(ingest+monitor)
+3. `D-047`: Scheduler mode boundary 단일화(`poll_loop` 제거)
+4. `D-043`: Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
+5. `D-044`: 상태 스키마 정규화
+6. `D-045`: Orchestrator 모듈화 인터페이스 잠금
+7. `D-013`: 재학습 트리거 정책 정의 — in_progress(2026-03-03), `00:35 UTC` + retry `N=2` + event catalog lock(실행 보류)
 
 ## 4. Current Risks
 1. `TD-012`: 자동 재학습/승격 게이트 미구현
