@@ -27,19 +27,19 @@
 7. `/status` 판정 parity(`D-046`)는 적용 완료됐고, next refactor lock은 scheduler `boundary` 단일 모드(`D-047`)와 legacy 제거(`D-040~D-042`)다.
 
 ## 3. Next Priority Tasks
-1. `D-013`: 재학습 트리거 정책 정의 — in_progress(2026-03-03), `00:35 UTC` + retry `N=2` + event catalog lock(실행 보류)
-2. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(로컬 스모크 증거 확보)
-3. `D-040`: Legacy Kill Stage 1 — 모델 fallback 제거
-4. `D-041`: Legacy Kill Stage 2 — static dual-write 제거
-5. `D-042`: Legacy Kill Stage 3 — Influx legacy query fallback 제거(ingest+monitor)
+1. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(near-done, monitor/worker-train smoke 증거 확보)
+2. `D-040`: Legacy Kill Stage 1 — 모델 fallback 제거
+3. `D-041`: Legacy Kill Stage 2 — static dual-write 제거
+4. `D-042`: Legacy Kill Stage 3 — Influx legacy query fallback 제거(ingest+monitor)
+5. `D-047`: Scheduler mode boundary 단일화(`poll_loop` 제거)
 6. `D-043`: Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public`/`ops`)
-7. `D-047`: Scheduler mode boundary 단일화(`poll_loop` 제거)
-8. `D-044`: 상태 스키마 정규화
-9. `D-045`: Orchestrator 모듈화 인터페이스 잠금
+7. `D-044`: 상태 스키마 정규화
+8. `D-045`: Orchestrator 모듈화 인터페이스 잠금
+9. `D-013`: 재학습 트리거 정책 정의 — in_progress(2026-03-03), `00:35 UTC` + retry `N=2` + event catalog lock(실행 보류)
 
 ## 4. Current Risks
 1. `TD-012`: 자동 재학습/승격 게이트 미구현
-2. `TD-010`: 모델 인터페이스 미구현
+2. `TD-010`: 모델 추상 인터페이스/교체 경계 미구현
 3. `TD-022`: prediction freshness 의미론(입력 stale 은닉 가능성) 정렬 필요
 4. `TD-035`: 이벤트 기반 재학습 임계치 휴리스틱(미보정) 리스크
 

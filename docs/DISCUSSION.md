@@ -1,6 +1,6 @@
 # Coin Predict Discussion Log
 
-- Last Updated: 2026-02-24
+- Last Updated: 2026-03-09
 - Purpose: 구현 전 쟁점/가설/옵션을 기록하고, 완료된 phase 토론은 archive로 분리해 active 문서 밀도를 유지한다.
 - Full Phase C Discussion History: `docs/archive/phase_c/DISCUSSION_PHASE_C_FULL_2026-02-20.md`
 
@@ -30,10 +30,11 @@
 1. Phase C 범위를 재개하거나 과거 토론 원문 근거가 필요한 경우.
 
 ## 4. Active Follow-up Candidates (Phase D)
-1. `D-012`: 학습 데이터 SoT 정렬(Influx 기반 closed-candle snapshot)
-2. `D-013`: 재학습 트리거 정책(시간+이벤트) 정의
-3. `D-014`: 학습 실행 no-overlap/락 가드
-4. `D-015`: 학습 실행 관측성/알림 baseline
+1. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리 마감
+2. `D-040`: 모델 legacy fallback 제거
+3. `D-041`: static dual-write 제거
+4. `D-042`: Influx legacy query fallback 제거
+5. `D-047`: scheduler fallback 제거(`boundary` 단일화)
 
 ## 5. Entry 2026-02-23 — 방어 로직 구조 평가
 1. Topic: `pipeline_worker.py` 방어/복구 로직의 밀도와 구조
@@ -174,3 +175,16 @@
    1. 회귀: `PYENV_VERSION=coin pytest -q tests/test_pipeline_worker.py` (`64 passed`)
 5. Revisit Trigger:
    1. 직렬 경로에서 overrun/복구 지연이 임계치를 넘거나, 장애 격리 요구가 재상승할 때
+
+## 13. Entry 2026-03-09 — 우선순위 재정렬(자동화 전 fallback 정리 우선)
+1. Topic: "더 많은 자동화"보다 "덜 거짓말하는 pipeline"을 먼저 만든다.
+2. Observed Facts:
+   1. `D-046`은 완료됐고, `D-051`은 code/doc 기준으로 near-done 상태다.
+   2. 현재 복잡도의 핵심은 자동 재학습 부재보다 legacy fallback/model/static/query/scheduler 경계가 동시에 살아 있는 점이다.
+   3. `D-047`은 문서 드리프트가 아니라 실제 open이다. `poll_loop` 허용값과 invalid mode fallback이 코드/테스트에 남아 있다.
+3. Conclusion:
+   1. 현재 immediate bundle은 training automation보다 fallback 제거와 경계 정리를 앞에 두는 편이 맞다.
+   2. 순서는 `D-051 -> D-040 -> D-041 -> D-042 -> D-047 -> D-043 -> D-044 -> D-045 -> D-013` 쪽이 운영 통증과 코드 현실에 더 가깝다.
+4. Revisit Trigger:
+   1. legacy 제거 단계에서 canonical 누락/오탐이 반복되거나,
+   2. 자동 재학습 도입 압력이 운영 pain을 추월할 때

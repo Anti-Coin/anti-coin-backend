@@ -22,13 +22,13 @@
 4. 모델 부재/샘플 부족(`model_missing`/`insufficient_data`)은 상태/사유를 숨기지 않고 노출한다.
 
 ## 4. Current Priority Tasks
-1. `D-013`: 재학습 트리거 정책 정의(1차 시간 기반, 이벤트는 도입 조건만 고정)
-2. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(로컬 스모크 증거 대기)
-3. `D-040`: Legacy Kill Stage 1(모델 fallback 제거)
-4. `D-041`: Legacy Kill Stage 2(static dual-write 제거)
-5. `D-042`: Legacy Kill Stage 3(legacy query fallback 제거, ingest+monitor)
+1. `D-051`: D-046 공통 판정 모듈 분리 + Docker-Ops 의존성 경계 정리(near-done, smoke evidence 정리)
+2. `D-040`: Legacy Kill Stage 1(모델 fallback 제거)
+3. `D-041`: Legacy Kill Stage 2(static dual-write 제거)
+4. `D-042`: Legacy Kill Stage 3(legacy query fallback 제거, ingest+monitor)
+5. `D-047`: Scheduler mode boundary 단일화(`poll_loop` 제거)
 6. `D-043`: Manifest 계약 분리(`manifest.v2` 단일 파일 내 `public/ops`)
-7. `D-047`: Scheduler mode boundary 단일화(`poll_loop` 제거)
+7. `D-013`: 재학습 트리거 정책 정의(1차 시간 기반, 이벤트는 도입 조건만 고정)
 
 ## 5. Recent Completion (2026-03-05)
 1. `C-013`: `pipeline_worker` timeboxed micro-refactor(동작 불변)
@@ -54,7 +54,7 @@
 
 ## 8. Current Risk Focus
 1. `TD-012`: 자동 재학습/승격 게이트 미구현
-2. `TD-010`: 모델 인터페이스 미구현
+2. `TD-010`: 모델 추상 인터페이스/교체 경계 미구현
 3. `TD-022`: prediction freshness 의미론(입력 stale 은닉 가능성) 정렬 필요
 4. `TD-035`: 이벤트 기반 재학습 임계치 휴리스틱(미보정) 리스크
 
