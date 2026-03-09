@@ -416,11 +416,10 @@ def test_get_latest_ohlcv_timestamp_uses_max_across_tables(monkeypatch):
     assert latest == datetime(2026, 2, 10, 11, 30, tzinfo=timezone.utc)
 
 
-def test_get_latest_ohlcv_timestamp_uses_legacy_fallback_for_primary_timeframe(
+def test_get_latest_ohlcv_timestamp_does_not_use_legacy_fallback(
     monkeypatch,
 ):
     monkeypatch.setattr("scripts.status_monitor.INFLUXDB_BUCKET", "market_data")
-    monkeypatch.setattr("scripts.status_monitor.PRIMARY_TIMEFRAME", "1h")
     query_api = _FakeQueryApi(
         {
             ("BTC/USDT", None): datetime(
@@ -430,7 +429,7 @@ def test_get_latest_ohlcv_timestamp_uses_legacy_fallback_for_primary_timeframe(
     )
 
     latest = get_latest_ohlcv_timestamp(query_api, "BTC/USDT", "1h")
-    assert latest == datetime(2026, 2, 10, 11, 0, tzinfo=timezone.utc)
+    assert latest is None
 
 
 def test_run_monitor_cycle_marks_hard_stale_when_influx_json_gap_exceeds_limit(
